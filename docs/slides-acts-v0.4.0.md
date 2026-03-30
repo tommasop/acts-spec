@@ -88,9 +88,17 @@ When one developer hands off to another, decisions, rationale, and state disappe
 
 ---
 
-# Slide 5: Agent Attribution & Cost Tracking
+# Slide 5: AGENTS.md Integration & Cost Tracking
 
-## Know what AI did what, and what it cost
+## Industry standard + accountability
+
+**AGENTS.md** is an industry-standard file adopted by 60k+ projects. ACTS uses it as the constitution.
+
+**One file serves dual purpose:**
+- **Project context** for any AI agent (setup, code style, testing)
+- **ACTS rules** for multi-developer coordination
+
+**Supported by:** Cursor, Claude Code, OpenCode, Copilot, Gemini CLI, and more.
 
 **Session summary header (new in v0.4.0):**
 ```markdown

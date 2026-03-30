@@ -28,17 +28,30 @@ Your AI agent (Cursor, Claude Code, Copilot, etc.) reads operation files and exe
 │  ACTS State (.story/)                       │
 │  (state.json, sessions, reviews)            │
 ├─────────────────────────────────────────────┤
-│  Constitution (AGENTS.md)                    │
+│  AGENTS.md                                  │
+│  (project context + ACTS rules)             │
 └─────────────────────────────────────────────┘
 ```
 
+## AGENTS.md Integration
+
+ACTS uses the industry-standard `AGENTS.md` file — adopted by 60k+ open source projects and supported by Cursor, Claude Code, OpenCode, Copilot, Gemini CLI, and many other tools.
+
+**One file serves dual purpose:**
+1. **Project context** for any AI agent (setup, code style, testing)
+2. **ACTS rules** for multi-developer coordination
+
+See [AGENTS.md standard](https://agents.md/) for details.
+
 ## Quick Start
+
+### New project (copy full template)
 
 ```bash
 # 1. Copy this repo's .acts/ directory into your project
 cp -r acts-spec/.acts ./.acts/
 
-# 2. Create your constitution
+# 2. Create your AGENTS.md (project context + ACTS rules)
 cp acts-spec/docs/templates/agents-minimal.md ./AGENTS.md
 
 # 3. Create state directories
@@ -50,6 +63,22 @@ npm install -g githuman
 # 5. Start your first story
 # In your AI coding agent (Cursor, Claude Code, etc.):
 "Initialize ACTS tracker for PROJ-XXX, title 'Your Feature'"
+```
+
+### Existing project (append to existing AGENTS.md)
+
+```bash
+# 1. Copy this repo's .acts/ directory into your project
+cp -r acts-spec/.acts ./.acts/
+
+# 2. Append ACTS section to your existing AGENTS.md
+./acts-spec/scripts/append-acts.sh ./AGENTS.md
+
+# 3. Create state directories
+mkdir -p .story/{tasks,sessions,reviews/{active,archive}}
+
+# 4. Install GitHuman (for code review)
+npm install -g githuman
 ```
 
 ## How It Works
@@ -68,6 +97,7 @@ npm install -g githuman
 - ✅ Human oversight (gates at key decisions)
 - ✅ Code review (mandatory before commit)
 - ✅ Agent attribution (track what AI did and cost)
+- ✅ Industry alignment (AGENTS.md standard)
 
 ## What ACTS Is NOT
 
@@ -82,6 +112,7 @@ npm install -g githuman
 - ✅ Git-native (everything in your repo)
 - ✅ Works with any AI coding agent
 - ✅ Incremental (adopt what you need)
+- ✅ Industry standard (AGENTS.md)
 
 ## Files
 

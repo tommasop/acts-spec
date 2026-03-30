@@ -6,30 +6,45 @@ The absolute minimum to try ACTS. Three files, no dependencies.
 
 ## The 3 Files You Need
 
-### 1. AGENTS.md (Constitution)
+### 1. AGENTS.md (Project Context + ACTS Rules)
 
-Create at repo root:
+Create at repo root. This is the industry-standard file supported by Cursor, Claude Code, OpenCode, Copilot, and 60k+ projects.
 
 ```markdown
-# Agent Rules
+# [Your Project Name]
 
-## Rules
+## Setup
+- Install: `[your install command]`
+- Dev: `[your dev command]`
+- Test: `[your test command]`
+
+## Code Style
+[Your style conventions]
+
+## Testing
+[Your testing conventions]
+
+## PR Instructions
+- Title format: `[format]`
+- Run lint and test before committing
+
+---
+
+## ACTS Integration
+
+This project uses ACTS for multi-developer coordination.
+
+### Rules
 - Agent MUST read `.story/state.json` before writing code
 - Agent MUST NOT modify files owned by completed tasks
 - Agent MUST record session summary before ending
 - Agent MUST stay within assigned task boundary
 - Agent MUST get developer approval before committing
 
-## Architecture
+### Architecture
 [Your project architecture]
 
-## Testing
-[Your testing conventions]
-
-## Git
-[Your git conventions]
-
-## Forbidden
+### Forbidden
 [What your agent must never do]
 ```
 
@@ -137,3 +152,4 @@ Once you've tested with 3 files:
 2. Copy the [operations](../.acts/operations/) for structured workflows
 3. Install GitHuman for code review
 4. Use [templates](./templates/) for team coordination
+5. For existing projects: use `append-acts.sh` to add ACTS to your AGENTS.md
