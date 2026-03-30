@@ -126,7 +126,7 @@ src/components/TwoFactorSetup.tsx → T3       TODO
 - Run ACTUAL commands — do not fabricate
 - Report exact output (pass/fail counts, not just ✅)
 - If any check fails, note it explicitly in "What was NOT done"
-- Use project-specific commands from AGENT.md ## Testing section
+- Use project-specific commands from AGENTS.md ## Testing section
 
 ---
 

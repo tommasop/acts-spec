@@ -6,7 +6,7 @@ The absolute minimum to try ACTS. Three files, no dependencies.
 
 ## The 3 Files You Need
 
-### 1. AGENT.md (Constitution)
+### 1. AGENTS.md (Constitution)
 
 Create at repo root:
 
@@ -39,7 +39,7 @@ Create at repo root:
 {
   "acts_version": "0.4.0",
   "conformance_level": "basic",
-  "constitution": "AGENT.md",
+  "constitution": "AGENTS.md",
   "tracker_dir": ".story",
   "operations_dir": ".acts/operations",
   "code_review": {
@@ -84,7 +84,7 @@ Create at repo root:
 2. Tell your AI agent:
 
 ```
-Read AGENT.md. Before writing any code, read .story/state.json.
+Read AGENTS.md. Before writing any code, read .story/state.json.
 After writing code, record a session summary.
 ```
 
@@ -95,7 +95,7 @@ After writing code, record a session summary.
 ## What You Can Skip Initially
 
 - ❌ Schemas (skip for basic conformance)
-- ❌ Templates (write your own AGENT.md)
+- ❌ Templates (write your own AGENTS.md)
 - ❌ Operations directory (your agent reads spec directly)
 - ❌ GitHuman (skip code review for now)
 - ❌ Validation scripts (run later)

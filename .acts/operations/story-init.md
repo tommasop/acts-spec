@@ -18,7 +18,7 @@ required_inputs:
 optional_inputs: []
 preconditions:
   - ".story/ directory MUST NOT already exist (or must be empty)"
-  - "AGENT.md MUST exist at repo root"
+  - "AGENTS.md MUST exist at repo root"
 postconditions:
   - "state.json is valid per ACTS JSON Schema"
   - "All task IDs in plan.md match state.json"
@@ -55,7 +55,7 @@ initial state.
    - **Out of Scope** — explicitly listed exclusions
 
 3. **READ CONSTITUTION**
-   Read `AGENT.md` to understand architecture patterns.
+   Read `AGENTS.md` to understand architecture patterns.
    The plan MUST align with the constitution.
 
 4. **WRITE PLAN**
@@ -99,4 +99,4 @@ initial state.
 - Do NOT write any application code.
 - Do NOT assume approval. The team must review first.
 - Task IDs MUST follow pattern `T<n>`.
-- The plan MUST reference architecture patterns from `AGENT.md`.
+- The plan MUST reference architecture patterns from `AGENTS.md`.

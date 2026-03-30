@@ -40,7 +40,7 @@ mechanism that prevents context loss.
 
 3. **VERIFY Current State**
    Actually run these commands — do NOT fabricate results:
-   - Run the build/compile command (from AGENT.md ## Testing)
+   - Run the build/compile command (from AGENTS.md ## Testing)
    - Run the test suite
    - Check `git status`
    
@@ -118,7 +118,7 @@ Unresolved items for next developer to clarify.
 The single most useful thing to do when resuming.
 
 ## Agent Compliance
-- Read AGENT.md: ✅/❌
+- Read AGENTS.md: ✅/❌
   - Sections confirmed: <list>
 - Read state.json: ✅/❌
 - Followed preflight protocol: ✅/❌

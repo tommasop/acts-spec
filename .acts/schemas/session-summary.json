@@ -115,12 +115,12 @@
       "properties": {
         "read_agent_md": {
           "type": "boolean",
-          "description": "Whether the agent read AGENT.md."
+          "description": "Whether the agent read AGENTS.md."
         },
         "sections_confirmed": {
           "type": "array",
           "items": { "type": "string" },
-          "description": "Which AGENT.md sections the agent claims to have read."
+          "description": "Which AGENTS.md sections the agent claims to have read."
         },
         "read_state_json": {
           "type": "boolean",

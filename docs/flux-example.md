@@ -172,12 +172,12 @@ Alice runs `preflight` for T1.
 
 ### Preflight execution:
 
-1. Reads `AGENT.md` — confirms architecture patterns.
+1. Reads `AGENTS.md` — confirms architecture patterns.
 2. Reads `state.json` — validates against `.acts/schemas/state.json`. Story is `APPROVED`, task T1 is `TODO`.
 3. Validates story: `APPROVED` → transitions to `IN_PROGRESS` on first preflight.
 4. Validates task: `TODO` → OK.
 5. Dependencies: T1 has `depends_on: []` → none to check.
-6. Context ingestion: reads `AGENT.md`, `state.json`, `plan.md`, T1 plan entry. No completed dependency files yet.
+6. Context ingestion: reads `AGENTS.md`, `state.json`, `plan.md`, T1 plan entry. No completed dependency files yet.
 7. Concurrency: no other task is `IN_PROGRESS`.
 8. Scope declaration: "I will build AvatarUpload.tsx and its tests. I will NOT touch backend files (T2's scope)."
 
@@ -211,7 +211,7 @@ Bob works in `../worktrees/PROJ-217/`. Runs `preflight` for T2.
 
 ### Preflight execution:
 
-1. Reads `AGENT.md`.
+1. Reads `AGENTS.md`.
 2. Reads `state.json` — story is `IN_PROGRESS`, T2 is `TODO`.
 3. Validates: story `IN_PROGRESS` → continue. Task `TODO` → OK.
 4. Dependencies: T2 has `depends_on: []` → none.
@@ -322,7 +322,7 @@ Alice runs `session-summary`.
 - T2 (backend endpoint) can proceed in parallel. T4 should wait for both T1 and T2.
 
 ## Agent Compliance
-- Read AGENT.md: ✅
+- Read AGENTS.md: ✅
   - Sections confirmed: Rules, Architecture, Style, Testing
 - Read state.json: ✅
 - Followed preflight protocol: ✅
@@ -384,7 +384,7 @@ Bob runs `task-start` for T2.
 - Wrote integration tests with mocked S3 client
 
 ## Decisions made
-- Used `@aws-sdk/client-s3` v3 (not v2) per AGENT.md dependency policy
+- Used `@aws-sdk/client-s3` v3 (not v2) per AGENTS.md dependency policy
 - Multipart parsing via `multer` with memory storage (buffer to S3, no temp files)
 - Validation middleware is reusable — placed in `src/middleware/`
 
@@ -413,7 +413,7 @@ Bob runs `task-start` for T2.
 - T3: add `avatar_url` to user profile response. Simple — just read from user model and include in serializer.
 
 ## Agent Compliance
-- Read AGENT.md: ✅
+- Read AGENTS.md: ✅
   - Sections confirmed: Rules, Architecture, Testing, Git
 - Read state.json: ✅
 - Followed preflight protocol: ✅

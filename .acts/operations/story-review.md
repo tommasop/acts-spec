@@ -45,8 +45,8 @@ constitution compliance, and prepares a PR description.
 
 5. **CONSTITUTION COMPLIANCE CHECK**
    - All public functions have documentation/types?
-   - No forbidden patterns (per `AGENT.md ## Forbidden`)?
-   - Commit messages follow conventions (per `AGENT.md ## Git`)?
+   - No forbidden patterns (per `AGENTS.md ## Forbidden`)?
+   - Commit messages follow conventions (per `AGENTS.md ## Git`)?
    - File length limits respected?
 
 6. **AGENT COMPLIANCE AUDIT**

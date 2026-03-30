@@ -28,7 +28,7 @@ Your AI agent (Cursor, Claude Code, Copilot, etc.) reads operation files and exe
 │  ACTS State (.story/)                       │
 │  (state.json, sessions, reviews)            │
 ├─────────────────────────────────────────────┤
-│  Constitution (AGENT.md)                    │
+│  Constitution (AGENTS.md)                    │
 └─────────────────────────────────────────────┘
 ```
 
@@ -39,7 +39,7 @@ Your AI agent (Cursor, Claude Code, Copilot, etc.) reads operation files and exe
 cp -r acts-spec/.acts ./.acts/
 
 # 2. Create your constitution
-cp acts-spec/docs/templates/agents-minimal.md ./AGENT.md
+cp acts-spec/docs/templates/agents-minimal.md ./AGENTS.md
 
 # 3. Create state directories
 mkdir -p .story/{tasks,sessions,reviews/{active,archive}}

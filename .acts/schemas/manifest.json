@@ -27,8 +27,8 @@
     },
     "constitution": {
       "type": "string",
-      "description": "Path to the constitution file (AGENT.md).",
-      "default": "AGENT.md"
+      "description": "Path to the constitution file (AGENTS.md).",
+      "default": "AGENTS.md"
     },
     "tracker_dir": {
       "type": "string",

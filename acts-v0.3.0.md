@@ -50,7 +50,7 @@ The key words "MUST", "MUST NOT", "SHOULD", "SHOULD NOT", "MAY" in this document
 | **Task** | A subdivision of a story that can be assigned to one developer at a time. The atomic unit of work assignment. |
 | **Session** | A continuous period of work by one developer (with or without an agent) on one task. |
 | **Agent** | Any AI coding assistant (Claude Code, Cursor, Copilot, Codex, etc.) operating under developer supervision. |
-| **Constitution** | The shared rules file (`AGENT.md`) that all agents MUST follow. |
+| **Constitution** | The shared rules file (`AGENTS.md`) that all agents MUST follow. |
 | **Tracker** | The `.story/` directory and its contents. |
 | **Handoff** | The transfer of a task from one developer to another. |
 | **Context Budget** | Maximum token allocation for an operation's context ingestion phase. |
@@ -95,7 +95,7 @@ ACTS is organized in five layers. Each layer depends on the ones below it.
 │  Tracker directory, schemas, sessions       │
 ├─────────────────────────────────────────────┤
 │  Layer 1: CONSTITUTION                      │
-│  AGENT.md — shared rules for all agents     │
+│  AGENTS.md — shared rules for all agents     │
 └─────────────────────────────────────────────┘
 ```
 
@@ -105,19 +105,19 @@ A **minimal** ACTS implementation MUST include Layers 1 and 2. Layer 3 is REQUIR
 
 ---
 
-## 3. Layer 1: Constitution (`AGENT.md`)
+## 3. Layer 1: Constitution (`AGENTS.md`)
 
 ### 3.1 Location
 
-The constitution MUST be a file named `AGENT.md` at the repository root.
+The constitution MUST be a file named `AGENTS.md` at the repository root.
 
 ```text
-<repo-root>/AGENT.md
+<repo-root>/AGENTS.md
 ```
 
 ### 3.2 Required Sections
 
-A conforming `AGENT.md` MUST contain these sections, identified by their heading text exactly:
+A conforming `AGENTS.md` MUST contain these sections, identified by their heading text exactly:
 
 | Section | Heading | Purpose |
 |---|---|---|
@@ -128,7 +128,7 @@ A conforming `AGENT.md` MUST contain these sections, identified by their heading
 | Git | `## Git` | Commit message format, branching model |
 | Forbidden | `## Forbidden` | Patterns and practices that are never acceptable |
 
-A conforming `AGENT.md` MAY contain additional sections.
+A conforming `AGENTS.md` MAY contain additional sections.
 
 ### 3.3 Rules Section — Required Directives
 
@@ -433,7 +433,7 @@ A conforming session summary MUST contain these sections:
 <what to do first when resuming>
 
 ## Agent Compliance
-- Read AGENT.md: ✅/❌
+- Read AGENTS.md: ✅/❌
   - Sections confirmed: <list sections agent claims to have read>
 - Read state.json: ✅/❌
 - Followed preflight protocol: ✅/❌
@@ -483,11 +483,11 @@ required_inputs:
 optional_inputs: []
 preconditions:
   - ".story/state.json exists and is valid"
-  - "AGENT.md exists at repo root"
+  - "AGENTS.md exists at repo root"
 postconditions:
   - "Task status is IN_PROGRESS"
   - "Task is assigned to developer"
-  - "Agent has read and confirmed AGENT.md"
+  - "Agent has read and confirmed AGENTS.md"
   - "Agent has read all existing code from completed tasks"
 ---
 ```
@@ -545,7 +545,7 @@ The context budget is specified in the operation's frontmatter `context_budget` 
 Budget: {context_budget} tokens
 
 Priority order:
-1. AGENT.md — ALWAYS read in full
+1. AGENTS.md — ALWAYS read in full
 2. state.json — ALWAYS read in full
 3. plan.md — ALWAYS read in full
 4. Current task's plan.md entry — ALWAYS read in full
@@ -608,7 +608,7 @@ required_inputs:
 optional_inputs: []
 preconditions:
   - ".story/ directory MUST NOT already exist (or must be empty)"
-  - "AGENT.md MUST exist at repo root"
+  - "AGENTS.md MUST exist at repo root"
 postconditions:
   - "state.json is valid per ACTS JSON Schema"
   - "All task IDs in plan.md match state.json"
@@ -643,7 +643,7 @@ initial state.
    - **Technical Decisions** — architecture choices, data model, APIs
    - **Out of Scope** — explicitly listed exclusions
 
-3. Read `AGENT.md` to understand architecture patterns and
+3. Read `AGENTS.md` to understand architecture patterns and
    constraints. The plan MUST align with the constitution.
 
 4. Decompose the spec into tasks. Write `.story/plan.md`:
@@ -674,7 +674,7 @@ initial state.
 - Do NOT write any application code.
 - Do NOT assume approval. The team must review first.
 - Task IDs MUST follow the pattern `T<n>` (T1, T2, ...).
-- The plan MUST reference architecture patterns from `AGENT.md`.
+- The plan MUST reference architecture patterns from `AGENTS.md`.
 - Context priority MUST be set for each task (1=critical, 5=skim).
 ```
 
@@ -698,11 +698,11 @@ required_inputs:
 optional_inputs: []
 preconditions:
   - ".story/state.json MUST exist and be valid"
-  - "AGENT.md MUST exist at repo root"
+  - "AGENTS.md MUST exist at repo root"
 postconditions:
   - "Task status is IN_PROGRESS"
   - "Task is assigned to developer"
-  - "Agent has read and confirmed AGENT.md"
+  - "Agent has read and confirmed AGENTS.md"
   - "Agent has read all existing code from completed tasks"
 ---
 
@@ -720,7 +720,7 @@ firewall between the agent and uncontrolled code generation.
 ## Steps
 
 1. **READ CONSTITUTION**
-   Read `AGENT.md` in full. If it references extension files, read
+   Read `AGENTS.md` in full. If it references extension files, read
    those too. Confirm to the developer that you have read it.
 
 2. **READ STATE**
@@ -815,7 +815,7 @@ postconditions:
   - "Task acceptance criteria are met"
   - "All new public functions have documentation/types"
   - "Tests pass"
-  - "Code follows AGENT.md rules"
+  - "Code follows AGENTS.md rules"
   - "files_touched accurately reflects all modified files"
 ---
 
@@ -866,7 +866,7 @@ constitution, and TDD principles.
 ## Constraints
 
 - Stay within task boundary. No scope creep.
-- Follow `AGENT.md` patterns. If tempted to deviate, ask first.
+- Follow `AGENTS.md` patterns. If tempted to deviate, ask first.
 - Every commit must compile and pass existing tests.
 ```
 
@@ -1093,8 +1093,8 @@ constitution compliance, and prepares a PR description.
 
 5. **Constitution compliance check:**
    - All public functions have documentation/types?
-   - No forbidden patterns (per `AGENT.md ## Forbidden`)?
-   - Commit messages follow conventions (per `AGENT.md ## Git`)?
+   - No forbidden patterns (per `AGENTS.md ## Forbidden`)?
+   - Commit messages follow conventions (per `AGENTS.md ## Git`)?
    - File length limits respected?
 
 6. **Agent compliance audit:**
@@ -1304,7 +1304,7 @@ ACTS VALIDATION CHECKLIST v0.3.0
 ════════════════════════════════
 
 Constitution:
-  [ ] AGENT.md exists at repo root
+  [ ] AGENTS.md exists at repo root
   [ ] Contains all required sections (Rules, Architecture, Style,
       Testing, Git, Forbidden)
   [ ] Rules section contains the 4 required directives
@@ -1398,20 +1398,20 @@ Implementations MUST NOT require any specific key in `metadata`. Implementations
 
 ### 9.2 Custom Sections
 
-`AGENT.md`, `spec.md`, `plan.md`, and session summaries MAY include sections beyond those required by this specification. Implementations MUST NOT reject files with additional sections.
+`AGENTS.md`, `spec.md`, `plan.md`, and session summaries MAY include sections beyond those required by this specification. Implementations MUST NOT reject files with additional sections.
 
 ### 9.3 Custom Operations
 
 Teams MAY define additional lifecycle operations beyond those in §5. Custom operations SHOULD:
 
-- Be documented in a `## Custom Operations` section of `AGENT.md`.
+- Be documented in a `## Custom Operations` section of `AGENTS.md`.
 - Follow the operation definition format (§5.1) with valid frontmatter.
 - Follow the same commit conventions (§7.3).
 - Not violate state machine transitions (§4.3, §4.4).
 
 ### 9.4 Context Protocol Customization
 
-Implementations MAY customize the Context Protocol steps for specific operations. However, steps 1–5 (AGENT.md, state.json, plan.md, current task entry, current task notes) MUST always be read in full. Custom steps MAY be added between or after the standard steps.
+Implementations MAY customize the Context Protocol steps for specific operations. However, steps 1–5 (AGENTS.md, state.json, plan.md, current task entry, current task notes) MUST always be read in full. Custom steps MAY be added between or after the standard steps.
 
 ---
 
@@ -1434,7 +1434,7 @@ The reference implementation provides ACTS Full conformance.
 │                    ACTS v0.3.0 QUICK REF             │
 │                                                      │
 │  Files:                                              │
-│    AGENT.md             ← rules for all agents       │
+│    AGENTS.md             ← rules for all agents       │
 │    .acts/acts.json      ← ACTS manifest              │
 │    .acts/report-protocol.md ← standard reports       │
 │    .acts/operations/*   ← operation definitions      │

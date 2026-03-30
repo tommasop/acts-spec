@@ -137,7 +137,7 @@ Standard formats defined in `.acts/report-protocol.md`:
 ### What It Checks
 
 **Layer 1 — Constitution:**
-- AGENT.md exists
+- AGENTS.md exists
 - Required sections present
 - Rules directives present
 
@@ -188,7 +188,7 @@ jobs:
 
 **Agent:**
 - Loads `acts-preflight`
-- Reads AGENT.md, state.json, plan.md
+- Reads AGENTS.md, state.json, plan.md
 - Ingests context from completed tasks
 - Presents reports:
   ```

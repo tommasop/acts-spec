@@ -55,7 +55,7 @@ For basic ACTS: no, you can disable code review in `.acts/acts.json`.
 
 ## What's the minimum to try ACTS?
 
-3 files: `AGENT.md`, `.acts/acts.json`, `.story/state.json`
+3 files: `AGENTS.md`, `.acts/acts.json`, `.story/state.json`
 
 See [Minimal Viable ACTS](docs/minimal-viable-acts.md).
 

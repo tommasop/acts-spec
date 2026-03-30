@@ -36,7 +36,7 @@ Agent: Loading acts-validate...
   
   Layer 1: Constitution
   ───────────────────────
-    ✅ AGENT.md exists at repo root
+    ✅ AGENTS.md exists at repo root
     ✅ Required sections present
     ...
   
@@ -97,13 +97,13 @@ Bob starts work on backend:
 User: Start working on T1. I'm bob.
 
 Agent: Loading acts-preflight...
-  Reading AGENT.md...
+  Reading AGENTS.md...
   Reading state.json...
   Validating: Story APPROVED ✓
   Validating: Task T1 TODO ✓
   Validating: No dependencies ✓
   Context ingestion (50000 tokens):
-    ✓ AGENT.md
+    ✓ AGENTS.md
     ✓ state.json
     ✓ plan.md
     ✓ T1 plan entry

@@ -15,11 +15,11 @@ required_inputs:
 optional_inputs: []
 preconditions:
   - ".story/state.json MUST exist and be valid"
-  - "AGENT.md MUST exist at repo root"
+  - "AGENTS.md MUST exist at repo root"
 postconditions:
   - "Task status is IN_PROGRESS"
   - "Task is assigned to developer"
-  - "Agent has read and confirmed AGENT.md"
+  - "Agent has read and confirmed AGENTS.md"
   - "Agent has read all existing code from completed tasks"
 ---
 
@@ -37,7 +37,7 @@ firewall between the agent and uncontrolled code generation.
 ## Steps
 
 1. **READ CONSTITUTION**
-   Read `AGENT.md` in full. If it references extension files, read
+   Read `AGENTS.md` in full. If it references extension files, read
    those too. Confirm to the developer that you have read it.
 
 2. **READ STATE**
@@ -115,7 +115,7 @@ firewall between the agent and uncontrolled code generation.
 Budget: 50000 tokens
 
 Priority order:
-1. AGENT.md — ALWAYS read in full
+1. AGENTS.md — ALWAYS read in full
 2. state.json — ALWAYS read in full
 3. plan.md — ALWAYS read in full
 4. Current task's plan.md entry — ALWAYS read in full

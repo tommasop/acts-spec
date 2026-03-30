@@ -1,7 +1,7 @@
 {
   "acts_version": "0.4.0",
   "conformance_level": "standard",
-  "constitution": "AGENT.md",
+  "constitution": "AGENTS.md",
   "tracker_dir": ".story",
   "operations_dir": ".acts/operations",
   "schemas_dir": ".acts/schemas",

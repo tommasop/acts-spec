@@ -26,7 +26,7 @@ wants to check conformance without running CI.
 ## Steps
 
 1. **CHECK LAYER 1: Constitution**
-   - AGENT.md exists at repo root
+   - AGENTS.md exists at repo root
    - Contains required sections: ## Rules, ## Architecture, ## Style,
      ## Testing, ## Git, ## Forbidden
    - Rules section contains 4 required directives
@@ -69,7 +69,7 @@ wants to check conformance without running CI.
    
    Layer 1: Constitution
    ───────────────────────
-     ✅ AGENT.md exists
+     ✅ AGENTS.md exists
      ✅ Required sections present
      ...
    

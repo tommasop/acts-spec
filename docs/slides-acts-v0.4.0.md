@@ -39,7 +39,7 @@ When one developer hands off to another, decisions, rationale, and state disappe
 │  .story/ directory, sessions                │
 ├─────────────────────────────────────────────┤
 │  Layer 1: CONSTITUTION                      │
-│  AGENT.md — shared rules                   │
+│  AGENTS.md — shared rules                   │
 └─────────────────────────────────────────────┘
 ```
 
@@ -431,7 +431,7 @@ Agent: ✅ Story status → REVIEW
 cp -r acts-spec/.acts ./.acts/
 
 # 2. Create your constitution
-cp acts-spec/templates/agents-minimal.md ./AGENT.md
+cp acts-spec/templates/agents-minimal.md ./AGENTS.md
 
 # 3. Install GitHuman (required for v0.4.0)
 npm install -g githuman

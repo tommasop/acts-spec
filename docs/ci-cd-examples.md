@@ -43,7 +43,7 @@ acts-validation:
 
 ## What Gets Validated
 
-- AGENT.md has required sections
+- AGENTS.md has required sections
 - state.json is valid JSON
 - Session files follow naming convention
 - All required operations exist

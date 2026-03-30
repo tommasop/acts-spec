@@ -1,6 +1,27 @@
-# Agent Configuration — [Project Name]
+# [Project Name]
 
-## Rules
+## Setup
+- Install: `[install command]`
+- Dev: `[dev command]`
+- Test: `[test command]`
+
+## Code Style
+[Project style conventions]
+
+## Testing
+[Project testing conventions]
+
+## PR Instructions
+- Title format: `[format]`
+- Run lint and test before committing
+
+---
+
+## ACTS Integration
+
+This project uses ACTS (Agent Collaborative Tracking Standard) for multi-developer coordination.
+
+### Rules
 - Agent MUST read `.story/state.json` before writing code
 - Agent MUST NOT modify files owned by completed tasks
 - Agent MUST record session summary before ending
@@ -8,7 +29,7 @@
 - Agent MUST get developer approval before committing
 - Agent MUST run code review before task completion (v0.4.0)
 
-## Agent Configuration
+### Agent Configuration
 ```json
 {
   "tool": "Cursor",
@@ -19,14 +40,8 @@
 }
 ```
 
-## Architecture
+### Architecture
 [Reference to project architecture docs]
 
-## Testing
-[Project testing conventions]
-
-## Git
-[Project git conventions]
-
-## Forbidden
+### Forbidden
 [Project forbidden patterns]

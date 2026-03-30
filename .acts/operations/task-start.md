@@ -17,7 +17,7 @@ postconditions:
   - "Task acceptance criteria are met"
   - "All new public functions have documentation/types"
   - "Tests pass"
-  - "Code follows AGENT.md rules"
+  - "Code follows AGENTS.md rules"
   - "files_touched accurately reflects all modified files"
 ---
 
@@ -111,6 +111,6 @@ constitution, and TDD principles.
 ## Constraints
 
 - Stay within task boundary. No scope creep.
-- Follow `AGENT.md` patterns. Ask before deviating.
+- Follow `AGENTS.md` patterns. Ask before deviating.
 - Every commit must compile and pass tests.
 - Use the gate before starting implementation.
