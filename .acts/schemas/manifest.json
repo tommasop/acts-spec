@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://acts-standard.org/schemas/manifest/v0.3.0",
+  "title": "ACTS Manifest",
+  "description": "Schema for .acts/acts.json — the ACTS configuration manifest.",
+  "type": "object",
+  "required": [
+    "acts_version",
+    "conformance_level",
+    "constitution",
+    "tracker_dir",
+    "operations_dir",
+    "operations",
+    "adapter"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "acts_version": {
+      "type": "string",
+      "description": "ACTS specification version.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "conformance_level": {
+      "type": "string",
+      "enum": ["basic", "standard", "full"],
+      "description": "Target conformance level."
+    },
+    "constitution": {
+      "type": "string",
+      "description": "Path to the constitution file (AGENT.md).",
+      "default": "AGENT.md"
+    },
+    "tracker_dir": {
+      "type": "string",
+      "description": "Path to the tracker directory.",
+      "default": ".story"
+    },
+    "operations_dir": {
+      "type": "string",
+      "description": "Path to the operations directory.",
+      "default": ".acts/operations"
+    },
+    "schemas_dir": {
+      "type": "string",
+      "description": "Path to the schemas directory.",
+      "default": ".acts/schemas"
+    },
+    "operations": {
+      "type": "object",
+      "required": ["required"],
+      "additionalProperties": false,
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of required operation IDs.",
+          "minItems": 5
+        },
+        "optional": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of optional operation IDs."
+        }
+      }
+    },
+    "adapter": {
+      "type": ["string", "null"],
+      "description": "Active adapter name, or null for raw operation files.",
+      "examples": ["superpowers", "cursor", "claude-code", "codex", null]
+    },
+    "context_defaults": {
+      "type": "object",
+      "description": "Default context budgets by operation.",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1000
+      }
+    }
+  }
+}

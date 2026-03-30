@@ -1,0 +1,39 @@
+{
+  "acts_version": "0.4.0",
+  "conformance_level": "standard",
+  "constitution": "AGENT.md",
+  "tracker_dir": ".story",
+  "operations_dir": ".acts/operations",
+  "schemas_dir": ".acts/schemas",
+  "code_review": {
+    "enabled": true,
+    "interface": ".acts/code-review-interface.json",
+    "provider": "githuman",
+    "required_for_tasks": ["*"],
+    "skip_for_tasks": [],
+    "directories": {
+      "active": ".story/reviews/active",
+      "archive": ".story/reviews/archive"
+    }
+  },
+  "operations": {
+    "required": [
+      "story-init",
+      "preflight",
+      "session-summary",
+      "handoff",
+      "story-review",
+      "task-review"
+    ],
+    "optional": [
+      "task-start",
+      "commit-review",
+      "compress-sessions",
+      "validate",
+      "tracker-sync",
+      "changelog",
+      "newsletter"
+    ]
+  },
+  "adapter": null
+}
