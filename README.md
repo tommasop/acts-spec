@@ -20,13 +20,16 @@ Your AI agent (Cursor, Claude Code, Copilot, etc.) reads operation files and exe
 
 ```text
 ┌─────────────────────────────────────────────┐
+│  Layer 7 (optional): MCP Context Engine     │
+│  Operation-aware context delivery            │
+├─────────────────────────────────────────────┤
 │  Your Tool (Cursor, Claude Code, etc.)      │
 ├─────────────────────────────────────────────┤
 │  ACTS Operations                            │
 │  (preflight, task-start, handoff, etc.)     │
 ├─────────────────────────────────────────────┤
 │  ACTS State (.story/)                       │
-│  (state.json, sessions, reviews)            │
+│  (state.json, sessions, decisions, reviews) │
 ├─────────────────────────────────────────────┤
 │  AGENTS.md                                  │
 │  (project context + ACTS rules)             │
@@ -98,6 +101,8 @@ npm install -g githuman
 - ✅ Code review (mandatory before commit)
 - ✅ Agent attribution (track what AI did and cost)
 - ✅ Industry alignment (AGENTS.md standard)
+- ✅ Context optimization (Layer 7: MCP engine eliminates tool call residue)
+- ✅ Cross-task learning (Layer 7: rejected approaches shared across tasks)
 
 ## What ACTS Is NOT
 
@@ -118,14 +123,16 @@ npm install -g githuman
 
 | File | Purpose |
 |------|---------|
-| [acts-v0.4.0.md](acts-v0.4.0.md) | Full specification |
+| [acts-v0.4.0.md](acts-v0.4.0.md) | Full specification (includes Layer 7) |
 | [.acts/operations/](.acts/operations/) | Workflow definitions (11 operations) |
 | [.acts/schemas/](.acts/schemas/) | JSON schemas for validation |
+| [.acts/mcp-server/](.acts/mcp-server/) | Layer 7 MCP Context Engine (TypeScript) |
 | [.acts/report-protocol.md](.acts/report-protocol.md) | Standard report formats |
 | [docs/templates/](docs/templates/) | AGENTS.md templates |
 | [docs/slides-acts-v0.4.0.md](docs/slides-acts-v0.4.0.md) | Presentation slides |
 | [docs/faq.md](docs/faq.md) | Frequently asked questions |
 | [docs/minimal-viable-acts.md](docs/minimal-viable-acts.md) | Absolute minimum to try ACTS |
+| [Layer 7 design spec](docs/superpowers/specs/2026-03-31-acts-layer7-mcp-context-engine-design.md) | MCP Context Engine design |
 
 ## Design Principles
 

@@ -23,6 +23,9 @@ When one developer hands off to another, decisions, rationale, and state disappe
 
 ```text
 ┌─────────────────────────────────────────────┐
+│  Layer 7: MCP CONTEXT ENGINE (OPTIONAL)     │
+│  Operation-aware context delivery            │
+├─────────────────────────────────────────────┤
 │  Layer 6: CODE REVIEW                       │
 │  GitHuman, mandatory before commit          │
 ├─────────────────────────────────────────────┤
@@ -415,6 +418,34 @@ Agent: ✅ Story status → REVIEW
 ```
 
 **That's it. No scripts. No complex commands. Just talk to your agent.**
+
+---
+
+# Slide 12: Layer 7 — MCP Context Engine (Optional)
+
+## When context becomes the bottleneck
+
+As stories grow, agents lose track. Layer 7 solves 10 standard context failures:
+
+| Problem | Evidence | Solution |
+|---------|----------|----------|
+| Instruction drift | 35.9% of failures | Anchor re-injected at max attention |
+| Tool call residue | Dominant after 50 turns | Server-delivered bundles |
+| Goal drift | 35.9% of failures | Explicit goal/not-goal tracking |
+| Hallucinated compliance | Self-reported today | Evidence-based verification |
+
+**How it works:**
+```
+Agent → MCP Server → Context Bundle → Agent implements
+         ↑
+  Reads state.json, plan.md, sessions,
+  decisions.json, git status
+  Delivers optimized context
+```
+
+**8 MCP tools, 8 resources, 5 prompts.** All operation-aware.
+
+**Optional.** Doesn't replace the file-based system. Accelerates it.
 
 ---
 

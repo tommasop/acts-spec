@@ -59,6 +59,15 @@ wants to check conformance without running CI.
    - Each operation has ## Purpose, ## Steps, ## Constraints
    - preflight and handoff have ## Context Protocol
 
+3b. **CHECK LAYER 7 (if enabled):**
+   - Read `.acts/acts.json` — check `mcp_context_engine.enabled`
+   - If enabled:
+     - `.acts/mcp-server/` directory exists
+     - `package.json` exists in mcp-server/
+     - `dist/index.js` exists (server is built)
+     - `.story/decisions.json` exists (or will be created on first use)
+     - `state.json` has `mcp_context` field
+
 4. **PRESENT RESULTS**
    Show validation checklist with ✅/❌ for each check.
    

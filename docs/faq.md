@@ -102,3 +102,19 @@ The agent will report non-compliance in the session summary's "Agent Compliance"
 ACTS itself is free (CC-BY-SA-4.0).
 Your AI agent tool may have costs.
 ACTS tracks token usage so you can see what you're spending.
+
+## What is Layer 7 (MCP Context Engine)?
+
+Layer 7 is an optional MCP server that provides intelligent context delivery. Instead of agents reading files ad-hoc, the server delivers pre-assembled context bundles optimized for each ACTS operation. It solves 10 standard context problems including instruction drift, tool call residue, and context degradation.
+
+Layer 7 is optional — it accelerates existing layers but doesn't replace them. The file-based system remains the source of truth.
+
+## Should I use Layer 7?
+
+**If you're starting out:** No. Begin with Layers 1-3.
+
+**If you experience context issues:** Yes. Symptoms include: agent forgets AGENTS.md rules mid-session, agent repeats rejected approaches, session summaries contain fabricated claims, agent drifts from scope on long tasks.
+
+**If you work on large stories (6+ tasks):** Recommended. Context management becomes critical at scale.
+
+See the [Layer 7 design spec](superpowers/specs/2026-03-31-acts-layer7-mcp-context-engine-design.md) for details.

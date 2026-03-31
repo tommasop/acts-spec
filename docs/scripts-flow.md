@@ -469,3 +469,52 @@ Every key decision has a gate:
 - **story-review**: Approve transition to REVIEW
 
 The human sees everything and approves every state change.
+
+---
+
+## Layer 7 Variant: MCP-Enhanced Operations
+
+When Layer 7 is enabled, the agent doesn't read files manually. Instead, the MCP server delivers pre-assembled context bundles optimized for each operation.
+
+### Preflight with MCP
+
+```
+User: Start working on T1. I'm bob.
+
+Agent: Loading acts-preflight via MCP...
+  [MCP server delivers pre-assembled context bundle]
+  
+  ### Story Board (from MCP)
+  [same table, but delivered as structured resource]
+  
+  ### Context Anchor
+  Goal: Build TOTP setup endpoint
+  Constraints: Don't touch frontend (T3 scope)
+  
+  ### Rejected Approaches from Other Tasks
+  None yet (T1 is first task)
+  
+  ### Gate: approve
+  "Ready to proceed with T1? (yes/no)"
+```
+
+### Implementation with MCP
+
+```
+Agent: Implementing T1...
+  [uses acts_record_decision to log choices]
+  [uses acts_check_ownership before modifying files]
+  [uses acts_update_anchor every 15 turns]
+  
+  Anchor refreshed:
+  Goal: Build TOTP setup endpoint
+  Turn count: 23
+  Constraints: Don't touch frontend (T3 scope)
+```
+
+**Key differences from file-based flow:**
+- No manual file reads — MCP server delivers context bundles
+- Anchor re-injected at maximum attention position every 15 turns
+- Decisions recorded with evidence (file:line or code quote)
+- Loop detection prevents repeated context requests
+- Cross-task learnings surface rejected approaches automatically

@@ -40,6 +40,10 @@ This project uses ACTS (Agent Collaborative Tracking Standard) for multi-develop
 }
 ```
 
+### MCP Context Engine (optional)
+If Layer 7 is enabled, the MCP server delivers context automatically.
+No manual file reads needed. Configure in `.acts/acts.json`.
+
 ### Architecture
 [Reference to project architecture docs]
 

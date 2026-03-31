@@ -49,6 +49,16 @@ scripts/
 └── validate.sh                    # CI/CD conformance validation ONLY
 
 .acts/
+├── mcp-server/                    # v0.5.0: Layer 7 MCP server
+│   ├── package.json
+│   ├── src/
+│   │   ├── index.ts              # Server entry
+│   │   ├── engine/               # Context engine core
+│   │   ├── tools/                # 8 MCP tools
+│   │   ├── resources/            # 8 MCP resources
+│   │   ├── prompts/              # 5 MCP prompts
+│   │   └── lib/                  # State/session/git readers
+│   └── dist/                     # Compiled output
 ├── code-review-interface.json     # v0.4.0: Generic review interface
 ├── report-protocol.md             # Standard report formats for gates
 ├── operations/                    # Agent-executed with GATE steps
@@ -397,6 +407,66 @@ Enable/disable in `.acts/acts.json`:
 - **v0.3.0 projects:** Set `code_review.enabled: false` to disable
 - **Migration:** Install GitHuman, enable when ready
 - **Optional:** Can enable per-story or globally
+
+---
+
+## MCP Context Engine (v0.5.0+)
+
+**New Layer 7:** Optional MCP server for operation-aware context delivery.
+
+### What It Does
+
+Replaces manual file reads with intelligent context delivery:
+- Agent calls `acts_begin_operation` → receives pre-assembled context bundle
+- Context is attention-optimized (critical items last)
+- Decisions recorded with evidence via `acts_record_decision`
+- Loop detection prevents wasted tokens
+- Cross-task learning surfaces rejected approaches
+
+### Setup
+
+```bash
+cd .acts/mcp-server
+npm install
+npm run build
+```
+
+Add to your MCP client config:
+```json
+{
+  "mcpServers": {
+    "acts-context-engine": {
+      "command": "node",
+      "args": ["/path/to/repo/.acts/mcp-server/dist/index.js"]
+    }
+  }
+}
+```
+
+### Configuration
+
+In `.acts/acts.json`:
+```json
+{
+  "mcp_context_engine": {
+    "enabled": true,
+    "server_path": ".acts/mcp-server",
+    "transport": "stdio"
+  }
+}
+```
+
+### MCP Surface
+
+| Type | Count | Examples |
+|------|-------|---------|
+| Tools | 8 | `acts_begin_operation`, `acts_record_decision`, `acts_verify_state` |
+| Resources | 8 | `acts://story/state`, `acts://task/{id}/anchor`, `acts://gaps` |
+| Prompts | 5 | `acts_preflight`, `acts_task_start`, `acts_handoff` |
+
+### Conformance
+
+Layer 7 is OPTIONAL for all conformance levels. It doesn't affect Basic, Standard, or Full conformance.
 
 ---
 

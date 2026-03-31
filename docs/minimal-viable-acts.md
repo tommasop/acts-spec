@@ -125,6 +125,25 @@ Once basics work, add:
 2. **Schemas** — Copy from `.acts/schemas/` for validation
 3. **GitHuman** — Install for code review gates
 4. **Templates** — Use for team coordination
+5. **MCP Context Engine** — Enable Layer 7 for context optimization
+
+### Layer 7: MCP Context Engine (when context issues arise)
+
+When your stories grow and context becomes a bottleneck:
+
+```bash
+# Install MCP server dependencies
+cd .acts/mcp-server && npm install && npm run build
+
+# Add to your MCP client config (Claude Code, Cursor, etc.)
+```
+
+Layer 7 provides:
+- Operation-aware context delivery (no more manual file reads)
+- Attention-optimized context ordering (critical info always visible)
+- Cross-task learning (rejected approaches shared across tasks)
+- Loop detection (prevents wasted tokens on repeated reads)
+- Evidence-based compliance verification (catches fabricated claims)
 
 ---
 

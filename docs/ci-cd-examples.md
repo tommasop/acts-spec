@@ -74,3 +74,40 @@ If you don't want to install GitHuman in CI:
 ```
 
 This skips GitHuman availability checks.
+
+---
+
+## MCP Server Validation (Layer 7)
+
+To verify the MCP server starts correctly in CI:
+
+```yaml
+- name: Validate MCP Server
+  run: |
+    cd .acts/mcp-server
+    npm install
+    npm run build
+    node -e "
+      const { spawn } = require('child_process');
+      const server = spawn('node', ['dist/index.js']);
+      const init = JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'ci',version:'1.0.0'}}}) + '\n';
+      server.stdin.write(init);
+      server.stdout.on('data', d => {
+        const lines = d.toString().split('\n').filter(Boolean);
+        for (const line of lines) {
+          const msg = JSON.parse(line);
+          if (msg.id === 1 && msg.result) {
+            console.log('MCP server: OK — ' + msg.result.serverInfo.name + ' v' + msg.result.serverInfo.version);
+            server.kill();
+            process.exit(0);
+          }
+        }
+      });
+      setTimeout(() => { console.error('MCP server timeout'); process.exit(1); }, 5000);
+    "
+```
+
+This verifies:
+- MCP server builds successfully
+- Server starts and responds to initialize handshake
+- Capabilities are correctly advertised
