@@ -57,6 +57,9 @@ The key words "MUST", "MUST NOT", "SHOULD", "SHOULD NOT", "MAY" in this document
 | **Agent Compliance** | Self-reported record of which ACTS protocols an agent followed during a session. |
 | **Report Protocol** | Standard formats for presenting information to humans during operations. |
 | **Gate** | Explicit approval checkpoint in an operation where the agent MUST wait for human confirmation before proceeding. |
+| **MCP Context Engine** | Layer 7 — an optional MCP server that provides operation-aware context delivery, compaction, anchoring, and verification. |
+| **Context Anchor** | A compact structured summary of the current task state, re-injected at the end of context to maintain instruction attention. |
+| **Decision Authority** | The trust level of a recorded decision: `developer_approved` (human-confirmed) or `agent_decided` (autonomous). |
 
 ### 1.4 Changes from v0.3.0
 
@@ -66,22 +69,31 @@ The key words "MUST", "MUST NOT", "SHOULD", "SHOULD NOT", "MAY" in this document
 | Constitution | AGENTS.md now includes project context sections (setup, testing, code style) alongside ACTS rules |
 | Constitution | Integrates with AGENTS.md ecosystem (Cursor, Claude Code, OpenCode, Copilot, etc.) |
 | Layers | Layer 6 added — Code Review Interface |
+| Layers | Layer 7 added — MCP Context Engine (OPTIONAL) |
 | Code Review | Mandatory code review before task completion (via task-review operation) |
 | Code Review | Generic CLI-based provider interface (GitHuman primary) |
 | Code Review | New operations: `task-review` (implicit), `commit-review` (explicit) |
 | Artifacts | `.story/reviews/` directory for active and archived reviews |
+| Artifacts | `.story/decisions.json` — structured decisions, rejected approaches, open questions |
 | Report Protocol | New report: Code Review |
 | Gates | New gate type: `review` — for external tool integration |
 | Validation | Review artifacts included in conformance checks |
+| Context | MCP Context Engine as optional Layer 7 — operation-aware context delivery |
+| Context | Attention-optimized context ordering (critical items last) |
+| Context | Loop detection, anchor management, cross-task learning propagation |
 
 ---
 
 ## 2. Layers
 
-ACTS is organized in six layers. Each layer depends on the ones below it.
+ACTS is organized in seven layers. Each layer depends on the ones below it.
 
 ```text
 ┌─────────────────────────────────────────────┐
+│  Layer 7: MCP CONTEXT ENGINE (OPTIONAL)     │
+│  Operation-aware context delivery            │
+│  Attention optimization, compaction          │
+├─────────────────────────────────────────────┤
 │  Layer 6: CODE REVIEW       (REQUIRED v0.4+)│
 │  Generic interface + provider adapters      │
 │  GitHuman (primary), CLI-based, extensible  │
@@ -103,9 +115,9 @@ ACTS is organized in six layers. Each layer depends on the ones below it.
 └─────────────────────────────────────────────┘
 ```
 
-**Layers 1–4** are the standard. **Layer 5** = community adapters, not governed by the spec. **Layer 6** is REQUIRED for ACTS v0.4.0+ conformance.
+**Layers 1–4** are the standard. **Layer 5** = community adapters, not governed by the spec. **Layer 6** is REQUIRED for ACTS v0.4.0+ conformance. **Layer 7** is OPTIONAL — it accelerates and improves existing layers but doesn't replace them.
 
-A **minimal** ACTS implementation MUST include Layers 1 and 2. Layer 3 is REQUIRED for ACTS Standard conformance. Layer 4 is OPTIONAL. Layer 5 is community-maintained. Layer 6 is REQUIRED for code review features (v0.4.0+).
+A **minimal** ACTS implementation MUST include Layers 1 and 2. Layer 3 is REQUIRED for ACTS Standard conformance. Layer 4 is OPTIONAL. Layer 5 is community-maintained. Layer 6 is REQUIRED for code review features (v0.4.0+). Layer 7 is OPTIONAL for all conformance levels.
 
 ---
 
@@ -274,6 +286,32 @@ The authoritative schema is shipped at `.acts/schemas/state.json`. Implementatio
       "type": "object",
       "description": "Extension point for team-specific data.",
       "additionalProperties": true
+    },
+    "mcp_context": {
+      "type": "object",
+      "description": "Layer 7 MCP Context Engine state. Only present when Layer 7 is enabled.",
+      "properties": {
+        "anchor_version": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Version counter for the context anchor. Incremented each time acts_update_anchor is called."
+        },
+        "decisions_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total decisions recorded in .story/decisions.json."
+        },
+        "last_compaction": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the last compaction run."
+        },
+        "loop_warnings": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of loop warnings emitted by the MCP server this story."
+        }
+      }
     }
   },
   "$defs": {
@@ -585,6 +623,12 @@ scope declaration what was NOT read.
 ```
 
 Implementations MAY customize the protocol in their operation files, but MUST preserve steps 1–5 as always-read-in-full.
+
+**Alternative: MCP Context Engine (Layer 7)**
+
+When Layer 7 is enabled, the MCP server replaces the static 9-step protocol with operation-aware context delivery. The agent calls `acts_begin_operation` to receive a pre-assembled context bundle instead of reading files manually. This addresses 10 standard context failures including instruction centrifugation, tool call residue, stale reasoning, and context drift.
+
+The MCP server delivers context in reverse priority order (critical items last) to exploit transformer recency bias. See §11 for the full Layer 7 specification.
 
 ### 5.3 Required Operations
 
@@ -1499,7 +1543,7 @@ Projects without code review support:
 
 ---
 
-## 11. Extension Points
+## 10. Extension Points
 
 ACTS is designed to be extended without modifying the core standard.
 
@@ -1539,6 +1583,147 @@ Implementations MAY customize the Context Protocol steps for specific operations
 
 ---
 
+## 11. Layer 7: MCP Context Engine
+
+Layer 7 is OPTIONAL for all conformance levels. It provides operation-aware context delivery via an MCP (Model Context Protocol) server that sits between the filesystem and the AI agent.
+
+### 11.1 Purpose
+
+ACTS's Context Protocol (§5.2) defines a static 9-step reading order. Layer 7 replaces this with intelligent, operation-aware context delivery that addresses 10 well-documented failure modes in AI agent workflows:
+
+| # | Problem | Failure Rate | MCP Solution |
+|---|---------|-------------|--------------|
+| 1 | Instruction centrifugation | 35.9% of failures | Anchor re-injected at context END |
+| 2 | Tool call residue | Dominant after ~50 turns | Server-delivered bundles, no ad-hoc reads |
+| 3 | Stale reasoning | 17% of failures | `decisions.json` overrides plan |
+| 4 | Memory corruption | Compounds across sessions | `acts_verify_state` cross-checks claims |
+| 5 | Goal drift | 35.9% of failures | Explicit goal/not-goal in anchor |
+| 6 | Context drift | 35.6% of failures | Incremental delivery, auto-compaction |
+| 7 | Lost in the middle | Universal | Critical items delivered last |
+| 8 | Recursive loops | Burns tokens | Loop detection on repeated calls |
+| 9 | Handoff drift | Multiplies across agents | Cross-task learning propagation |
+| 10 | Hallucinated compliance | Self-reported today | Evidence-based verification |
+
+See the design spec at `docs/superpowers/specs/2026-03-31-acts-layer7-mcp-context-engine-design.md` for full problem analysis with research citations.
+
+### 11.2 Architecture
+
+An MCP server at `.acts/mcp-server/` that reads/writes ACTS files. The file-based system remains the source of truth — the server is a context accelerator, not a replacement.
+
+```
+┌─────────────────────────────────────────────────────┐
+│  AI Agent (Cursor, Claude Code, etc.)               │
+├─────────────────────────────────────────────────────┤
+│  ACTS MCP Server (.acts/mcp-server/)                │
+│  ┌──────────┐ ┌───────────┐ ┌────────────────────┐  │
+│  │  Tools   │ │ Resources │ │     Prompts        │  │
+│  └──────────┘ └───────────┘ └────────────────────┘  │
+│  ┌──────────────────────────────────────────────┐   │
+│  │         Context Engine (internal)            │   │
+│  └──────────────────────────────────────────────┘   │
+├─────────────────────────────────────────────────────┤
+│  .story/ + .acts/ + AGENTS.md  (source of truth)    │
+└─────────────────────────────────────────────────────┘
+```
+
+### 11.3 MCP Tools
+
+A conforming Layer 7 implementation MUST expose these tools:
+
+| Tool | Purpose | Problems Solved |
+|------|---------|-----------------|
+| `acts_begin_operation` | Start an operation, receive pre-assembled context bundle | #1, #5, #6, #7 |
+| `acts_get_context` | Get next context chunk (incremental delivery) | #1, #2, #7 |
+| `acts_record_decision` | Record decision with evidence and authority | #3, #4 |
+| `acts_verify_state` | Cross-reference claims against actual state | #4, #10 |
+| `acts_update_anchor` | Update context anchor (re-inject constraints) | #1, #5 |
+| `acts_compact_context` | Compact sessions with preservation contract | #2, #3 |
+| `acts_check_ownership` | Check file modification boundaries | #5, #6 |
+| `acts_propagate_learning` | Share rejected approaches across tasks | #9 |
+
+### 11.4 MCP Resources
+
+A conforming Layer 7 implementation MUST expose these resources:
+
+| Resource | URI | Content |
+|----------|-----|---------|
+| Story State | `acts://story/state` | Parsed, validated state.json |
+| Story Board | `acts://story/board` | Computed task status table |
+| Ownership Map | `acts://story/ownership` | Files owned by completed tasks |
+| Task Context | `acts://task/{id}/context` | Full context bundle for operation |
+| Task Anchor | `acts://task/{id}/anchor` | Compact structured summary (live) |
+| Task Learnings | `acts://task/{id}/learnings` | Rejected approaches from ALL tasks |
+| Session Current | `acts://session/current` | Live session state |
+| Gaps | `acts://gaps` | Detected context gaps |
+
+### 11.5 MCP Prompts
+
+A conforming Layer 7 implementation MUST expose these prompts:
+
+| Prompt | Parameters | Purpose |
+|--------|-----------|---------|
+| `acts_preflight` | `task_id`, `developer` | Preflight with context pre-loaded |
+| `acts_task_start` | `task_id` | Implementation with scope/ownership/learnings |
+| `acts_session_summary` | `developer` | Session recording with live verification |
+| `acts_handoff` | `task_id`, `new_developer` | Handoff briefing with deep context |
+| `acts_story_review` | — | Review with all ACs and compliance |
+
+### 11.6 Attention Optimization
+
+The context engine MUST deliver content in reverse priority order to exploit transformer recency bias:
+
+```
+[last]  ← Agent generates here (maximum attention)
+  Anchor: goal, constraints, ownership
+  Current task: plan entry + decisions override
+  Dependency interfaces (if relevant)
+  Rejected approaches from other tasks (if relevant)
+  Session summaries (latest only, compacted)
+  Historical context
+[first] ← Minimum attention
+```
+
+### 11.7 Loop Detection
+
+The server MUST track tool call patterns. If `acts_get_context` is called with identical parameters 3+ times consecutively, the server MUST return a loop warning.
+
+### 11.8 `.story/decisions.json`
+
+When Layer 7 is enabled, a `decisions.json` file MUST exist in `.story/`. It records structured decisions, rejected approaches, and open questions.
+
+The authoritative schema is at `.acts/schemas/decisions.json`. The file contains three arrays:
+
+- **`decisions`** — decisions that override or clarify plan entries. Each decision MUST include evidence (file:line or quoted text) and an authority level (`developer_approved` or `agent_decided`).
+- **`rejected_approaches`** — approaches tried and found not to work. Preserved for cross-task learning. MUST never be compressed.
+- **`open_questions`** — unresolved items needing developer input.
+
+### 11.9 Configuration
+
+Layer 7 is configured in `.acts/acts.json`:
+
+```json
+{
+  "mcp_context_engine": {
+    "enabled": true,
+    "server_path": ".acts/mcp-server",
+    "transport": "stdio",
+    "config": {
+      "context_budget_default": 50000,
+      "loop_threshold": 3,
+      "turn_refresh_interval": 15,
+      "compaction_auto_trigger": 10,
+      "attention_optimization": true
+    }
+  }
+}
+```
+
+### 11.10 Conformance
+
+Layer 7 is OPTIONAL. An implementation MAY declare Layer 7 support without affecting its Basic, Standard, or Full conformance level. When Layer 7 is enabled, the MCP server MUST be compatible with the existing file-based operations — an agent that doesn't use the MCP server MUST still work correctly.
+
+---
+
 ## 12. Reference Implementation
 
 The reference implementation uses [Superpowers](https://github.com/obra/superpowers) skills and bash scripts. It is maintained at:
@@ -1555,7 +1740,7 @@ The reference implementation provides ACTS Full conformance.
 
 ```text
 ┌──────────────────────────────────────────────────────┐
-│                    ACTS v0.4.-1 QUICK REF             │
+│                    ACTS v0.5.0 QUICK REF             │
 │                                                      │
 │  Files:                                              │
 │    AGENTS.md             ← rules for all agents       │
@@ -1565,11 +1750,13 @@ The reference implementation provides ACTS Full conformance.
 │    .acts/operations/*   ← operation definitions      │
 │    .acts/schemas/*      ← JSON schemas               │
 │    .acts/review-providers/* ← provider configs       │
+│    .acts/mcp-server/    ← Layer 7 MCP server         │
 │    .story/state.json    ← canonical state            │
 │    .story/spec.md       ← what to build              │
 │    .story/plan.md       ← how to build it            │
 │    .story/sessions/*    ← handoff artifacts          │
 │    .story/reviews/*     ← code review artifacts      │
+│    .story/decisions.json ← decisions + learnings     │
 │                                                      │
 │  Story:  ANALYSIS → APPROVED → IN_PROGRESS →         │
 │          REVIEW → DONE                               │
@@ -1588,6 +1775,7 @@ The reference implementation provides ACTS Full conformance.
 │  Context budget: operations declare token limits     │
 │  Concurrency: worktrees required for multi-dev       │
 │  Compliance: session summaries record agent behavior │
+│  Layer 7 (optional): MCP context engine              │
 │                                                      │
 │  Golden rule: the tracker is the source of truth.    │
 └──────────────────────────────────────────────────────┘
@@ -1603,6 +1791,7 @@ The following JSON schemas are included in `.acts/schemas/`:
 | `manifest.json` | Validates `.acts/acts.json` |
 | `session-summary.json` | Validates session summary structure |
 | `operation-meta.json` | Validates operation frontmatter |
+| `decisions.json` | Validates `.story/decisions.json` (Layer 7) |
 
 ## Appendix C: Report Protocol
 
@@ -1627,21 +1816,24 @@ The following report formats are defined in `.acts/report-protocol.md`:
 
 ## Appendix D: Comparison with Existing Approaches
 
-| Aspect | Raw git | Agile board only | ACTS v0.4.0 |
-|---|---|---|---|
-| Agent-readable state | ❌ | ❌ | ✅ JSON schema |
-| Drift prevention | ❌ | ❌ | ✅ Preflight check |
-| Handoff context | Commit msgs only | Ticket comments | ✅ Structured sessions + compression |
-| File ownership tracking | ❌ | ❌ | ✅ files_touched |
-| Versioned decisions | ❌ | ❌ | ✅ task notes + sessions |
-| Human-in-the-loop | ❌ | ✅ (manual) | ✅ Gates with Report Protocol |
-| Code review | ❌ | Post-commit PR | ✅ Pre-commit mandatory |
-| AI code review | ❌ | ❌ | ✅ GitHuman integration |
-| Works offline | ✅ | ❌ | ✅ git-native |
-| Tool-agnostic | ✅ | Varies | ✅ by design |
-| Context-aware | — | — | ✅ Context protocol |
-| Observable | — | — | ✅ Agent compliance |
-| Concurrency-safe | — | — | ✅ Worktree model |
+| Aspect | Raw git | Agile board only | ACTS v0.4.0 | ACTS v0.5.0 (Layer 7) |
+|---|---|---|---|---|
+| Agent-readable state | ❌ | ❌ | ✅ JSON schema | ✅ MCP resources |
+| Drift prevention | ❌ | ❌ | ✅ Preflight check | ✅ Anchor + attention optimization |
+| Handoff context | Commit msgs only | Ticket comments | ✅ Structured sessions + compression | ✅ Cross-task learning propagation |
+| File ownership tracking | ❌ | ❌ | ✅ files_touched | ✅ acts_check_ownership |
+| Versioned decisions | ❌ | ❌ | ✅ task notes + sessions | ✅ decisions.json with evidence |
+| Human-in-the-loop | ❌ | ✅ (manual) | ✅ Gates with Report Protocol | ✅ Gates + loop detection |
+| Code review | ❌ | Post-commit PR | ✅ Pre-commit mandatory | ✅ Pre-commit mandatory |
+| AI code review | ❌ | ❌ | ✅ GitHuman integration | ✅ GitHuman integration |
+| Works offline | ✅ | ❌ | ✅ git-native | ✅ git-native (MCP optional) |
+| Tool-agnostic | ✅ | Varies | ✅ by design | ✅ by design |
+| Context-aware | — | — | ✅ Context protocol | ✅ Operation-aware delivery |
+| Observable | — | — | ✅ Agent compliance | ✅ Evidence-based verification |
+| Concurrency-safe | — | — | ✅ Worktree model | ✅ Worktree model |
+| Attention-optimized | — | — | ❌ | ✅ Reverse priority order |
+| Loop detection | — | — | ❌ | ✅ MCP server tracking |
+| Cross-task learning | — | — | ❌ | ✅ Rejected approach propagation |
 
 ---
 

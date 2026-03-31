@@ -77,6 +77,32 @@
       "type": "object",
       "description": "Extension point for team-specific data.",
       "additionalProperties": true
+    },
+    "mcp_context": {
+      "type": "object",
+      "description": "Layer 7 MCP Context Engine state. Only present when Layer 7 is enabled.",
+      "properties": {
+        "anchor_version": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Version counter for the context anchor."
+        },
+        "decisions_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total decisions recorded in .story/decisions.json."
+        },
+        "last_compaction": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the last compaction run."
+        },
+        "loop_warnings": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of loop warnings emitted by the MCP server."
+        }
+      }
     }
   },
   "$defs": {

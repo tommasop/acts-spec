@@ -1,39 +1,28 @@
 {
-  "acts_version": "0.4.0",
-  "conformance_level": "standard",
-  "constitution": "AGENTS.md",
-  "tracker_dir": ".story",
-  "operations_dir": ".acts/operations",
-  "schemas_dir": ".acts/schemas",
-  "code_review": {
-    "enabled": true,
-    "interface": ".acts/code-review-interface.json",
-    "provider": "githuman",
-    "required_for_tasks": ["*"],
-    "skip_for_tasks": [],
-    "directories": {
-      "active": ".story/reviews/active",
-      "archive": ".story/reviews/archive"
+  "manifest_version": "0.4.0",
+  "description": "Project-level ACTS configuration — controls behavior, integration, and protocol settings.",
+  "commit_convention": "conventional",
+  "review_provider": "githuman",
+  "review_provider_config": {
+    "port": 8787,
+    "mode": "web"
+  },
+  "allow_reopen_completed": false,
+  "agent_roles": [
+    "coder",
+    "reviewer"
+  ],
+  "mcp_context_engine": {
+    "enabled": false,
+    "description": "Layer 7: MCP Context Engine. Optional. Provides operation-aware context delivery, compaction, anchoring, and verification via MCP server.",
+    "server_path": ".acts/mcp-server",
+    "transport": "stdio",
+    "config": {
+      "context_budget_default": 50000,
+      "loop_threshold": 3,
+      "turn_refresh_interval": 15,
+      "compaction_auto_trigger": 10,
+      "attention_optimization": true
     }
-  },
-  "operations": {
-    "required": [
-      "story-init",
-      "preflight",
-      "session-summary",
-      "handoff",
-      "story-review",
-      "task-review"
-    ],
-    "optional": [
-      "task-start",
-      "commit-review",
-      "compress-sessions",
-      "validate",
-      "tracker-sync",
-      "changelog",
-      "newsletter"
-    ]
-  },
-  "adapter": null
+  }
 }
