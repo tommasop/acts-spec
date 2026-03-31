@@ -12,6 +12,12 @@
     "coder",
     "reviewer"
   ],
+  "jira_integration": {
+    "enabled": true,
+    "description": "Auto-fetch Jira issues during story-init when story_id matches a Jira key pattern.",
+    "fetch_fields": ["description", "summary", "issuetype", "labels", "components"],
+    "key_pattern": "^[A-Z]+-\\d+$"
+  },
   "mcp_context_engine": {
     "enabled": false,
     "description": "Layer 7: MCP Context Engine. Optional. Provides operation-aware context delivery, compaction, anchoring, and verification via MCP server.",

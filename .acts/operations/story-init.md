@@ -10,11 +10,11 @@ required_inputs:
     required: true
   - name: title
     type: string
-    required: true
+    required: false
   - name: source
     type: string
-    required: true
-    description: "Raw requirements: pasted text, Jira description, PRD excerpt, or file path"
+    required: false
+    description: "Raw requirements: pasted text, Jira description, PRD excerpt, or file path. If omitted and story_id matches a Jira key, auto-fetched from Jira."
 optional_inputs: []
 preconditions:
   - ".story/ directory MUST NOT already exist (or must be empty)"
@@ -36,6 +36,29 @@ source material, decomposes it into an execution plan, and sets the
 initial state.
 
 ## Steps
+
+0. **FETCH FROM JIRA** (if `source` is omitted and `story_id` matches a Jira key pattern `/^[A-Z]+-\d+$/`)
+   a. Call the Atlassian MCP tool to fetch the issue by key:
+      - `description` (body) → used as `source`
+      - `summary` → used as `title` (if not provided)
+      - `issuetype` → stored in `jira_metadata`
+      - `labels` → stored in `jira_metadata`
+      - `components` → stored in `jira_metadata`
+   b. Record `jira_metadata` object for state.json:
+      ```
+      jira_metadata:
+        issue_key: "<story_id>"
+        issue_type: "<from issuetype.name>"
+        labels: [<from labels>]
+        components: [<from components.name>]
+        url: "<issue URL>"
+        fetched_at: "<ISO 8601 timestamp>"
+      ```
+   c. If the fetch fails for any reason, prompt the user:
+      "Could not fetch Jira issue <story_id>. Please provide the source material manually."
+      Wait for input before continuing.
+   d. If `story_id` does NOT match a Jira key pattern and `source` is omitted,
+      prompt the user to provide source material manually.
 
 1. **CREATE DIRECTORY STRUCTURE**
    ```
@@ -74,6 +97,7 @@ initial state.
    - `tasks`: one entry per task, all `TODO`
    - `session_count`: 0
    - `compressed`: false
+   - `jira_metadata`: (only if auto-fetched from Jira in step 0)
 
 6. **PRESENT SUMMARY**
    Show:

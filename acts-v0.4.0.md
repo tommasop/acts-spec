@@ -312,6 +312,43 @@ The authoritative schema is shipped at `.acts/schemas/state.json`. Implementatio
           "description": "Count of loop warnings emitted by the MCP server this story."
         }
       }
+    },
+    "jira_metadata": {
+      "type": "object",
+      "description": "Jira issue metadata. Present when the story was auto-fetched from Jira during story-init.",
+      "properties": {
+        "issue_key": {
+          "type": "string",
+          "description": "The Jira issue key (e.g. PROJ-305).",
+          "examples": ["PROJ-305"]
+        },
+        "issue_type": {
+          "type": "string",
+          "description": "Jira issue type name (e.g. Story, Task, Bug).",
+          "examples": ["Story", "Task", "Bug"]
+        },
+        "labels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Labels assigned to the Jira issue."
+        },
+        "components": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Component names assigned to the Jira issue."
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Direct URL to the Jira issue."
+        },
+        "fetched_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when the issue was fetched."
+        }
+      },
+      "required": ["issue_key", "issue_type", "url", "fetched_at"]
     }
   },
   "$defs": {
@@ -667,11 +704,11 @@ required_inputs:
     required: true
   - name: title
     type: string
-    required: true
+    required: false
   - name: source
     type: string
-    required: true
-    description: "Raw requirements: pasted text, Jira description, PRD excerpt, or file path"
+    required: false
+    description: "Raw requirements: pasted text, Jira description, PRD excerpt, or file path. If omitted and story_id matches a Jira key, auto-fetched from Jira."
 optional_inputs: []
 preconditions:
   - ".story/ directory MUST NOT already exist (or must be empty)"
@@ -693,6 +730,14 @@ source material, decomposes it into an execution plan, and sets the
 initial state.
 
 ## Steps
+
+0. If `source` is omitted and `story_id` matches a Jira key
+   pattern (`/^[A-Z]+-\d+$/`), auto-fetch the issue via the
+   connected Atlassian MCP:
+   - `description` (body) → used as `source`
+   - `summary` → used as `title` (if not provided)
+   - `issuetype`, `labels`, `components` → stored in `jira_metadata`
+   If the fetch fails, prompt the user to provide source manually.
 
 1. Create the tracker directory structure:
    ```
@@ -731,6 +776,7 @@ initial state.
    - `tasks`: one entry per task from the plan, all `TODO`
    - `session_count`: 0
    - `compressed`: false
+   - `jira_metadata`: (only if auto-fetched from Jira in step 0)
 
 6. Commit all tracker files:
    `docs(<story_id>): initialize ACTS tracker`

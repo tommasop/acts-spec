@@ -103,6 +103,43 @@
           "description": "Count of loop warnings emitted by the MCP server."
         }
       }
+    },
+    "jira_metadata": {
+      "type": "object",
+      "description": "Jira issue metadata. Present when the story was auto-fetched from Jira during story-init.",
+      "properties": {
+        "issue_key": {
+          "type": "string",
+          "description": "The Jira issue key (e.g. PROJ-305).",
+          "examples": ["PROJ-305"]
+        },
+        "issue_type": {
+          "type": "string",
+          "description": "Jira issue type name (e.g. Story, Task, Bug).",
+          "examples": ["Story", "Task", "Bug"]
+        },
+        "labels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Labels assigned to the Jira issue."
+        },
+        "components": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Component names assigned to the Jira issue."
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Direct URL to the Jira issue."
+        },
+        "fetched_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when the issue was fetched."
+        }
+      },
+      "required": ["issue_key", "issue_type", "url", "fetched_at"]
     }
   },
   "$defs": {
