@@ -140,6 +140,15 @@
         }
       },
       "required": ["issue_key", "issue_type", "url", "fetched_at"]
+    },
+    "jira_task_map": {
+      "type": "object",
+      "description": "Mapping of ACTS task IDs to Jira subtask keys. Populated by plan-review when subtasks are created.",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[A-Z]+-\\d+$",
+        "description": "Jira subtask key (e.g. PROJ-306)."
+      }
     }
   },
   "$defs": {

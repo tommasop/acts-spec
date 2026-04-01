@@ -14,9 +14,19 @@
   ],
   "jira_integration": {
     "enabled": true,
-    "description": "Auto-fetch Jira issues during story-init when story_id matches a Jira key pattern.",
+    "description": "Jira integration for story-init auto-fetch and tracker-sync status push.",
     "fetch_fields": ["description", "summary", "issuetype", "labels", "components"],
-    "key_pattern": "^[A-Z]+-\\d+$"
+    "key_pattern": "^[A-Z]+-\\d+$",
+    "sync": {
+      "create_subtasks": true,
+      "sync_on_completion": true,
+      "status_map": {
+        "TODO": null,
+        "IN_PROGRESS": "In Progress",
+        "DONE": "Done",
+        "BLOCKED": null
+      }
+    }
   },
   "mcp_context_engine": {
     "enabled": false,

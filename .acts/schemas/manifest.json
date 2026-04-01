@@ -78,7 +78,7 @@
     },
     "jira_integration": {
       "type": "object",
-      "description": "Jira auto-fetch configuration for story-init.",
+      "description": "Jira integration for story-init auto-fetch and tracker-sync status push.",
       "properties": {
         "enabled": {
           "type": "boolean",
@@ -94,6 +94,32 @@
           "type": "string",
           "description": "Regex pattern to identify Jira keys in story_id.",
           "default": "^[A-Z]+-\\d+$"
+        },
+        "sync": {
+          "type": "object",
+          "description": "Configuration for ACTS-to-Jira status sync via tracker-sync.",
+          "properties": {
+            "create_subtasks": {
+              "type": "boolean",
+              "description": "Whether to offer creating Jira subtasks during plan-review.",
+              "default": false
+            },
+            "sync_on_completion": {
+              "type": "boolean",
+              "description": "Whether to suggest syncing Jira status when a task is completed.",
+              "default": true
+            },
+            "status_map": {
+              "type": "object",
+              "description": "Mapping of ACTS task statuses to Jira transition names. Null means no transition.",
+              "properties": {
+                "TODO": { "type": ["string", "null"] },
+                "IN_PROGRESS": { "type": ["string", "null"] },
+                "DONE": { "type": ["string", "null"] },
+                "BLOCKED": { "type": ["string", "null"] }
+              }
+            }
+          }
         }
       },
       "required": ["enabled"]
