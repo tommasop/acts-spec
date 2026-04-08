@@ -84,6 +84,21 @@ mkdir -p .story/{tasks,sessions,reviews/{active,archive}}
 npm install -g githuman
 ```
 
+### Quick Install (one-liner)
+
+For new or existing projects, use the automated installer:
+
+```bash
+curl -sL https://raw.githubusercontent.com/tommasop/acts-spec/master/scripts/install-acts.sh | bash
+```
+
+This single command will:
+- Download and install the `.acts/` directory
+- Create the `.story/` directory structure  
+- Create or update `AGENTS.md` with ACTS integration
+- Install GitHuman (if npm is available)
+- Update `.gitignore` with recommended entries
+
 ## How It Works
 
 1. **Initialize a story** — Creates spec, plan, and task breakdown
