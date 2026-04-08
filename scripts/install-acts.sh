@@ -45,25 +45,26 @@ cd "$REPO_ROOT"
 log_info "Installing ACTS protocol in $(basename "$REPO_ROOT")..."
 
 # Determine ACTS source - download from GitHub or use local files
-# First, try downloading from GitHub API
+# First, try downloading from GitHub (try both main and master branches)
 log_info "Downloading ACTS from GitHub..."
-ACTS_ARCHIVE_URL="https://api.github.com/repos/tommasop/acts-spec/tarball/main"
+ACTS_DOWNLOADED=false
 
-if curl -L -s --fail "$ACTS_ARCHIVE_URL" -o "$TEMP_DIR/acts-spec.tar.gz" 2>/dev/null; then
-  if tar -xzf "$TEMP_DIR/acts-spec.tar.gz" -C "$TEMP_DIR" 2>/dev/null; then
-    ACTS_SOURCE=$(ls -d "$TEMP_DIR"/tommasop-acts-spec-* | head -1)
-    log_info "Downloaded ACTS from GitHub successfully"
-  else
-    log_warn "Failed to extract download, falling back to local files"
-    ACTS_SOURCE=""
+for branch in main master; do
+  ACTS_TARBALL_URL="https://github.com/tommasop/acts-spec/archive/refs/heads/$branch.tar.gz"
+  if curl -L -s --fail "$ACTS_TARBALL_URL" -o "$TEMP_DIR/acts-spec.tar.gz" 2>/dev/null; then
+    if tar -xzf "$TEMP_DIR/acts-spec.tar.gz" -C "$TEMP_DIR" 2>/dev/null; then
+      ACTS_SOURCE=$(ls -d "$TEMP_DIR"/acts-spec-* | head -1)
+      if [ -d "$ACTS_SOURCE/.acts" ]; then
+        log_info "Downloaded ACTS from GitHub (branch: $branch)"
+        ACTS_DOWNLOADED=true
+        break
+      fi
+    fi
   fi
-else
-  log_warn "Failed to download from GitHub, falling back to local files"
-  ACTS_SOURCE=""
-fi
+done
 
 # If download failed, check if we have local files (we might be in acts-spec repo)
-if [ -z "$ACTS_SOURCE" ] || [ ! -d "$ACTS_SOURCE/.acts" ]; then
+if [ "$ACTS_DOWNLOADED" != true ]; then
   if [ -f "acts-v0.4.0.md" ] && [ -d ".acts" ]; then
     log_info "Using local ACTS files from current repository"
     ACTS_SOURCE="$REPO_ROOT"
