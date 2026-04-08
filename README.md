@@ -20,19 +20,26 @@ Your AI agent (Cursor, Claude Code, Copilot, etc.) reads operation files and exe
 
 ```text
 ┌─────────────────────────────────────────────┐
-│  Layer 7 (optional): MCP Context Engine     │
+│  Layer 7: MCP CONTEXT ENGINE (OPTIONAL)     │
 │  Operation-aware context delivery            │
 ├─────────────────────────────────────────────┤
-│  Your Tool (Cursor, Claude Code, etc.)      │
+│  Layer 6: CODE REVIEW                       │
+│  GitHuman, mandatory before commit          │
 ├─────────────────────────────────────────────┤
-│  ACTS Operations                            │
-│  (preflight, task-start, handoff, etc.)     │
+│  Layer 5: ADAPTERS (community)              │
+│  Tool-specific bridges                      │
 ├─────────────────────────────────────────────┤
-│  ACTS State (.story/)                       │
-│  (state.json, sessions, decisions, reviews) │
+│  Layer 4: COMMUNICATION                     │
+│  Changelog, tracker sync                    │
 ├─────────────────────────────────────────────┤
-│  AGENTS.md                                  │
-│  (project context + ACTS rules)             │
+│  Layer 3: OPERATIONS                        │
+│  Portable workflow definitions              │
+├─────────────────────────────────────────────┤
+│  Layer 2: STATE                             │
+│  .story/ directory, sessions                │
+├─────────────────────────────────────────────┤
+│  Layer 1: CONSTITUTION                      │
+│  AGENTS.md — shared rules                   │
 └─────────────────────────────────────────────┘
 ```
 
@@ -41,6 +48,7 @@ Your AI agent (Cursor, Claude Code, Copilot, etc.) reads operation files and exe
 ACTS uses the industry-standard `AGENTS.md` file — adopted by 60k+ open source projects and supported by Cursor, Claude Code, OpenCode, Copilot, Gemini CLI, and many other tools.
 
 **One file serves dual purpose:**
+
 1. **Project context** for any AI agent (setup, code style, testing)
 2. **ACTS rules** for multi-developer coordination
 
@@ -93,10 +101,11 @@ curl -sL https://raw.githubusercontent.com/tommasop/acts-spec/master/scripts/ins
 ```
 
 This single command will:
+
 - Download and install the `.acts/` directory
 - Create the `.story/` directory structure  
 - Create or update `AGENTS.md` with ACTS integration
-- Install GitHuman (if npm is available)
+- Install GitHuman (if npm 24 or greater is available)
 - Update `.gitignore` with recommended entries
 
 ## How It Works

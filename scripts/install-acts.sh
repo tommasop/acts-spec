@@ -51,7 +51,7 @@ ACTS_DOWNLOADED=false
 
 for branch in main master; do
   ACTS_TARBALL_URL="https://github.com/tommasop/acts-spec/archive/refs/heads/$branch.tar.gz"
-  if curl -L -s --fail "$ACTS_TARBALL_URL" -o "$TEMP_DIR/acts-spec.tar.gz" 2>/dev/null; then
+  if curl -L -s "$ACTS_TARBALL_URL" -o "$TEMP_DIR/acts-spec.tar.gz"; then
     if tar -xzf "$TEMP_DIR/acts-spec.tar.gz" -C "$TEMP_DIR" 2>/dev/null; then
       ACTS_SOURCE=$(ls -d "$TEMP_DIR"/acts-spec-* | head -1)
       if [ -d "$ACTS_SOURCE/.acts" ]; then
