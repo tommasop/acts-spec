@@ -1,2 +1,7 @@
 node_modules/
 dist/
+
+# ACTS Protocol
+.story/
+.acts/mcp-server/node_modules/
+.acts/mcp-server/dist/

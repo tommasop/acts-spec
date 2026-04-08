@@ -1,0 +1,134 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://acts-standard.org/schemas/review/v0.4.0",
+  "title": "ACTS Code Review Export",
+  "type": "object",
+  "required": [
+    "metadata",
+    "summary",
+    "files",
+    "status"
+  ],
+  "properties": {
+    "metadata": {
+      "type": "object",
+      "required": ["task_id", "developer", "date", "provider"],
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "pattern": "^T\\d+$"
+        },
+        "developer": {
+          "type": "string"
+        },
+        "date": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": ["in_progress", "approved", "changes_requested"]
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "properties": {
+        "files_changed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lines_added": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "lines_removed": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "comments": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["path", "changes"],
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "changes": {
+            "type": "object",
+            "properties": {
+              "added": {
+                "type": "integer"
+              },
+              "removed": {
+                "type": "integer"
+              }
+            }
+          },
+          "notes": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "comments": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["file", "line", "author", "body"],
+        "properties": {
+          "file": {
+            "type": "string"
+          },
+          "line": {
+            "type": "integer"
+          },
+          "author": {
+            "type": "string"
+          },
+          "body": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["open", "resolved"]
+          }
+        }
+      }
+    },
+    "checklist": {
+      "type": "object",
+      "properties": {
+        "tests_pass": {
+          "type": "boolean"
+        },
+        "lint_clean": {
+          "type": "boolean"
+        },
+        "no_secrets": {
+          "type": "boolean"
+        },
+        "documentation_updated": {
+          "type": "boolean"
+        }
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": ["approved", "changes_requested"]
+    },
+    "decision": {
+      "type": "string"
+    }
+  }
+}

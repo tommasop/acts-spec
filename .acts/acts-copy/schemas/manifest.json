@@ -1,0 +1,128 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://acts-standard.org/schemas/manifest/v0.3.0",
+  "title": "ACTS Manifest",
+  "description": "Schema for .acts/acts.json — the ACTS configuration manifest.",
+  "type": "object",
+  "required": [
+    "acts_version",
+    "conformance_level",
+    "constitution",
+    "tracker_dir",
+    "operations_dir",
+    "operations",
+    "adapter"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "acts_version": {
+      "type": "string",
+      "description": "ACTS specification version.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "conformance_level": {
+      "type": "string",
+      "enum": ["basic", "standard", "full"],
+      "description": "Target conformance level."
+    },
+    "constitution": {
+      "type": "string",
+      "description": "Path to the constitution file (AGENTS.md).",
+      "default": "AGENTS.md"
+    },
+    "tracker_dir": {
+      "type": "string",
+      "description": "Path to the tracker directory.",
+      "default": ".story"
+    },
+    "operations_dir": {
+      "type": "string",
+      "description": "Path to the operations directory.",
+      "default": ".acts/operations"
+    },
+    "schemas_dir": {
+      "type": "string",
+      "description": "Path to the schemas directory.",
+      "default": ".acts/schemas"
+    },
+    "operations": {
+      "type": "object",
+      "required": ["required"],
+      "additionalProperties": false,
+      "properties": {
+        "required": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of required operation IDs.",
+          "minItems": 5
+        },
+        "optional": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of optional operation IDs."
+        }
+      }
+    },
+    "adapter": {
+      "type": ["string", "null"],
+      "description": "Active adapter name, or null for raw operation files.",
+      "examples": ["superpowers", "cursor", "claude-code", "codex", null]
+    },
+    "context_defaults": {
+      "type": "object",
+      "description": "Default context budgets by operation.",
+      "additionalProperties": {
+        "type": "integer",
+        "minimum": 1000
+      }
+    },
+    "jira_integration": {
+      "type": "object",
+      "description": "Jira integration for story-init auto-fetch and tracker-sync status push.",
+      "properties": {
+        "enabled": {
+          "type": "boolean",
+          "description": "Whether to auto-fetch Jira issues when story_id matches a Jira key.",
+          "default": false
+        },
+        "fetch_fields": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Jira fields to fetch (e.g. description, summary, issuetype, labels, components)."
+        },
+        "key_pattern": {
+          "type": "string",
+          "description": "Regex pattern to identify Jira keys in story_id.",
+          "default": "^[A-Z]+-\\d+$"
+        },
+        "sync": {
+          "type": "object",
+          "description": "Configuration for ACTS-to-Jira status sync via tracker-sync.",
+          "properties": {
+            "create_subtasks": {
+              "type": "boolean",
+              "description": "Whether to offer creating Jira subtasks during plan-review.",
+              "default": false
+            },
+            "sync_on_completion": {
+              "type": "boolean",
+              "description": "Whether to suggest syncing Jira status when a task is completed.",
+              "default": true
+            },
+            "status_map": {
+              "type": "object",
+              "description": "Mapping of ACTS task statuses to Jira transition names. Null means no transition.",
+              "properties": {
+                "TODO": { "type": ["string", "null"] },
+                "IN_PROGRESS": { "type": ["string", "null"] },
+                "DONE": { "type": ["string", "null"] },
+                "BLOCKED": { "type": ["string", "null"] }
+              }
+            }
+          }
+        }
+      },
+      "required": ["enabled"]
+    }
+  }
+}
