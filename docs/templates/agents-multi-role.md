@@ -74,7 +74,7 @@ For stories with independent tasks touching different file scopes:
 For complex code review:
 1. Agent runs preflight, presents report
 2. Agent suggests review approach
-3. Human reviews in critique (v0.5.0)
+3. Human reviews in lazygit (v0.5.0)
 4. Agent addresses comments, human approves
 
 ### Architecture

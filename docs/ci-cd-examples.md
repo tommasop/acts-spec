@@ -62,9 +62,9 @@ Non-zero `fail` count = merge blocked.
 
 ---
 
-## Without critique (CI-only)
+## Without lazygit (CI-only)
 
-If you don't want to install critique in CI:
+If you don't want to install lazygit in CI:
 
 ```yaml
 - name: Validate ACTS
