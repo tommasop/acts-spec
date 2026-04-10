@@ -43,6 +43,8 @@ sessions.
    b. Read ALL session summaries for dependency tasks.
    c. Read ALL files in `files_touched` for this task (partial work).
    d. Read ALL files in `files_touched` for completed dependency tasks.
+   e. Read the git log for task branch `story/<STORY_ID>/<TASK_ID>` to
+      show what commits exist.
 
 3. **PRODUCE HANDOFF BRIEFING**
    Create a comprehensive briefing:
@@ -86,7 +88,7 @@ sessions.
    Say: "Handoff briefing complete. Ready to reassign <task_id> to
    <new_developer>? (yes/no)"
    
-   Wait for explicit confirmation.
+   Agent MUST stop here and wait for explicit "yes".
    
    Say: "Want me to start implementing, or do you have questions first?"
    
