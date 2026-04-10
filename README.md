@@ -24,7 +24,7 @@ Your AI agent (Cursor, Claude Code, Copilot, etc.) reads operation files and exe
 │  Operation-aware context delivery            │
 ├─────────────────────────────────────────────┤
 │  Layer 6: CODE REVIEW                       │
-│  tuicr, mandatory before task completion      │
+│  critique, mandatory before task completion    │
 ├─────────────────────────────────────────────┤
 │  Layer 5: ADAPTERS (community)              │
 │  Tool-specific bridges                      │
@@ -68,9 +68,8 @@ cp acts-spec/docs/templates/agents-minimal.md ./AGENTS.md
 # 3. Create state directories
 mkdir -p .story/{tasks,sessions,reviews/{active,archive}}
 
-# 4. Install tuicr (for code review)
-brew install agavra/tap/tuicr
-# Or: cargo install tuicr
+# 4. Install critique (for code review)
+bun install -g critique
 
 # 5. Start your first story
 # In your AI coding agent (Cursor, Claude Code, etc.):
@@ -89,9 +88,8 @@ cp -r acts-spec/.acts ./.acts/
 # 3. Create state directories
 mkdir -p .story/{tasks,sessions,reviews/{active,archive}}
 
-# 4. Install tuicr (for code review)
-brew install agavra/tap/tuicr
-# Or: cargo install tuicr
+# 4. Install critique (for code review)
+bun install -g critique
 ```
 
 ### Quick Install (one-liner)
@@ -107,14 +105,14 @@ This single command will:
 - Download and install the `.acts/` directory
 - Create the `.story/` directory structure  
 - Create or update `AGENTS.md` with ACTS integration
-- Install tuicr (for code review)
+- Install critique (for code review)
 - Update `.gitignore` with recommended entries
 
 ## How It Works
 
 1. **Initialize a story** — Creates spec, plan, and task breakdown
 2. **Before coding** — Preflight validates scope, creates task branch, ingests context
-3. **Implement** — Agent codes on task branch, you review via tuicr
+3. **Implement** — Agent codes on task branch, you review via critique
 4. **Code review gate** — Mandatory review before task completion (hard stop)
 5. **End your day** — Session summary captures what happened
 6. **Hand off** — Next developer picks up with full context

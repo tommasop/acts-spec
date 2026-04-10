@@ -62,9 +62,9 @@ Non-zero `fail` count = merge blocked.
 
 ---
 
-## Without tuicr (CI-only)
+## Without critique (CI-only)
 
-If you don't want to install tuicr in CI:
+If you don't want to install critique in CI:
 
 ```yaml
 - name: Validate ACTS

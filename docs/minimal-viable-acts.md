@@ -113,7 +113,7 @@ After writing code, record a session summary.
 - ❌ Schemas (skip for basic conformance)
 - ❌ Templates (write your own AGENTS.md)
 - ❌ Operations directory (your agent reads spec directly)
-- ❌ tuicr (skip code review for now)
+- ❌ critique (skip code review for now)
 - ❌ Validation scripts (run later)
 
 ---
@@ -124,7 +124,7 @@ Once basics work, add:
 
 1. **Operations** — Copy from `.acts/operations/` for structured workflows
 2. **Schemas** — Copy from `.acts/schemas/` for validation
-3. **tuicr** — Install for code review gates
+3. **critique** — Install for code review gates
 4. **Templates** — Use for team coordination
 5. **MCP Context Engine** — Enable Layer 7 for context optimization
 
@@ -170,6 +170,6 @@ Once you've tested with 3 files:
 
 1. Read the full [spec](../acts-v0.5.0.md)
 2. Copy the [operations](../.acts/operations/) for structured workflows
-3. Install tuicr for code review (brew install agavra/tap/tuicr or cargo install tuicr)
+3. Install critique for code review (bun install -g critique)
 4. Use [templates](./templates/) for team coordination
 5. For existing projects: use `append-acts.sh` to add ACTS to your AGENTS.md
