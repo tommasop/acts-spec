@@ -1633,7 +1633,7 @@ A state transition and its corresponding `state.json` update MUST be in the same
 An implementation MUST provide a `validate` command that checks:
 
 ```text
-ACTS VALIDATION CHECKLIST v0.3.0
+ACTS VALIDATION CHECKLIST v0.5.0
 ════════════════════════════════
 
 Constitution:
@@ -1656,7 +1656,7 @@ Report Protocol:
   [ ] Defines Ownership Map format
   [ ] Defines Scope Declaration format
   [ ] Defines Session State format
-  [ ] Defines Gate types (approve/acknowledge/reject)
+  [ ] Defines Gate types (approve/task-review)
 
 Operations:
   [ ] All required operations have valid frontmatter
@@ -1690,20 +1690,16 @@ Git consistency:
   [ ] All files in files_touched actually exist on disk
   [ ] All state.json changes are committed
   [ ] Branch name matches story/<STORY_ID> pattern
-  [ ] Worktree exists (for multi-developer stories)
+  [ ] Task branches exist for all IN_PROGRESS tasks
+  [ ] Task branches are based on the current story branch head
 
-Code Review (v0.4.0+):
-  [ ] .acts/code-review-interface.json exists
-  [ ] review.json schema exists
+Code Review (v0.5.0+):
+  [ ] task-review operation exists and is marked required
   [ ] .story/reviews/active/ directory exists
   [ ] .story/reviews/archive/ directory exists
-  [ ] Provider config exists (e.g., githuman.json)
-  [ ] task-review operation exists
-  [ ] DONE tasks have review files in archive/
-
-Concurrency:
-  [ ] No two IN_PROGRESS tasks assigned to different developers
-      in the same worktree
+  [ ] ALL DONE tasks have review files in archive/ OR code_review was disabled
+  [ ] review_status field exists on all DONE tasks in state.json
+  [ ] No task transitions to DONE without passing task-review gate (when enabled)
 ```
 
 ### 8.3 Schema Versioning
