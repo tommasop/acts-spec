@@ -90,7 +90,7 @@ ACTS is organized in seven layers. Each layer depends on the ones below it.
 ├─────────────────────────────────────────────┤
 │  Layer 6: CODE REVIEW       (REQUIRED v0.4+)│
 │  Generic interface + provider adapters      │
-│  tuicr (primary), CLI-based, TUI-based    │
+│  critique (primary), CLI-based, TUI-based  │
 ├─────────────────────────────────────────────┤
 │  Layer 5: ADAPTERS          (community)     │
 │  Tool-specific bridges                      │
@@ -1566,7 +1566,7 @@ story/PROJ-42 (story branch)
 ACTS v0.5.0 uses **branch-per-task** for isolation instead of git worktrees.
 
 **Why not worktrees:**
-- Worktrees have compatibility issues with some code review tools (e.g., GitHuman). Tools like tuicr that read git directly do not have this issue.
+- Worktrees have compatibility issues with some code review tools (e.g., GitHuman). Tools like critique that read git directly do not have this issue.
 - Worktree setup is complex and error-prone
 - Branch-per-task provides equivalent isolation with simpler tooling
 
@@ -1729,7 +1729,7 @@ The interface is defined in `.acts/code-review-interface.json`:
   "interface_version": "1.0.0",
   "required_methods": ["check", "serve", "status", "export"],
   "required_outputs": ["review_status", "review_comments", "review_export"],
-  "default_provider": "tuicr",
+  "default_provider": "critique",
   "providers": { ... }
 }
 ```
@@ -1745,18 +1745,19 @@ Each provider MUST implement the CLI interface:
 - `status` — Get current review status
 - `export` — Export review to file
 
-**Example: tuicr Provider**
+**Example: critique Provider**
 
-Configuration in `.acts/review-providers/tuicr.json`:
+Configuration in `.acts/review-providers/critique.json`:
 
 ```json
 {
-  "provider": "tuicr",
-  "cli": "tuicr",
-  "min_version": "0.9.0",
+  "provider": "critique",
+  "cli": "critique",
+  "install": "bun install -g critique",
+  "min_version": "0.1.139",
   "commands": {
-    "check": { "cmd": "tuicr", "args": ["--version"] },
-    "review": { "cmd": "tuicr", "args": ["--stdout"], "behavior": "blocking_stdout" }
+    "check": { "cmd": "bunx", "args": ["critique", "--version"] },
+    "review": { "cmd": "bunx", "args": ["critique", "--staged"], "behavior": "interactive_tui" }
   }
 }
 ```
@@ -2079,7 +2080,7 @@ The following report formats are defined in `.acts/report-protocol.md`:
 | Versioned decisions | ❌ | ❌ | ✅ task notes + sessions | ✅ decisions.json with evidence |
 | Human-in-the-loop | ❌ | ✅ (manual) | ✅ Gates with Report Protocol | ✅ Gates + loop detection |
 | Code review | ❌ | Post-commit PR | ✅ Pre-commit mandatory | ✅ Pre-commit mandatory |
-| AI code review | ❌ | ❌ | ✅ GitHuman integration | ✅ tuicr integration |
+| AI code review | ❌ | ❌ | ✅ GitHuman integration | ✅ critique integration |
 | Works offline | ✅ | ❌ | ✅ git-native | ✅ git-native (MCP optional) |
 | Tool-agnostic | ✅ | Varies | ✅ by design | ✅ by design |
 | Context-aware | — | — | ✅ Context protocol | ✅ Operation-aware delivery |
