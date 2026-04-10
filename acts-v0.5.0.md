@@ -1,6 +1,6 @@
 # ACTS — Agent Collaborative Tracking Standard
 
-**Version 0.4.0 — DRAFT**
+**Version 0.5.0 — DRAFT**
 
 A specification for multi-developer, multi-agent collaborative software development with structured handoffs, drift prevention, automated documentation, and mandatory code review gates.
 
@@ -10,13 +10,13 @@ A specification for multi-developer, multi-agent collaborative software developm
 
 ```text
 Standard:    ACTS (Agent Collaborative Tracking Standard)
-Version:     0.4.0
+Version:     0.5.0
 Status:      Draft
 Authors:     Tommaso + contributors
 Created:     2026-03-27
-Updated:     2026-03-28
+Updated:     2026-04-10
 License:     CC-BY-SA-4.0
-Supersedes:  0.3.0
+Supersedes:  0.4.0
 ```
 
 ### 1.1 Problem Statement
@@ -61,26 +61,20 @@ The key words "MUST", "MUST NOT", "SHOULD", "SHOULD NOT", "MAY" in this document
 | **Context Anchor** | A compact structured summary of the current task state, re-injected at the end of context to maintain instruction attention. |
 | **Decision Authority** | The trust level of a recorded decision: `developer_approved` (human-confirmed) or `agent_decided` (autonomous). |
 
-### 1.4 Changes from v0.3.0
+### 1.4 Changes from v0.4.0
 
 | Area | Change |
-|---|---|
-| Constitution | Renamed `AGENT.md` → `AGENTS.md` to align with the industry standard (60k+ projects) |
-| Constitution | AGENTS.md now includes project context sections (setup, testing, code style) alongside ACTS rules |
-| Constitution | Integrates with AGENTS.md ecosystem (Cursor, Claude Code, OpenCode, Copilot, etc.) |
-| Layers | Layer 6 added — Code Review Interface |
-| Layers | Layer 7 added — MCP Context Engine (OPTIONAL) |
-| Code Review | Mandatory code review before task completion (via task-review operation) |
-| Code Review | Generic CLI-based provider interface (GitHuman primary) |
-| Code Review | New operations: `task-review` (implicit), `commit-review` (explicit) |
-| Artifacts | `.story/reviews/` directory for active and archived reviews |
-| Artifacts | `.story/decisions.json` — structured decisions, rejected approaches, open questions |
-| Report Protocol | New report: Code Review |
-| Gates | New gate type: `review` — for external tool integration |
-| Validation | Review artifacts included in conformance checks |
-| Context | MCP Context Engine as optional Layer 7 — operation-aware context delivery |
-| Context | Attention-optimized context ordering (critical items last) |
-| Context | Loop detection, anchor management, cross-task learning propagation |
+|------|--------|
+| Git | Worktrees replaced by branch-per-task model — each task gets its own branch off the story branch |
+| Git | Removed worktree concurrency model — branch isolation prevents conflicts |
+| Gates | All gate types are now HARD STOPS — agent MUST NOT proceed without explicit human confirmation |
+| Gates | Removed soft gate types: `GATE: acknowledge` and `GATE: reject` |
+| Gates | New gate type: `GATE: task-review` — mandatory code review before task completion |
+| Code Review | `task-review` promoted from optional to REQUIRED operation |
+| Code Review | Tasks MUST have review approved before transitioning to DONE |
+| Code Review | If `code_review.enabled=false`, task-review gate is skipped entirely |
+| Validation | New validation: all DONE tasks must have review files or review was explicitly skipped |
+| Validation | Branch-per-task validation replaces worktree validation |
 
 ---
 
@@ -1981,10 +1975,10 @@ The reference implementation provides ACTS Full conformance.
 │  Before takeover:   agent loads acts-handoff         │
 │  Long sessions:     agent loads acts-compress-sessions│
 │                                                      │
-│  Human-in-the-loop: gates require approval           │
+│  Human-in-the-loop: ALL gates are hard stops             │
 │  Report protocol: standard formats for status        │
 │  Context budget: operations declare token limits     │
-│  Concurrency: worktrees required for multi-dev       │
+│  Concurrency: branch-per-task for isolation             │
 │  Compliance: session summaries record agent behavior │
 │  Layer 7 (optional): MCP context engine              │
 │                                                      │
