@@ -375,7 +375,7 @@ Enable/disable in `.acts/acts.json`:
 {
   "code_review": {
     "enabled": true,
-    "provider": "githuman",
+    "provider": "tuicr",
     "required_for_tasks": ["*"],
     "skip_for_tasks": ["docs", "chore"]
   }

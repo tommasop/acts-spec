@@ -30,7 +30,7 @@ See the [AGENTS.md standard](https://agents.md/) for details.
 **Yes, for two reasons:**
 
 1. **Session summaries** — Remember what you did and why, even months later
-2. **Code review** — GitHuman catches issues before commit
+2. **Code review** — tuicr catches issues before commit
 
 ## Do I need ACTS if I already have agent rules (Cursor Rules, CLAUDE.md)?
 

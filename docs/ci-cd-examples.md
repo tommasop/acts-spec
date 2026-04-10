@@ -62,18 +62,18 @@ Non-zero `fail` count = merge blocked.
 
 ---
 
-## Without GitHuman (CI-only)
+## Without tuicr (CI-only)
 
-If you don't want to install GitHuman in CI:
+If you don't want to install tuicr in CI:
 
 ```yaml
 - name: Validate ACTS
   run: ./scripts/validate.sh --json
   env:
-    ACTS_NO_GITHUMAN: true
+    ACTS_NO_REVIEW_PROVIDER: true
 ```
 
-This skips GitHuman availability checks.
+This skips review provider availability checks.
 
 ---
 
