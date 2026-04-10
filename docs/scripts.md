@@ -5,7 +5,7 @@
 2. All workflow execution done by agents reading `.acts/operations/*.md` directly
 3. Human feedback via **GATE steps** in each operation
 4. **v0.4.0:** Mandatory code review gates before task completion
-5. **v0.4.0:** Generic CLI-based code review interface (GitHuman primary)
+5. **v0.4.0:** Generic CLI-based code review interface (tuicr primary)
 
 ---
 
@@ -27,7 +27,7 @@ User → Agent → Operation (with GATE) → Work
 ```
 User → Agent → task-start → [task-review GATE] → commit
                               ↑
-                        GitHuman interface
+                        tuicr interface
                         Human reviews code
                         Approves/requests changes
 ```
@@ -79,7 +79,7 @@ scripts/
 │   ├── session-summary.json
 │   └── review.json               # v0.4.0: Review export schema
 └── review-providers/              # v0.4.0: Provider configs
-    └── githuman.json             # GitHuman CLI configuration
+    └── tuicr.json             # tuicr CLI configuration
 ```
 
 ---
@@ -120,7 +120,7 @@ Standard formats defined in `.acts/report-protocol.md`:
 | `handoff` | After briefing | Full handoff briefing |
 | `story-review` | After acceptance check | AC checklist + PR description |
 | `story-init` | After plan creation | Spec + plan summary |
-| `task-review` | After staging, before commit | Code Review report (GitHuman interface) |
+| `task-review` | After staging, before commit | Code Review report (tuicr interface) |
 | `commit-review` | On explicit request | Code Review report (informational) |
 
 ---
@@ -353,7 +353,7 @@ If you have existing ACTS projects with the old scripts:
    - Automatically runs `task-review`
 
 2. **Code Review Gate** (`task-review`)
-   - Starts GitHuman review server: `githuman serve --port 3847`
+    - Starts tuicr review server: `tuicr serve --port 3847`
    - Presents **Code Review** report with URL
    - Opens browser with staged changes
    - **GATE: review** — waits for human approval
@@ -397,7 +397,7 @@ Enable/disable in `.acts/acts.json`:
 
 ### Requirements
 
-- **GitHuman** must be installed: `npm install -g githuman`
+- **tuicr** must be installed: `brew install agavra/tap/tuicr`
 - Review happens **before** task completion commit
 - All reviews are **preserved** in git for audit
 - Archived reviews are **never loaded** during context ingestion
@@ -405,7 +405,7 @@ Enable/disable in `.acts/acts.json`:
 ### Backward Compatibility
 
 - **v0.3.0 projects:** Set `code_review.enabled: false` to disable
-- **Migration:** Install GitHuman, enable when ready
+- **Migration:** Install tuicr, enable when ready
 - **Optional:** Can enable per-story or globally
 
 ---

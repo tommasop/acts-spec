@@ -63,7 +63,7 @@ Any tool that can read markdown files, including those that support AGENTS.md:
 - Devin
 - Any custom agent
 
-## Do I need GitHuman?
+## Do I need tuicr?
 
 For v0.5.0 code review: yes, recommended.
 For basic ACTS: no, you can disable code review in `.acts/acts.json`.
@@ -76,7 +76,7 @@ See [Minimal Viable ACTS](minimal-viable-acts.md).
 
 ## Is this a framework I need to install?
 
-No. ACTS is markdown files in your repo. Your agent reads them. Nothing to install except optionally GitHuman for code review.
+No. ACTS is markdown files in your repo. Your agent reads them. Nothing to install except optionally tuicr for code review.
 
 ## How does ACTS compare to Cursor Rules / CLAUDE.md?
 
