@@ -1509,33 +1509,62 @@ ACTS → Jira.
 
 ### 7.1 Branching Model
 
-Each story MUST use a dedicated branch:
+Each story uses a dedicated branch:
 
 ```text
 story/<STORY_ID>       e.g., story/PROJ-42
 ```
 
-### 7.2 Worktree Model
-
-For multi-developer stories, each story MUST live in a dedicated git worktree:
+Each task within a story uses a **dedicated sub-branch** off the story branch:
 
 ```text
-<repo-root>/
-├── (main working directory)        # main branch
-└── ../worktrees/
-    └── <STORY_ID>/                 # story/<STORY_ID> branch
-        ├── .story/
-        ├── .acts/
-        └── <application code>
+story/<STORY_ID>/T1    e.g., story/PROJ-42/T1
+story/<STORY_ID>/T2    e.g., story/PROJ-42/T2
 ```
 
-This ensures:
+**Branch lifecycle per task:**
 
-- Only one developer modifies `state.json` per worktree
-- Multiple developers can work on different tasks in parallel (each in their own worktree for the same story)
-- No file-level locking needed
+1. **Branch created** — during preflight, before any coding begins
+2. **Commits accumulate** — all work for the task happens on this branch
+3. **Task completed** — branch is merged back into the story branch
+4. **Branch deleted** — after successful merge
 
-For single-developer stories, worktrees are RECOMMENDED but not REQUIRED.
+```text
+story/PROJ-42 (story branch)
+    ├── story/PROJ-42/T1 (task branch)
+    │   ├── feat: add user model
+    │   ├── feat: add validation
+    │   └── ──MERGE──► (merged back to story/PROJ-42)
+    └── story/PROJ-42/T2 (task branch)
+        ├── feat: add API endpoint
+        └── ──MERGE──► (merged back to story/PROJ-42)
+```
+
+### 7.2 Branch Isolation
+
+ACTS v0.5.0 uses **branch-per-task** for isolation instead of git worktrees.
+
+**Why not worktrees:**
+- Worktrees have compatibility issues with some code review tools (e.g., GitHuman)
+- Worktree setup is complex and error-prone
+- Branch-per-task provides equivalent isolation with simpler tooling
+
+**Isolation guarantees:**
+- Each task operates on its own branch — no file conflicts between concurrent tasks
+- The story branch (`story/<STORY_ID>`) is the integration point
+- Task branches merge into the story branch sequentially after review
+- No two task branches are merged simultaneously (enforced by preflight)
+
+**For single-developer stories:**
+- Task branches are RECOMMENDED but not REQUIRED
+- Single-developer MAY work directly on the story branch
+
+**Concurrent task coordination:**
+- Two developers CAN work on different tasks simultaneously
+- Each on their own task branch
+- Merges to the story branch happen in dependency order
+- If two tasks touch the same file, the later merge may need manual conflict resolution
+- The preflight check warns about potential conflicts based on `files_touched`
 
 ### 7.3 Commits
 
@@ -1558,7 +1587,13 @@ Where `type` is one of:
 
 ### 7.4 Tracker Atomicity
 
-A state transition and its corresponding `state.json` update MUST be in the same commit. An implementation MUST NOT allow `state.json` to represent a state that doesn't match the repository contents.
+A state transition and its corresponding `state.json` update MUST be in the same commit as the merge of the task branch into the story branch. An implementation MUST NOT allow `state.json` to represent a state that doesn't match the repository contents.
+
+**Task completion sequence:**
+1. Task branch passes code review (task-review operation)
+2. Merge task branch into story branch
+3. Update `state.json` (task → DONE, files_touched)
+4. Commit the merge and state change together
 
 ---
 
