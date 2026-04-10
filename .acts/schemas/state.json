@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://acts-standard.org/schemas/state/v0.3.0",
+  "$id": "https://acts-standard.org/schemas/state/v0.5.0",
   "title": "ACTS Story State",
   "description": "Schema for .story/state.json — the canonical story state file.",
   "type": "object",
@@ -21,7 +21,7 @@
       "type": "string",
       "description": "ACTS specification version this file conforms to.",
       "pattern": "^\\d+\\.\\d+\\.\\d+$",
-      "examples": ["0.3.0"]
+      "examples": ["0.5.0"]
     },
     "story_id": {
       "type": "string",
@@ -202,6 +202,21 @@
           "maximum": 5,
           "default": 3,
           "description": "Context ingestion priority. 1=critical, 5=skim only."
+        },
+        "review_status": {
+          "type": "string",
+          "enum": ["pending", "approved", "changes_requested", "skipped"],
+          "default": "pending",
+          "description": "Code review status for this task."
+        },
+        "reviewed_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Timestamp when review was approved."
+        },
+        "reviewed_by": {
+          "type": ["string", "null"],
+          "description": "Developer who approved the review."
         }
       }
     }
