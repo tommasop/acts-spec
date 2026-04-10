@@ -1399,7 +1399,7 @@ Jira subtasks for each ACTS task under the parent story.
 2. Present a table of all tasks (ID, title, deps, priority,
    acceptance criteria) with the dependency graph.
 
-3. **GATE: review** — Developer can approve, add, remove, or
+3. **GATE: approve** — Developer can approve, add, remove, or
    modify tasks. Loop until approved.
 
 4. If `jira_integration.enabled` and `jira_metadata.issue_key`
@@ -2066,10 +2066,8 @@ The following report formats are defined in `.acts/report-protocol.md`:
 
 | Type | Behavior | Usage |
 |---|---|---|
-| `GATE: approve` | Wait for explicit "yes" | State changes, commits |
-| `GATE: acknowledge` | Show report, any response continues | Informational displays |
-| `GATE: reject` | Continue on silence, abort on "no" | Rare — destructive operations |
-| `GATE: review` | External tool integration | Code review via GitHuman |
+| `GATE: approve` | Wait for explicit "yes" | All gates — state changes, reviews, commits |
+| `GATE: task-review` | Trigger code review, wait for approval | Task completion (skipped if code_review disabled) |
 
 ## Appendix D: Comparison with Existing Approaches
 
@@ -2087,7 +2085,7 @@ The following report formats are defined in `.acts/report-protocol.md`:
 | Tool-agnostic | ✅ | Varies | ✅ by design | ✅ by design |
 | Context-aware | — | — | ✅ Context protocol | ✅ Operation-aware delivery |
 | Observable | — | — | ✅ Agent compliance | ✅ Evidence-based verification |
-| Concurrency-safe | — | — | ✅ Worktree model | ✅ Worktree model |
+| Concurrency-safe | — | — | ✅ Worktree model | ✅ Branch-per-task model |
 | Attention-optimized | — | — | ❌ | ✅ Reverse priority order |
 | Loop detection | — | — | ❌ | ✅ MCP server tracking |
 | Cross-task learning | — | — | ❌ | ✅ Rejected approach propagation |

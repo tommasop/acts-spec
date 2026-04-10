@@ -43,7 +43,7 @@ Jira subtasks for each ACTS task under the parent story.
 
    Include the dependency graph as a visual summary.
 
-3. **GATE: review**
+3. **GATE: approve**
    Say: "Review the task breakdown above. You can:
    - approve — accept as-is
    - add — add a new task

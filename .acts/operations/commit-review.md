@@ -58,12 +58,13 @@ Unlike `task-review`, this operation is **explicit** (user-initiated) and
 4. **START REVIEW SERVER**
    Start provider server for commit range.
 
-5. **GATE: review (informational)**
+5. **GATE: approve** (informational)
    Say: "Reviewing commits {commit_range}
    
    Review interface: {url}
    
    This is an informational review — no action required.
+   Type 'yes' when done reviewing."
    Comments and findings will be saved for reference.
    
    Tell me when review is complete."

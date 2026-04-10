@@ -91,9 +91,9 @@ the reverse.
 
    Include counts: synced / skipped / failed.
 
-7. **GATE: acknowledge** (only if any failures)
+7. **GATE: approve** (only if any failures)
    If any syncs failed, present failures and say:
-   "Fix the issues above and re-run tracker-sync."
+   "Fix the issues above and re-run tracker-sync. Ready to continue? (yes/no)"
 
 ## Constraints
 

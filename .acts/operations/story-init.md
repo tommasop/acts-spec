@@ -105,11 +105,11 @@ initial state.
    - Plan summary (number of tasks, dependency graph overview)
    - State file initialized
 
-7. **GATE: acknowledge**
+7. **GATE: approve**
    Say: "Tracker initialized for <story_id>. Review the spec and plan
-   with your team before proceeding. Continue when ready."
+   with your team before proceeding. Ready to continue? (yes/no)"
    
-   Wait for any response, then continue.
+   Wait for explicit "yes", then continue.
 
 8. **COMMIT**
    `docs(<story_id>): initialize ACTS tracker`
