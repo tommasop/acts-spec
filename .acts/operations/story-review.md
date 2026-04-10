@@ -49,14 +49,22 @@ constitution compliance, and prepares a PR description.
    - Commit messages follow conventions (per `AGENTS.md ## Git`)?
    - File length limits respected?
 
-6. **AGENT COMPLIANCE AUDIT**
+6. **REVIEW VERIFICATION**
+   For each task with status `DONE`:
+   - Check `.story/reviews/archive/` for a corresponding review file
+   - If a review file exists → mark ✅
+   - If NO review file AND `code_review.enabled` was true → ❌ STOP.
+     Create a new task to retroactively review the code.
+   - If NO review file AND `code_review.enabled` was false → ✅ (review was skipped)
+
+7. **AGENT COMPLIANCE AUDIT**
    Read all session summaries. Check Agent Compliance sections.
    Report patterns:
    - "All sessions reported full compliance"
    - "3/7 sessions skipped context protocol step 6"
    - etc.
 
-7. **GENERATE PR DESCRIPTION**
+8. **GENERATE PR DESCRIPTION**
 
    ```markdown
    ## <story_id> — <title>
@@ -74,29 +82,31 @@ constitution compliance, and prepares a PR description.
    Key decisions, trade-offs, links to task notes.
    ```
 
-8. **PRESENT REPORTS**
+9. **PRESENT REPORTS**
    Present **Story Board** showing all tasks DONE
    Present acceptance criteria checklist (✅/❌ per AC)
+   Present review verification results (✅/❌ per task)
    Present PR description
    Present agent compliance audit summary
 
-9. **GATE: approve**
-   Say: "Story review complete. <N>/<N> acceptance criteria met.
-   Tests: <passing>/<total>. Ready to transition to REVIEW? (yes/no)"
-   
-   If ANY criterion is unmet, do NOT offer this gate.
-   Instead say: "Fix the gaps above, then re-run story-review."
-   
-   Wait for explicit confirmation before proceeding.
+10. **GATE: approve**
+    Say: "Story review complete. <N>/<N> acceptance criteria met.
+    Tests: <passing>/<total>. All tasks reviewed: yes/no.
+    Ready to transition to REVIEW? (yes/no)"
+    
+    If ANY criterion is unmet, do NOT offer this gate.
+    Instead say: "Fix the gaps above, then re-run story-review."
+    
+    Agent MUST stop here and wait for explicit "yes".
 
-10. **UPDATE STATE**
+11. **UPDATE STATE**
     - Story status → `REVIEW`
     - `updated_at` → now
 
-11. **COMMIT**
+12. **COMMIT**
     `docs(<story_id>): story review complete`
 
-12. **TRIGGER LAYER 4** (optional)
+13. **TRIGGER LAYER 4** (optional)
     Suggest running:
     - `changelog` (if configured)
     - `tracker-sync` with full summary
@@ -107,4 +117,5 @@ constitution compliance, and prepares a PR description.
 - If ANY criterion is unmet, do NOT transition to `REVIEW`.
 - The PR description MUST be written for human reviewers, not agents.
 - The agent compliance audit is observational, not blocking.
-- The gate (step 9) MUST be respected.
+- The review verification (step 6) is BLOCKING — if code review was enabled and a task has no review file, STOP.
+- The gate (step 10) is a HARD STOP — agent MUST wait for explicit "yes".
