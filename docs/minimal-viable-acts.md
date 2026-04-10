@@ -52,7 +52,7 @@ This project uses ACTS for multi-developer coordination.
 
 ```json
 {
-  "acts_version": "0.4.0",
+  "acts_version": "0.5.0",
   "conformance_level": "basic",
   "constitution": "AGENTS.md",
   "tracker_dir": ".story",
@@ -67,7 +67,7 @@ This project uses ACTS for multi-developer coordination.
 
 ```json
 {
-  "acts_version": "0.4.0",
+  "acts_version": "0.5.0",
   "story_id": "TEST-1",
   "title": "My First ACTS Story",
   "status": "ANALYSIS",
@@ -83,7 +83,8 @@ This project uses ACTS for multi-developer coordination.
       "assigned_to": null,
       "files_touched": [],
       "depends_on": [],
-      "context_priority": 1
+      "context_priority": 1,
+      "review_status": "pending"
     }
   ],
   "session_count": 0,
@@ -167,7 +168,7 @@ Layer 7 provides:
 
 Once you've tested with 3 files:
 
-1. Read the full [spec](../acts-v0.4.0.md)
+1. Read the full [spec](../acts-v0.5.0.md)
 2. Copy the [operations](../.acts/operations/) for structured workflows
 3. Install GitHuman for code review
 4. Use [templates](./templates/) for team coordination

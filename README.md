@@ -111,18 +111,20 @@ This single command will:
 ## How It Works
 
 1. **Initialize a story** — Creates spec, plan, and task breakdown
-2. **Before coding** — Preflight validates scope and ingests context
-3. **Implement** — Agent codes, you review via GitHuman
-4. **End your day** — Session summary captures what happened
-5. **Hand off** — Next developer picks up with full context
+2. **Before coding** — Preflight validates scope, creates task branch, ingests context
+3. **Implement** — Agent codes on task branch, you review via GitHuman
+4. **Code review gate** — Mandatory review before task completion (hard stop)
+5. **End your day** — Session summary captures what happened
+6. **Hand off** — Next developer picks up with full context
 
 ## What You Get
 
 - ✅ Drift prevention (preflight checks scope)
 - ✅ Context persistence (session summaries in git)
 - ✅ File ownership tracking (no duplicate work)
-- ✅ Human oversight (gates at key decisions)
-- ✅ Code review (mandatory before commit)
+- ✅ Human oversight (all gates are hard stops)
+- ✅ Code review (mandatory before task completion)
+- ✅ Branch-per-task isolation (compatible with all tools)
 - ✅ Agent attribution (track what AI did and cost)
 - ✅ Industry alignment (AGENTS.md standard)
 - ✅ Context optimization (Layer 7: MCP engine eliminates tool call residue)
@@ -147,7 +149,7 @@ This single command will:
 
 | File | Purpose |
 |------|---------|
-| [acts-v0.4.0.md](acts-v0.4.0.md) | Full specification (includes Layer 7) |
+| [acts-v0.5.0.md](acts-v0.5.0.md) | Full specification (includes Layer 7) |
 | [.acts/operations/](.acts/operations/) | Workflow definitions (11 operations) |
 | [.acts/schemas/](.acts/schemas/) | JSON schemas for validation |
 | [.acts/mcp-server/](.acts/mcp-server/) | Layer 7 MCP Context Engine (TypeScript) |

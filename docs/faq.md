@@ -65,7 +65,7 @@ Any tool that can read markdown files, including those that support AGENTS.md:
 
 ## Do I need GitHuman?
 
-For v0.4.0 code review: yes, recommended.
+For v0.5.0 code review: yes, recommended.
 For basic ACTS: no, you can disable code review in `.acts/acts.json`.
 
 ## What's the minimum to try ACTS?

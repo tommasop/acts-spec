@@ -27,7 +27,7 @@ This project uses ACTS (Agent Collaborative Tracking Standard) for multi-develop
 - Agent MUST record session summary before ending
 - Agent MUST stay within assigned task boundary
 - Agent MUST get developer approval before committing
-- Agent MUST run code review before task completion (v0.4.0)
+- Agent MUST run code review before task completion (v0.5.0)
 
 ### Agent Configuration
 ```json
