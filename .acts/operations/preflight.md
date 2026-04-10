@@ -18,6 +18,7 @@ preconditions:
   - "AGENTS.md MUST exist at repo root"
 postconditions:
   - "Task status is IN_PROGRESS"
+  - "Task branch is created: story/<STORY_ID>/<TASK_ID>"
   - "Task is assigned to developer"
   - "Agent has read and confirmed AGENTS.md"
   - "Agent has read all existing code from completed tasks"
@@ -89,14 +90,14 @@ firewall between the agent and uncontrolled code generation.
    If the developer says "no" or has concerns, address them and
    re-present the reports from step 7.
 
-9. **CONCURRENCY CHECK**
-   Check if this task is IN_PROGRESS by another developer:
-   - If YES and both developers are in the SAME worktree → REJECT.
-     Say: "Task locked by <developer>. Use a separate worktree
-     or wait for their session-summary."
-   - If YES and developers are in DIFFERENT worktrees → Already
-     warned in step 4, continue.
-   - If NO → continue.
+9. **BRANCH CHECK**
+   a. Verify current branch is `story/<STORY_ID>` (the story branch).
+   b. Check if branch `story/<STORY_ID>/<TASK_ID>` already exists:
+      - If YES and has unmerged commits → WARN. Show the commits. Ask developer to confirm reuse or create fresh.
+      - If YES and is fully merged → OK, can reuse or create new.
+   c. Create task branch: `git checkout -b story/<STORY_ID>/<TASK_ID>`
+   d. Verify no other task branch is currently active for this story by a different developer:
+      - If YES → WARN. Show the other task and developer. Allow if tasks don't share files.
 
 10. **ASSIGN**
     Update `.story/state.json`:
@@ -135,5 +136,6 @@ scope declaration what was NOT read.
 - This operation MUST NOT produce any application code.
 - If any validation fails at step 3, STOP. Do not proceed.
 - The context ingestion (step 6) is not optional.
-- The concurrency check (step 9) MUST reject same-worktree conflicts.
-- The gate (step 8) MUST be respected — no state changes without approval.
+- The branch check (step 9) MUST create a task branch before implementation.
+- The gate (step 8) is a HARD STOP — agent MUST NOT proceed without explicit "yes".
+- There are no timeouts on gates — the agent waits indefinitely.
