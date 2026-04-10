@@ -90,7 +90,7 @@ ACTS is organized in seven layers. Each layer depends on the ones below it.
 ├─────────────────────────────────────────────┤
 │  Layer 6: CODE REVIEW       (REQUIRED v0.4+)│
 │  Generic interface + provider adapters      │
-│  GitHuman (primary), CLI-based, extensible  │
+│  tuicr (primary), CLI-based, TUI-based    │
 ├─────────────────────────────────────────────┤
 │  Layer 5: ADAPTERS          (community)     │
 │  Tool-specific bridges                      │
@@ -1566,7 +1566,7 @@ story/PROJ-42 (story branch)
 ACTS v0.5.0 uses **branch-per-task** for isolation instead of git worktrees.
 
 **Why not worktrees:**
-- Worktrees have compatibility issues with some code review tools (e.g., GitHuman)
+- Worktrees have compatibility issues with some code review tools (e.g., GitHuman). Tools like tuicr that read git directly do not have this issue.
 - Worktree setup is complex and error-prone
 - Branch-per-task provides equivalent isolation with simpler tooling
 
@@ -1725,11 +1725,11 @@ The interface is defined in `.acts/code-review-interface.json`:
 
 ```json
 {
-  "acts_version": "0.4.0",
+  "acts_version": "0.5.0",
   "interface_version": "1.0.0",
   "required_methods": ["check", "serve", "status", "export"],
   "required_outputs": ["review_status", "review_comments", "review_export"],
-  "default_provider": "githuman",
+  "default_provider": "tuicr",
   "providers": { ... }
 }
 ```
@@ -1745,19 +1745,18 @@ Each provider MUST implement the CLI interface:
 - `status` — Get current review status
 - `export` — Export review to file
 
-**Example: GitHuman Provider**
+**Example: tuicr Provider**
 
-Configuration in `.acts/review-providers/githuman.json`:
+Configuration in `.acts/review-providers/tuicr.json`:
 
 ```json
 {
-  "provider": "githuman",
-  "cli": "githuman",
-  "min_version": "0.6.0",
+  "provider": "tuicr",
+  "cli": "tuicr",
+  "min_version": "0.9.0",
   "commands": {
-    "check": { "cmd": "githuman", "args": ["--version"] },
-    "serve": { "cmd": "githuman", "args": ["serve", "--port", "3847"] },
-    "export": { "cmd": "githuman", "args": ["export", "last"] }
+    "check": { "cmd": "tuicr", "args": ["--version"] },
+    "review": { "cmd": "tuicr", "args": ["--stdout"], "behavior": "blocking_stdout" }
   }
 }
 ```
@@ -2080,7 +2079,7 @@ The following report formats are defined in `.acts/report-protocol.md`:
 | Versioned decisions | ❌ | ❌ | ✅ task notes + sessions | ✅ decisions.json with evidence |
 | Human-in-the-loop | ❌ | ✅ (manual) | ✅ Gates with Report Protocol | ✅ Gates + loop detection |
 | Code review | ❌ | Post-commit PR | ✅ Pre-commit mandatory | ✅ Pre-commit mandatory |
-| AI code review | ❌ | ❌ | ✅ GitHuman integration | ✅ GitHuman integration |
+| AI code review | ❌ | ❌ | ✅ GitHuman integration | ✅ tuicr integration |
 | Works offline | ✅ | ❌ | ✅ git-native | ✅ git-native (MCP optional) |
 | Tool-agnostic | ✅ | Varies | ✅ by design | ✅ by design |
 | Context-aware | — | — | ✅ Context protocol | ✅ Operation-aware delivery |
