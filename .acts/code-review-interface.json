@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://acts-standard.org/schemas/code-review-interface/v0.4.0",
+  "$id": "https://acts-standard.org/schemas/code-review-interface/v0.5.0",
   "title": "ACTS Code Review Interface",
   "type": "object",
   "required": [
@@ -16,7 +16,7 @@
       "type": "string",
       "description": "ACTS specification version",
       "pattern": "^\\d+\\.\\d+\\.\\d+$",
-      "examples": ["0.4.0"]
+      "examples": ["0.5.0"]
     },
     "interface_version": {
       "type": "string",
@@ -31,6 +31,7 @@
         "enum": [
           "check",
           "serve",
+          "review",
           "status",
           "export"
         ]

@@ -44,19 +44,21 @@ If `code_review.enabled` is `false` in `.acts/acts.json`:
    Run `git add .` to stage all pending changes.
 
 2. **CHECK REVIEW PROVIDER**
-   If a review provider is configured (e.g., GitHuman):
+   If a review provider is configured (e.g., tuicr):
    a. Run `check` command to verify provider is available
    b. If provider is available → proceed to step 3a
    c. If provider is NOT available → proceed to step 3b
 
 3a. **REVIEW VIA TOOL**
-   a. Run `serve` command to start review server
-   b. Present review URL to developer
-   c. Present Code Review report (from .acts/report-protocol.md)
-   d. **GATE: task-review** — Agent MUST stop and wait
-   e. Poll `status` command until review completes
-   f. If `approved` → proceed to step 4
-   g. If `changes_requested`:
+   a. Run `review` command to launch the TUI review interface
+      (e.g., `tuicr --stdout` — opens TUI, blocks until review is complete,
+      outputs structured Markdown to stdout)
+   b. Present Code Review report (from .acts/report-protocol.md)
+   c. **GATE: task-review** — Agent MUST stop and wait for review output
+   d. Capture the structured Markdown output from the tool
+   e. Parse review comments from the output
+   f. If status is `approved` → proceed to step 4
+   g. If status is `changes_requested`:
       - Read review comments
       - Address each comment
       - Re-stage changes

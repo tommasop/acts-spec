@@ -1,11 +1,10 @@
 {
-  "manifest_version": "0.4.0",
+  "manifest_version": "0.5.0",
   "description": "Project-level ACTS configuration — controls behavior, integration, and protocol settings.",
   "commit_convention": "conventional",
-  "review_provider": "githuman",
+  "review_provider": "tuicr",
   "review_provider_config": {
-    "port": 8787,
-    "mode": "web"
+    "mode": "tui"
   },
   "allow_reopen_completed": false,
   "agent_roles": [

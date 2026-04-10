@@ -84,10 +84,9 @@ constitution, and TDD principles.
     If `code_review.enabled` is true in `.acts/acts.json`:
     a. Run `task-review` operation (see `.acts/operations/task-review.md`)
     b. Present Code Review report per .acts/report-protocol.md
-    c. If review provider (e.g., GitHuman) is available:
-       - Start review server
-       - Wait for developer to complete review in the tool
-       - Poll `status` until review_status is `approved` or `changes_requested`
+    c. If review provider (e.g., tuicr) is available:
+       - Launch review tool (TUI) and wait for developer to complete review
+       - Capture review output (structured Markdown)
        - If `changes_requested`: address feedback, then loop back to step 9
        - Export review to `.story/reviews/active/`
     d. If review provider is NOT available:

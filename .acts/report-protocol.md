@@ -150,8 +150,8 @@ src/components/TwoFactorSetup.tsx → T3       TODO
 │  Test Results: ✅ 12/12 passing                         │
 │  Lint Results: ✅ clean                                 │
 │                                                         │
-│  Review Interface: GitHuman                             │
-│  URL: http://localhost:3847                             │
+│  Review Interface: tuicr                                │
+│  Command: tuicr --stdout                                │
 │                                                         │
 │  ⚠️  Action Required: Review staged changes             │
 │      Add inline comments if needed                      │
@@ -163,8 +163,8 @@ src/components/TwoFactorSetup.tsx → T3       TODO
 - Files Changed: List of staged files with line stats
 - Test Results: Pass/fail count
 - Lint Results: Clean or issues count
-- Review Interface: Provider name (GitHuman)
-- URL: Review server URL
+- Review Interface: Provider name (tuicr)
+- Command: CLI command to launch review
 
 ---
 
@@ -190,24 +190,22 @@ When presenting reports, use these gate patterns:
 
 ### GATE: task-review
 
-**Use when:** Code review via external tool (GitHuman) required before task completion
+**Use when:** Code review via external tool (e.g., tuicr) required before task completion
 
 **Agent behavior:**
 1. Check if `code_review.enabled` is true in `.acts/acts.json`
 2. If disabled: skip this gate entirely, log in session summary
 3. If enabled:
-   - Start review server via provider CLI
-   - Present **Code Review** report with interface URL
-   - Say: "Review staged changes at {url}. Add inline comments if needed.
-     Tell me: 'approved' or 'changes_requested'"
+   - Run the review tool (e.g., `tuicr --stdout`)
+   - The tool opens in the terminal — human reviews diffs interactively
    - **STOP ALL EXECUTION** — do not take any further action
-   - Wait for explicit status from developer
-4. If "approved":
-   - Export review to `.story/reviews/active/`
+   - Wait for the tool to exit and capture structured Markdown output
+4. If output indicates `approved`:
+   - Save output to `.story/reviews/active/`
    - Proceed
-5. If "changes_requested":
-   - Stop review server
-   - Present comments
+5. If output indicates `changes_requested`:
+   - Parse comments from the output
+   - Present comments to developer
    - Agent addresses concerns
    - Re-stage changes
    - LOOP back to step 1
