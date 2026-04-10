@@ -44,14 +44,14 @@ If `code_review.enabled` is `false` in `.acts/acts.json`:
    Run `git add .` to stage all pending changes.
 
 2. **CHECK REVIEW PROVIDER**
-   If a review provider is configured (e.g., critique):
+   If a review provider is configured (e.g., lazygit):
    a. Run `check` command to verify provider is available
    b. If provider is available → proceed to step 3a
    c. If provider is NOT available → proceed to step 3b
 
 3a. **REVIEW VIA TOOL**
    a. Run `review` command to launch the TUI review interface
-      (e.g., `bunx critique --staged` — opens TUI for interactive review,
+      (e.g., `lazygit` — opens TUI for interactive review,
       human reviews diffs and tells agent the result)
    b. Present Code Review report (from .acts/report-protocol.md)
    c. **GATE: task-review** — Agent MUST stop and wait for review output

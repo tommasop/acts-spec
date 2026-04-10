@@ -150,8 +150,8 @@ src/components/TwoFactorSetup.tsx → T3       TODO
 │  Test Results: ✅ 12/12 passing                         │
 │  Lint Results: ✅ clean                                 │
 │                                                         │
-│  Review Interface: critique                              │
-│  Command: bunx critique --staged                        │
+│  Review Interface: lazygit                             │
+│  Command: lazygit                                      │
 │                                                         │
 │  ⚠️  Action Required: Review staged changes             │
 │      Add inline comments if needed                      │
@@ -163,7 +163,7 @@ src/components/TwoFactorSetup.tsx → T3       TODO
 - Files Changed: List of staged files with line stats
 - Test Results: Pass/fail count
 - Lint Results: Clean or issues count
-- Review Interface: Provider name (critique)
+- Review Interface: Provider name (lazygit)
 - Command: CLI command to launch review
 
 ---
@@ -190,13 +190,13 @@ When presenting reports, use these gate patterns:
 
 ### GATE: task-review
 
-**Use when:** Code review via external tool (e.g., critique) required before task completion
+**Use when:** Code review via external tool (e.g., lazygit) required before task completion
 
 **Agent behavior:**
 1. Check if `code_review.enabled` is true in `.acts/acts.json`
 2. If disabled: skip this gate entirely, log in session summary
 3. If enabled:
-   - Run the review tool (e.g., `bunx critique --staged`)
+   - Run the review tool (e.g., `lazygit`)
    - The tool opens in the terminal — human reviews diffs interactively
    - **STOP ALL EXECUTION** — do not take any further action
    - Wait for the tool to exit and capture structured Markdown output
