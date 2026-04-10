@@ -617,20 +617,41 @@ Operations that change state or require human oversight MUST include **Report** 
 - **Scope Declaration** — What the agent will/won't do
 - **Session State** — Build, test, lint, git status
 
-**Gate Section** — Explicit checkpoint where the agent MUST wait for human confirmation:
+**Gate Section** — Explicit checkpoint where the agent execution MUST stop completely.
+
+All gates in ACTS are **HARD STOPS**. The agent MUST:
+
+1. Present the gate prompt and any associated report
+2. **STOP ALL EXECUTION** — do not take any further action
+3. Wait for explicit human confirmation (a typed response)
+4. Only proceed after receiving the expected confirmation
+
+The agent MUST NOT:
+- Auto-advance after a timeout
+- Continue on silence or non-response
+- Proceed based on assumed intent
+- Skip gates for any reason (except when explicitly disabled in configuration)
 
 ```markdown
 ### Gate
 GATE: approve
 "Ready to proceed with <task_id>? (yes/no)"
-Do NOT update state.json until developer confirms.
+Agent MUST stop here and wait. Do NOT update state.json until developer confirms.
 ```
 
 **Gate types:**
 
-- `GATE: approve` — Wait for explicit "yes" (most common)
-- `GATE: acknowledge` — Show report, any response continues
-- `GATE: reject` — Continue on silence, abort on "no" (rare)
+- `GATE: approve` — Agent stops. Presents prompt. Waits for explicit "yes" to proceed. Any other response (including silence) means do not proceed.
+- `GATE: task-review` — Agent stops. Triggers code review process. Task cannot complete until review status is `approved`. If code_review is disabled, this gate is SKIPPED entirely.
+
+### 5.1.2 Gate Constraints
+
+- The agent MUST NOT proceed past a gate without explicit human confirmation
+- There are no timeouts on gates — the agent waits indefinitely
+- If the human responds with anything other than the expected confirmation, the agent MUST ask again or abort
+- Gates are not advisory — they are mandatory state transition requirements
+- The only way to skip a gate is via explicit configuration (e.g., `code_review.enabled: false`)
+- Violating gate constraints is a protocol violation and MUST be reported in the session summary Agent Compliance section
 
 ### 5.2 Context Protocol
 
