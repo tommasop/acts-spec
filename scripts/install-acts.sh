@@ -34,7 +34,7 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if ! git rev-parse --git-dir > /dev/null 2>&1; then
+if ! git rev-parse --git-dir >/dev/null 2>&1; then
   log_error "Not in a git repository. Run this script inside a git repository."
   exit 1
 fi
@@ -96,7 +96,7 @@ mkdir -p .story/{tasks,sessions,reviews/{active,archive}}
 log_info "Setting up AGENTS.md..."
 if [ ! -f "AGENTS.md" ]; then
   PROJECT_NAME=$(basename "$REPO_ROOT")
-  sed "s/\[Project Name\]/$PROJECT_NAME/g" "$ACTS_SOURCE/docs/templates/agents-minimal.md" > AGENTS.md
+  sed "s/\[Project Name\]/$PROJECT_NAME/g" "$ACTS_SOURCE/docs/templates/agents-minimal.md" >AGENTS.md
   log_info "Created AGENTS.md from template"
 else
   if grep -q "## ACTS Integration" AGENTS.md; then
@@ -128,7 +128,7 @@ fi
 log_info "Updating .gitignore..."
 if [ -f ".gitignore" ]; then
   if ! grep -q "# ACTS Protocol" .gitignore; then
-    cat >> .gitignore << 'EOF'
+    cat >>.gitignore <<'EOF'
 
 # ACTS Protocol
 .story/
@@ -137,9 +137,8 @@ if [ -f ".gitignore" ]; then
 EOF
   fi
 else
-  cat > .gitignore << 'EOF'
+  cat >.gitignore <<'EOF'
 # ACTS Protocol
-.story/
 .acts/mcp-server/node_modules/
 .acts/mcp-server/dist/
 EOF
@@ -157,3 +156,4 @@ echo "Documentation:"
 echo "  - acts-v0.4.0.md (full specification)"
 echo "  - docs/minimal-viable-acts.md (quick start)"
 echo "  - .acts/operations/ (workflow definitions)"
+
