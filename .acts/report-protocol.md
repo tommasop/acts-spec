@@ -170,6 +170,8 @@ src/components/TwoFactorSetup.tsx → T3       TODO
 
 ## Gate Types
 
+All gates in ACTS are **HARD STOPS**. The agent MUST stop execution and wait for explicit human confirmation. There are no timeouts — the agent waits indefinitely.
+
 When presenting reports, use these gate patterns:
 
 ### GATE: approve
@@ -179,57 +181,39 @@ When presenting reports, use these gate patterns:
 **Agent behavior:**
 1. Present all relevant reports
 2. Say: "Ready to proceed? (yes/no)"
-3. WAIT for explicit "yes" or "proceed"
-4. If "no": address concerns, re-present
-5. If silence: re-prompt once, then abort if no response
+3. **STOP ALL EXECUTION** — do not take any further action
+4. Wait for explicit "yes" or "proceed"
+5. If "no" or silence: address concerns, re-present
+6. Only proceed after receiving the expected confirmation
 
 **Used in:** preflight (after context), session-summary (before commit), handoff (before reassignment), story-review (before transition)
 
-### GATE: acknowledge
+### GATE: task-review
 
-**Use when:** Information presented, no state change yet
-
-**Agent behavior:**
-1. Present reports
-2. Say: "Review the above. Continue when ready."
-3. Continue on any response (including just pressing enter)
-
-**Used in:** story-init (after plan), task-start (before commit)
-
-### GATE: reject
-
-**Use when:** Final check before irreversible action
+**Use when:** Code review via external tool (GitHuman) required before task completion
 
 **Agent behavior:**
-1. Present reports
-2. Say: "Any concerns before I proceed? (no = continue, anything else = abort)"
-3. If response is empty or "no": proceed
-4. If any other response: abort, explain why
-
-**Used in:** Rare — only for destructive operations (not currently in ACTS core)
-
-### GATE: review
-
-**Use when:** Code review via external tool (GitHuman) required
-
-**Agent behavior:**
-1. Start review server via provider CLI
-2. Present **Code Review** report with interface URL
-3. Say: "Review staged changes at {url}. Add inline comments if needed.
-   Tell me: 'approved' or 'changes_requested'"
-4. WAIT for explicit status from developer
-5. If "approved":
+1. Check if `code_review.enabled` is true in `.acts/acts.json`
+2. If disabled: skip this gate entirely, log in session summary
+3. If enabled:
+   - Start review server via provider CLI
+   - Present **Code Review** report with interface URL
+   - Say: "Review staged changes at {url}. Add inline comments if needed.
+     Tell me: 'approved' or 'changes_requested'"
+   - **STOP ALL EXECUTION** — do not take any further action
+   - Wait for explicit status from developer
+4. If "approved":
    - Export review to `.story/reviews/active/`
    - Proceed
-6. If "changes_requested":
+5. If "changes_requested":
    - Stop review server
    - Present comments
    - Agent addresses concerns
    - Re-stage changes
    - LOOP back to step 1
-7. If other: ask for clarification
+6. If other response: ask for clarification, keep waiting
 
-**Used in:** task-review (implicit at task completion), commit-review (explicit user request)
+**Used in:** task-review (implicit at task completion)
 
 ---
 
@@ -244,7 +228,7 @@ When presenting reports, use these gate patterns:
 **For operations:**
 - Reference this file: "Present Story Board per .acts/report-protocol.md"
 - Don't invent new report formats — extend this file if needed
-- Gate type must be explicit: "GATE: approve"
+- Gate type must be explicit: "GATE: approve" or "GATE: task-review"
 
 ---
 
