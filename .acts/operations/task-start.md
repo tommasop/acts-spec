@@ -37,11 +37,11 @@ constitution, and TDD principles.
    Present **Scope Declaration** per .acts/report-protocol.md
    Re-state what you will do from the plan.
 
-3. **GATE: acknowledge**
-   Say: "Ready to implement <task_id>. Scope confirmed above.
-   Continue when ready."
-   
-   Wait for any response, then proceed.
+3. **GATE: approve**
+   Say: "Ready to implement <task_id>? (yes/no)"
+
+   Agent MUST stop here and wait for explicit "yes".
+   Do NOT begin implementation until developer confirms.
 
 4. **IMPLEMENT (TDD loop)**
    When the language/framework supports it:
@@ -80,17 +80,24 @@ constitution, and TDD principles.
    git add .
    ```
 
-10. **CODE REVIEW GATE (task-review)**
-    If code review is enabled:
-    - Run `task-review` operation
-    - Present Code Review report
-    - Start review server (GitHuman)
-    - Wait for approval
-    - If changes_requested: address and loop back
-    - Export review to `.story/reviews/active/`
-    
-    If code review is disabled:
-    - Log: "Code review disabled — proceeding without review"
+10. **TASK-REVIEW GATE (HARD STOP)**
+    If `code_review.enabled` is true in `.acts/acts.json`:
+    a. Run `task-review` operation (see `.acts/operations/task-review.md`)
+    b. Present Code Review report per .acts/report-protocol.md
+    c. If review provider (e.g., GitHuman) is available:
+       - Start review server
+       - Wait for developer to complete review in the tool
+       - Poll `status` until review_status is `approved` or `changes_requested`
+       - If `changes_requested`: address feedback, then loop back to step 9
+       - Export review to `.story/reviews/active/`
+    d. If review provider is NOT available:
+       - Show all staged changes as a diff
+       - Agent MUST stop and wait for explicit manual approval
+    e. **GATE: task-review** — Wait for review approval before proceeding to step 11
+
+    If `code_review.enabled` is false:
+    - Log: "Code review disabled — skipping task-review gate"
+    - Proceed directly to step 11
 
 11. **UPDATE STATE**
     Update `.story/state.json`:
@@ -113,4 +120,6 @@ constitution, and TDD principles.
 - Stay within task boundary. No scope creep.
 - Follow `AGENTS.md` patterns. Ask before deviating.
 - Every commit must compile and pass tests.
-- Use the gate before starting implementation.
+- All gates are HARD STOPS — agent MUST NOT proceed without explicit confirmation.
+- The task-review gate MUST be satisfied before task status changes to DONE.
+- If code_review is disabled, the gate is skipped but the session summary MUST note this.
