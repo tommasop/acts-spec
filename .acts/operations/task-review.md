@@ -1,9 +1,9 @@
 ---
 operation_id: task-review
-layer: 6
+layer: 3
 required: true
-triggers: "none (implicit at task completion)"
-context_budget: 30000
+triggers: "task completion (implicit)"
+context_budget: 15000
 required_inputs:
   - name: task_id
     type: string
@@ -11,129 +11,103 @@ required_inputs:
     validation: "^T\\d+$"
 optional_inputs: []
 preconditions:
-  - "Changes MUST be staged (git add)"
-  - "Code review provider MUST be available"
-  - ".story/reviews/active/ directory MUST exist"
+  - "Task status MUST be IN_PROGRESS"
+  - "All code changes are staged (git add completed)"
+  - "Tests pass"
 postconditions:
-  - "Review status is 'approved'"
-  - "Review exported to .story/reviews/active/"
-  - "Task can proceed to completion"
+  - "Review status is recorded in state.json"
+  - "If approved: task can transition to DONE"
+  - "If changes_requested: task remains IN_PROGRESS"
+  - "Review artifact is archived in .story/reviews/archive/"
 ---
 
 # task-review
 
 ## Purpose
 
-Mandatory code review gate before task completion. Ensures human review
-of all staged changes before committing. Integrated with external review
-tools via the Code Review Interface (Layer 6).
+Mandatory code review before any task can be marked DONE. This operation
+ensures human oversight of all AI-generated code. It is a HARD GATE —
+the agent MUST NOT complete the task until review is approved.
 
-This operation runs **implicitly** at the end of `task-start` before
-the completion commit.
+**This operation is REQUIRED for ACTS v0.5.0 conformance.**
+
+## Pre-check
+
+If `code_review.enabled` is `false` in `.acts/acts.json`:
+- Skip this entire operation
+- Return immediately to task-start
+- Log in session summary: "Code review gate skipped (disabled in config)"
 
 ## Steps
 
-1. **CHECK PREREQUISITES**
-   - Verify changes are staged: `git diff --cached --quiet` should fail
-   - Verify code review is enabled in `.acts/acts.json`
-   - Verify provider is available (e.g., `which githuman`)
+1. **STAGE ALL CHANGES**
+   Run `git add .` to stage all pending changes.
 
-2. **PRESENT REPORT**
-   Present **Code Review** report per `.acts/report-protocol.md`:
-   - Files changed (staged)
-   - Line statistics (+/-)
-   - Test results
-   - Lint results
-   - Review interface URL (if server started)
+2. **CHECK REVIEW PROVIDER**
+   If a review provider is configured (e.g., GitHuman):
+   a. Run `check` command to verify provider is available
+   b. If provider is available → proceed to step 3a
+   c. If provider is NOT available → proceed to step 3b
 
-3. **START REVIEW SERVER**
-   Execute provider's `serve` command:
-   ```bash
-   githuman serve --port 3847 --no-open
+3a. **REVIEW VIA TOOL**
+   a. Run `serve` command to start review server
+   b. Present review URL to developer
+   c. Present Code Review report (from .acts/report-protocol.md)
+   d. **GATE: task-review** — Agent MUST stop and wait
+   e. Poll `status` command until review completes
+   f. If `approved` → proceed to step 4
+   g. If `changes_requested`:
+      - Read review comments
+      - Address each comment
+      - Re-stage changes
+      - Loop back to step 3a
+
+3b. **MANUAL REVIEW FALLBACK**
+   a. Show full diff of staged changes
+   b. Present Code Review report
+   c. **GATE: approve** — Agent MUST stop and wait for explicit "yes"
+   d. If developer approves → proceed to step 4
+   e. If developer requests changes:
+      - Address feedback
+      - Re-stage changes
+      - Loop back to step 3b
+
+4. **EXPORT REVIEW**
+   If a review tool was used:
+   - Run `export` command
+   - Save to `.story/reviews/active/<task_id>-review.md`
+   
+   If manual review:
+   - Create `.story/reviews/active/<task_id>-review.md` with:
+     ```markdown
+     # Manual Review — <task_id>
+     - **Reviewer:** <developer>
+     - **Date:** <ISO 8601>
+     - **Status:** approved
+     - **Changes reviewed:** <list of files>
+     ```
+
+5. **ARCHIVE REVIEW**
+   Move review from `.story/reviews/active/` to `.story/reviews/archive/`
+
+6. **UPDATE STATE**
+   Set `review_status` for this task in `state.json`:
+   ```json
+   {
+     "id": "T1",
+     "review_status": "approved",
+     "reviewed_at": "2026-04-10T14:30:00Z",
+     "reviewed_by": "developer"
+   }
    ```
-   
-   Capture server URL (e.g., `http://localhost:3847`)
 
-4. **GATE: review**
-   Say: "Code review interface ready at {url}
-   
-   Review all staged changes. Add inline comments if needed.
-   
-   When complete, tell me the review status:
-   - 'approved' — ready to commit
-   - 'changes_requested' — I'll address and re-stage"
-   
-   WAIT for explicit status from developer.
-
-5. **HANDLE STATUS**
-   
-   **If changes_requested:**
-   - Stop review server
-   - Present comments/issues from review
-   - Agent addresses concerns
-   - Re-stage changes
-   - LOOP back to step 3
-   
-   **If approved:**
-   - Continue to step 6
-   
-   **If other:**
-   - Ask for clarification
-   - Wait for valid status
-
-6. **EXPORT REVIEW**
-   Execute provider's `export` command:
-   ```bash
-   githuman export last --output .story/reviews/active/T1-<timestamp>-<dev>.md
-   ```
-   
-   Verify export succeeded.
-
-7. **UPDATE INDEX**
-   Append to `.story/reviews/index.md`:
-   ```markdown
-   - [T1](active/T1-20260328-101500-alice.md) — alice — approved — 2026-03-28
-   ```
-
-8. **CONFIRM**
-   Say: "Code review complete. Task {task_id} approved and ready to commit."
+7. **COMMIT**
+   `docs(<story_id>): review approved for <task_id>`
 
 ## Constraints
 
-- MUST NOT proceed without explicit approval
-- MUST preserve all review versions (even if changes requested multiple times)
-- MUST export review before task completion commit
-- Review interface MUST be accessible (localhost or as configured)
-- If provider unavailable, operation MUST fail with clear error
-
-## Error Handling
-
-**Provider not installed:**
-```
-❌ GitHuman not found
-
-Install: npm install -g githuman
-
-Or disable code review in .acts/acts.json:
-{
-  "code_review": { "enabled": false }
-}
-```
-
-**No staged changes:**
-```
-❌ No staged changes to review
-
-Stage changes first:
-git add <files>
-```
-
-**Review server fails:**
-```
-❌ Failed to start review server
-Error: <error message>
-
-Check:
-- Port 3847 is available
-- GitHuman is properly installed
-```
+- This is a HARD GATE — agent MUST stop and wait for approval.
+- There are no timeouts. Agent waits indefinitely.
+- If review provider fails, fall back to manual review — do NOT skip the gate.
+- The review artifact MUST be saved before the task can transition to DONE.
+- If code_review is disabled, this entire operation is skipped.
