@@ -84,7 +84,7 @@ constitution, and TDD principles.
     If `code_review.enabled` is true in `.acts/acts.json`:
     a. Run `task-review` operation (see `.acts/operations/task-review.md`)
     b. Present Code Review report per .acts/report-protocol.md
-    c. If review provider (e.g., tuicr) is available:
+    c. If review provider (e.g., critique) is available:
        - Launch review tool (TUI) and wait for developer to complete review
        - Capture review output (structured Markdown)
        - If `changes_requested`: address feedback, then loop back to step 9
