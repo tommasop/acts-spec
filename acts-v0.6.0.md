@@ -156,6 +156,65 @@ install instructions.
 
 ---
 
+## 2c. GitHub Stacked PRs Adapter (Optional)
+
+**Requires:** GitHub repository + `gh-stack` CLI
+
+**Status:** Private preview — [sign up for access](https://gh.io/stacksbeta)
+
+When enabled, ACTS task branches become GitHub Stacked PRs. Each task gets
+its own focused PR with independent CI, stack navigation, and ordered merge.
+
+### Mapping: ACTS to gh-stack
+
+| ACTS Operation | gh-stack Command |
+|---|---|
+| story-init | `gh stack init -p story/<STORY_ID> --numbered` |
+| preflight (task start) | `gh stack checkout` or `gh stack up` |
+| task-start (new task) | `gh stack add` |
+| task-done (push) | `gh stack push` |
+| story-review | Review all PRs in the stack |
+| story-done | `gh stack submit --draft` then merge stack |
+
+### Branch naming with gh-stack
+
+```text
+story/PROJ-42/01   → PR #1 (task T1)
+story/PROJ-42/02   → PR #2 (task T2, builds on T1)
+story/PROJ-42/03   → PR #3 (task T3, builds on T2)
+```
+
+### Configuration
+
+In `.acts/acts.json`:
+
+```json
+{
+  "gh_stack": {
+    "enabled": true,
+    "prefix": "story/<STORY_ID>",
+    "numbered": true,
+    "draft_prs": true
+  }
+}
+```
+
+### Benefits over plain branches
+
+- Each task reviewed as focused PR (not monolithic diff)
+- GitHub UI shows stack map for dependency navigation
+- Independent CI per task
+- Ordered merge — merge all or part of stack
+- Automatic rebase after partial merge
+
+### Limitations
+
+- GitHub only (not portable to GitLab, Bitbucket, etc.)
+- Requires private preview access (currently)
+- gh-stack manages branch relationships — ACTS `state.json` remains source of truth for task metadata
+
+---
+
 ## 3. Layer 1: Constitution (`AGENTS.md`)
 
 ### 3.1 Location

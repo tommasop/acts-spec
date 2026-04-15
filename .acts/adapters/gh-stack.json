@@ -1,0 +1,16 @@
+{
+  "adapter": "gh-stack",
+  "layer": 5,
+  "platform": "github",
+  "min_version": "0.1.0",
+  "status": "private_preview",
+  "install": "gh extension install github/gh-stack",
+  "commands": {
+    "init": { "cmd": "gh", "args": ["stack", "init", "-p", "{prefix}", "--numbered"] },
+    "add": { "cmd": "gh", "args": ["stack", "add"] },
+    "push": { "cmd": "gh", "args": ["stack", "push"] },
+    "submit": { "cmd": "gh", "args": ["stack", "submit", "--draft"] },
+    "sync": { "cmd": "gh", "args": ["stack", "sync"] },
+    "view": { "cmd": "gh", "args": ["stack", "view"] }
+  }
+}

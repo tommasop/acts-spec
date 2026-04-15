@@ -136,3 +136,26 @@ ACTS handles multi-developer coordination (state, handoffs, file ownership).
 Superpowers handles single-developer agent quality (TDD, planning, code review, debugging).
 
 Install at: https://github.com/obra/superpowers
+
+## What is gh-stack integration?
+
+gh-stack (GitHub Stacked PRs) turns ACTS task branches into stacked PRs on GitHub.
+Each task gets its own focused PR with independent CI and stack navigation.
+
+**Benefits:** Each task reviewed as focused PR, GitHub stack map for dependency navigation, ordered merge.
+
+**Requires:** `gh extension install github/gh-stack` + private preview access ([sign up](https://gh.io/stacksbeta))
+
+**Enable in `.acts/acts.json`:**
+```json
+{
+  "gh_stack": {
+    "enabled": true,
+    "prefix": "story/<STORY_ID>",
+    "numbered": true,
+    "draft_prs": true
+  }
+}
+```
+
+**Limitation:** GitHub only. Not portable to GitLab, Bitbucket, etc.

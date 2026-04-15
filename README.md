@@ -140,6 +140,7 @@ This single command will:
 - ✅ Cross-task learning (Layer 7: rejected approaches shared across tasks)
 - ✅ Strict mode (optional) — per-commit review + architecture discussion gates
 - ✅ Superpowers integration — TDD, planning, code review, debugging skills
+- ✅ GitHub Stacked PRs adapter (optional) — each task as focused, reviewable PR
 
 ## What ACTS Is NOT
 

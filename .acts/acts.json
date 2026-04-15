@@ -6,6 +6,13 @@
     "name": "superpowers",
     "min_version": "5.0.0"
   },
+  "gh_stack": {
+    "enabled": false,
+    "description": "GitHub Stacked PRs adapter (private preview). Turns task branches into stacked PRs.",
+    "prefix": "story/<STORY_ID>",
+    "numbered": true,
+    "draft_prs": true
+  },
   "description": "Project-level ACTS configuration — controls behavior, integration, and protocol settings.",
   "commit_convention": "conventional",
   "review_provider": "lazygit",
