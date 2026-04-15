@@ -114,6 +114,48 @@ A **minimal** ACTS implementation MUST include Layers 1 and 2. Layer 3 is REQUIR
 
 ---
 
+## 2b. Agent Framework Integration
+
+ACTS is designed to work with agent skill frameworks that provide
+TDD, planning, debugging, and code review workflows.
+
+**Recommended framework:** [superpowers](https://github.com/obra/superpowers)
+(153k stars, MIT license, supports Claude Code, Cursor, Copilot, Gemini CLI, OpenCode)
+
+Superpowers provides skills that ACTS operations reference:
+
+| ACTS Operation | Superpowers Skill Used |
+|---|---|
+| story-init | brainstorming |
+| task-start (planning) | writing-plans |
+| task-start (implementation) | subagent-driven-development |
+| task-start (coding) | test-driven-development |
+| task-review | requesting-code-review |
+| (error handling) | systematic-debugging |
+| story-review | finishing-a-development-branch |
+
+**Git approach:** ACTS uses branch-per-task (Section 7). Superpowers'
+`using-git-worktrees` skill is NOT required for ACTS stories. Branch-per-task
+provides equivalent isolation without worktree compatibility issues.
+
+**Installation:** Superpowers is a plugin that auto-installs into your
+agent platform. See https://github.com/obra/superpowers for platform-specific
+install instructions.
+
+**Configuration in `.acts/acts.json`:**
+
+```json
+{
+  "agent_framework": {
+    "enabled": true,
+    "name": "superpowers",
+    "min_version": "5.0.0"
+  }
+}
+```
+
+---
+
 ## 3. Layer 1: Constitution (`AGENTS.md`)
 
 ### 3.1 Location

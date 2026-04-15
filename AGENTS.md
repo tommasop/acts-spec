@@ -21,13 +21,23 @@
 
 This project uses ACTS (Agent Collaborative Tracking Standard) for multi-developer coordination.
 
+### Agent Framework
+
+This project uses [superpowers](https://github.com/obra/superpowers) for agent workflow skills.
+
+**Required for all agents:**
+- Install superpowers plugin for your platform before starting work
+- Skills auto-activate: brainstorming, TDD, subagent-driven-development, code review
+- ACTS handles multi-developer coordination (state, handoffs, file ownership)
+- Superpowers handles single-developer agent quality (TDD, planning, code review, debugging)
+
 ### Rules
 - Agent MUST read `.story/state.json` before writing code
 - Agent MUST NOT modify files owned by completed tasks
 - Agent MUST record session summary before ending
 - Agent MUST stay within assigned task boundary
 - Agent MUST get developer approval before committing
-- Agent MUST run code review before task completion (v0.5.0)
+- Agent MUST run code review before task completion (v0.6.0)
 
 ### Agent Configuration
 ```json

@@ -127,3 +127,12 @@ ACTS Strict (`conformance_level: "strict"`) adds two extra gates:
 2. **Architecture discussion** — Before making significant design decisions (new dependencies, API changes, pattern changes), agent presents its reasoning and gets your approval.
 
 Both gates are hard stops — agent waits for your explicit confirmation. This gives you much more control over AI-generated code at the cost of more interaction.
+
+## Do I need superpowers?
+
+No. ACTS works without superpowers. But superpowers improves the quality of individual agent sessions with TDD, systematic planning, subagent-driven development, and code review workflows.
+
+ACTS handles multi-developer coordination (state, handoffs, file ownership).
+Superpowers handles single-developer agent quality (TDD, planning, code review, debugging).
+
+Install at: https://github.com/obra/superpowers

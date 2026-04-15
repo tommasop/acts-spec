@@ -71,7 +71,12 @@ mkdir -p .story/{tasks,sessions,reviews/{active,archive}}
 # 4. Install lazygit (for code review)
 brew install lazygit
 
-# 5. Start your first story
+# 5. Install superpowers (agent workflow skills — TDD, planning, code review)
+#    See https://github.com/obra/superpowers for platform-specific install
+#    Claude Code: /plugin install superpowers@claude-plugins-official
+#    Cursor: /add-plugin superpowers
+
+# 6. Start your first story
 # In your AI coding agent (Cursor, Claude Code, etc.):
 "Initialize ACTS tracker for PROJ-XXX, title 'Your Feature'"
 ```
@@ -90,6 +95,9 @@ mkdir -p .story/{tasks,sessions,reviews/{active,archive}}
 
 # 4. Install lazygit (for code review)
 brew install lazygit
+
+# 5. Install superpowers (agent workflow skills)
+#    See https://github.com/obra/superpowers for platform-specific install
 ```
 
 ### Quick Install (one-liner)
@@ -106,6 +114,7 @@ This single command will:
 - Create the `.story/` directory structure  
 - Create or update `AGENTS.md` with ACTS integration
 - Install lazygit (for code review)
+- Install superpowers (for agent workflow skills)
 - Update `.gitignore` with recommended entries
 
 ## How It Works
@@ -130,6 +139,7 @@ This single command will:
 - ✅ Context optimization (Layer 7: MCP engine eliminates tool call residue)
 - ✅ Cross-task learning (Layer 7: rejected approaches shared across tasks)
 - ✅ Strict mode (optional) — per-commit review + architecture discussion gates
+- ✅ Superpowers integration — TDD, planning, code review, debugging skills
 
 ## What ACTS Is NOT
 

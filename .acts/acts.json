@@ -1,6 +1,11 @@
 {
   "manifest_version": "0.6.0",
   "conformance_level": "strict",
+  "agent_framework": {
+    "enabled": true,
+    "name": "superpowers",
+    "min_version": "5.0.0"
+  },
   "description": "Project-level ACTS configuration — controls behavior, integration, and protocol settings.",
   "commit_convention": "conventional",
   "review_provider": "lazygit",
