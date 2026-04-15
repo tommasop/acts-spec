@@ -1648,7 +1648,7 @@ human confirmation. There are no timeouts.
 An implementation MUST provide a `validate` command that checks:
 
 ```text
-ACTS VALIDATION CHECKLIST v0.5.0
+ACTS VALIDATION CHECKLIST v0.6.0
 ════════════════════════════════
 
 Constitution:
@@ -1715,6 +1715,16 @@ Code Review (v0.5.0+):
   [ ] ALL DONE tasks have review files in archive/ OR code_review was disabled
   [ ] review_status field exists on all DONE tasks in state.json
   [ ] No task transitions to DONE without passing task-review gate (when enabled)
+
+Strict Mode (acts:strict only):
+  [ ] conformance_level is "strict" in acts.json
+  [ ] commit-review operation exists and is marked required
+  [ ] architecture-discuss operation exists and is marked required
+  [ ] GATE: commit-review defined in report-protocol.md
+  [ ] GATE: architecture-discuss defined in report-protocol.md
+  [ ] Commit Batch Report format defined in report-protocol.md
+  [ ] Architecture Decision Report format defined in report-protocol.md
+  [ ] Session summaries document if strict mode gates were triggered
 ```
 
 ### 8.3 Schema Versioning
