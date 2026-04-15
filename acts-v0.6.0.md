@@ -1626,6 +1626,22 @@ A state transition and its corresponding `state.json` update MUST be in the same
 | **ACTS Basic** | Layer 1 + Layer 2 | `acts:basic` |
 | **ACTS Standard** | Layer 1 + 2 + 3 | `acts:standard` |
 | **ACTS Full** | Layer 1 + 2 + 3 + 4 | `acts:full` |
+| **ACTS Strict** | Layer 1 + 2 + 3 + 6 + commit-review + architecture-discuss | `acts:strict` |
+
+**ACTS Strict** adds two requirements beyond Standard:
+
+1. **Batched commit review** — After each logical batch of commits, the agent
+   MUST pause and request human review before continuing. The agent decides
+   what constitutes a "batch" (e.g., completing the model layer, finishing
+   the API endpoint).
+
+2. **Architecture discussion gate** — Before implementing any significant
+   design decision, the agent MUST present its reasoning and get explicit
+   human approval. The agent self-declares what counts as "architectural"
+   (new dependencies, new modules, API changes, pattern changes, refactors).
+
+These gates are HARD STOPS. The agent MUST NOT proceed without explicit
+human confirmation. There are no timeouts.
 
 ### 8.2 Validation Rules
 
