@@ -168,6 +168,87 @@ src/components/TwoFactorSetup.tsx → T3       TODO
 
 ---
 
+## Report: Commit Batch
+
+**Used in:** commit-review (strict mode)
+
+**Purpose:** Show the batch of commits for review before continuing.
+
+**Format:**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Commit Batch Review: T1 — Add auth module              │
+├─────────────────────────────────────────────────────────┤
+│  Batch: 3 commits                                       │
+│    • abc1234 feat: add user model (+45, -0)             │
+│    • def5678 feat: add validation (+28, -0)             │
+│    • ghi9012 test: add auth tests (+67, -0)             │
+│                                                         │
+│  Files Changed: 3                                       │
+│    • src/models/user.ts (+45, -0)                       │
+│    • src/validation/auth.ts (+28, -0)                   │
+│    • src/validation/auth.test.ts (+67, -0)              │
+│                                                         │
+│  Test Results: ✅ 12/12 passing                         │
+│  Lint Results: ✅ clean                                 │
+│                                                         │
+│  ⚠️  Action Required: Review this batch                 │
+│      Say: "approved" to continue                        │
+│      Say: "changes_requested" with details to fix       │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Rules:**
+- List all commits in the batch with SHAs and one-line descriptions
+- Show files changed with line stats
+- Show test/lint results
+- Batch size determined by agent (typically 1-5 commits per batch)
+
+---
+
+## Report: Architecture Decision
+
+**Used in:** architecture-discuss (strict mode)
+
+**Purpose:** Present a design decision for human approval before implementing.
+
+**Format:**
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  Architecture Decision: <summary>                       │
+├─────────────────────────────────────────────────────────┤
+│  Context:                                               │
+│    <Why this decision is needed>                        │
+│                                                         │
+│  Proposed approach:                                     │
+│    <What I plan to do>                                  │
+│                                                         │
+│  Alternatives considered:                               │
+│    • <Alternative 1> — <why rejected>                   │
+│    • <Alternative 2> — <why rejected>                   │
+│                                                         │
+│  Impact:                                                │
+│    • Files affected: <list>                             │
+│    • Risk level: low / medium / high                    │
+│    • Reversibility: easy / hard / irreversible          │
+│                                                         │
+│  ⚠️  Action Required: Approve or suggest alternative    │
+│      Say: "yes" to approve                              │
+│      Say: "no" to reject                                │
+│      Say: "different" to propose an alternative         │
+└─────────────────────────────────────────────────────────┘
+```
+
+**Rules:**
+- Agent MUST present this BEFORE implementing, not after
+- Context must explain WHY, not just WHAT
+- Alternatives must be genuinely considered, not strawmen
+- Risk level must be honest
+
+---
+
 ## Gate Types
 
 All gates in ACTS are **HARD STOPS**. The agent MUST stop execution and wait for explicit human confirmation. There are no timeouts — the agent waits indefinitely.
@@ -213,6 +294,43 @@ When presenting reports, use these gate patterns:
 
 **Used in:** task-review (implicit at task completion)
 
+### GATE: commit-review
+
+**Use when:** Agent has completed a batch of commits in strict mode and needs
+review before continuing implementation.
+
+**Agent behavior:**
+1. Present **Commit Batch Report** (see above)
+2. Say: "Batch complete: <N> commits, <M> files changed. Ready to review?"
+3. **STOP ALL EXECUTION** — do not take any further action
+4. Wait for explicit "approved" or "changes_requested"
+5. If "approved": continue implementation
+6. If "changes_requested":
+   - Present the specific concerns
+   - Address each concern
+   - Re-stage and re-commit if needed
+   - LOOP back to step 1
+7. If other response: ask for clarification, keep waiting
+
+**Used in:** commit-review (strict mode, between implementation batches)
+
+### GATE: architecture-discuss
+
+**Use when:** Agent is about to make a significant design decision that
+affects the project architecture. The agent self-declares this gate.
+
+**Agent behavior:**
+1. Present **Architecture Decision Report** (see above)
+2. Say: "I want to discuss: <decision>. Approve? (yes/no/different)"
+3. **STOP ALL EXECUTION** — do not take any further action
+4. Wait for explicit response
+5. If "yes": proceed with implementation
+6. If "no": do NOT implement. Note the rejection in task notes.
+7. If "different" or alternative proposed: discuss, then loop back to step 1
+8. If other response: ask for clarification, keep waiting
+
+**Used in:** architecture-discuss (strict mode, before implementing decisions)
+
 ---
 
 ## Implementation Notes
@@ -226,7 +344,7 @@ When presenting reports, use these gate patterns:
 **For operations:**
 - Reference this file: "Present Story Board per .acts/report-protocol.md"
 - Don't invent new report formats — extend this file if needed
-- Gate type must be explicit: "GATE: approve" or "GATE: task-review"
+- Gate type must be explicit: "GATE: approve", "GATE: task-review", "GATE: commit-review", or "GATE: architecture-discuss"
 
 ---
 
