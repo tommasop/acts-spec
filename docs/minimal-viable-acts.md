@@ -52,7 +52,7 @@ This project uses ACTS for multi-developer coordination.
 
 ```json
 {
-  "acts_version": "0.5.0",
+  "acts_version": "0.6.0",
   "conformance_level": "basic",
   "constitution": "AGENTS.md",
   "tracker_dir": ".story",
@@ -67,7 +67,7 @@ This project uses ACTS for multi-developer coordination.
 
 ```json
 {
-  "acts_version": "0.5.0",
+  "acts_version": "0.6.0",
   "story_id": "TEST-1",
   "title": "My First ACTS Story",
   "status": "ANALYSIS",
@@ -127,6 +127,7 @@ Once basics work, add:
 3. **lazygit** — Install for code review gates
 4. **Templates** — Use for team coordination
 5. **MCP Context Engine** — Enable Layer 7 for context optimization
+4. **Strict mode** — Enable `conformance_level: "strict"` for per-commit review gates
 
 ### Layer 7: MCP Context Engine (when context issues arise)
 
@@ -168,7 +169,7 @@ Layer 7 provides:
 
 Once you've tested with 3 files:
 
-1. Read the full [spec](../acts-v0.5.0.md)
+1. Read the full [spec](../acts-v0.6.0.md)
 2. Copy the [operations](../.acts/operations/) for structured workflows
 3. Install lazygit for code review (brew install lazygit)
 4. Use [templates](./templates/) for team coordination

@@ -129,6 +129,7 @@ This single command will:
 - ✅ Industry alignment (AGENTS.md standard)
 - ✅ Context optimization (Layer 7: MCP engine eliminates tool call residue)
 - ✅ Cross-task learning (Layer 7: rejected approaches shared across tasks)
+- ✅ Strict mode (optional) — per-commit review + architecture discussion gates
 
 ## What ACTS Is NOT
 
@@ -149,7 +150,7 @@ This single command will:
 
 | File | Purpose |
 |------|---------|
-| [acts-v0.5.0.md](acts-v0.5.0.md) | Full specification (includes Layer 7) |
+| [acts-v0.6.0.md](acts-v0.6.0.md) | Full specification (includes Layer 7) |
 | [.acts/operations/](.acts/operations/) | Workflow definitions (11 operations) |
 | [.acts/schemas/](.acts/schemas/) | JSON schemas for validation |
 | [.acts/mcp-server/](.acts/mcp-server/) | Layer 7 MCP Context Engine (TypeScript) |

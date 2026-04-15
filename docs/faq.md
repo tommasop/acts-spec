@@ -118,3 +118,12 @@ Layer 7 is optional — it accelerates existing layers but doesn't replace them.
 **If you work on large stories (6+ tasks):** Recommended. Context management becomes critical at scale.
 
 See the [Layer 7 design spec](superpowers/specs/2026-03-31-acts-layer7-mcp-context-engine-design.md) for details.
+
+## What is strict mode?
+
+ACTS Strict (`conformance_level: "strict"`) adds two extra gates:
+
+1. **Per-batch commit review** — Agent groups commits into batches (1-5) and gets your approval before continuing.
+2. **Architecture discussion** — Before making significant design decisions (new dependencies, API changes, pattern changes), agent presents its reasoning and gets your approval.
+
+Both gates are hard stops — agent waits for your explicit confirmation. This gives you much more control over AI-generated code at the cost of more interaction.
