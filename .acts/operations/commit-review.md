@@ -1,105 +1,84 @@
 ---
 operation_id: commit-review
-layer: 6
-required: false
-triggers: "none (explicit user request)"
-context_budget: 20000
+layer: 3
+required: true
+required_for: "strict"
+triggers: "after a batch of commits during implementation"
+context_budget: 10000
 required_inputs:
-  - name: commit_range
+  - name: task_id
     type: string
     required: true
-    description: "Git commit range to review (e.g., 'HEAD~3..HEAD')"
-optional_inputs:
-  - name: reviewer
-    type: string
-    required: false
-    description: "Specific reviewer (defaults to current developer)"
+    validation: "^T\\d+$"
+  - name: batch_commits
+    type: array
+    required: true
+    description: "List of commit SHAs in this batch"
+optional_inputs: []
 preconditions:
-  - "Commit range MUST exist"
-  - "Code review provider MUST be available"
+  - "Task status MUST be IN_PROGRESS"
+  - "At least one commit has been made since last review"
 postconditions:
-  - "Review completed and exported"
-  - "Review does NOT block anything (informational)"
+  - "Batch is approved or changes are requested"
+  - "If approved: agent continues implementation"
+  - "If changes_requested: agent addresses feedback and re-presents"
 ---
 
 # commit-review
 
 ## Purpose
 
-Explicit code review of specific commits. Used for:
-- Reviewing partial work mid-task
-- Reviewing multiple commits at once
-- Retroactive review of existing commits
-- Peer review requests
+In strict mode, review a batch of commits before continuing implementation.
+The agent groups logical changes into batches and requests human review
+after each batch. This prevents accumulating unreviewed work.
 
-Unlike `task-review`, this operation is **explicit** (user-initiated) and
-**informational** (does not gate task completion).
+**This operation is REQUIRED for ACTS Strict conformance.**
+
+## Pre-check
+
+If conformance level is NOT `strict` in `.acts/acts.json`:
+- Skip this entire operation
+- Continue implementation freely
 
 ## Steps
 
-1. **VERIFY INPUTS**
-   - Validate commit range exists: `git log {commit_range}`
-   - Verify provider is available
+1. **DETERMINE BATCH**
+   The agent decides what constitutes a batch. Guideline:
+   - A batch is 1-5 commits that accomplish a logical unit of work
+   - Examples: "model layer complete", "API endpoint done", "tests written"
+   - NOT: every single commit (too much friction)
+   - NOT: entire task (defeats the purpose)
 
-2. **CHECKOUT COMMITS**
-   ```bash
-   git checkout {commit_range_end}
-   ```
-   
-   Or create temporary worktree for review.
+2. **COMPILE BATCH REPORT**
+   Gather:
+   - Commit SHAs and one-line messages
+   - Files changed with line stats
+   - Test results
+   - Lint results
 
-3. **PRESENT REPORT**
-   Present **Code Review** report:
-   - Commits in range
-   - Files changed
-   - Diff statistics
-   - Review interface URL
+3. **PRESENT COMMIT BATCH REPORT**
+   Present per .acts/report-protocol.md
 
-4. **START REVIEW SERVER**
-   Start provider server for commit range.
+4. **GATE: commit-review**
+   Say: "Batch complete: <N> commits, <M> files changed. Ready to review?"
 
-5. **GATE: approve** (informational)
-   Say: "Reviewing commits {commit_range}
-   
-   Review interface: {url}
-   
-   This is an informational review — no action required.
-   Type 'yes' when done reviewing."
-   Comments and findings will be saved for reference.
-   
-   Tell me when review is complete."
-   
-   Wait for completion signal.
+   Agent MUST stop here and wait for explicit "approved" or "changes_requested".
 
-6. **EXPORT REVIEW**
-   Export to `.story/reviews/archive/commits/`:
-   ```
-   .story/reviews/archive/commits/
-   └── 20260328-101500-<range>-<dev>.md
-   ```
+5. **HANDLE RESPONSE**
+   If "approved":
+   - Continue implementation
+   - Next batch starts with next commit
 
-7. **RETURN TO BASE**
-   Checkout original branch.
+   If "changes_requested":
+   - Read specific feedback
+   - Address each concern
+   - Re-commit if needed
+   - LOOP back to step 2
 
-8. **SUMMARIZE**
-   Present review summary and file location.
+## Constraints
 
-## Usage Examples
-
-**Review last 3 commits:**
-```
-User: Review commits HEAD~3..HEAD
-Agent: [runs commit-review]
-```
-
-**Review specific range:**
-```
-User: Review commits abc123..def456
-Agent: [runs commit-review]
-```
-
-**Review for peer:**
-```
-User: Review commits HEAD~2..HEAD and assign to bob
-Agent: [runs commit-review, notes bob as reviewer]
-```
+- This is a HARD GATE — agent MUST stop and wait.
+- There are no timeouts.
+- The agent decides batch size — human can ask for smaller/larger batches.
+- This gate does NOT replace the task-review gate at task completion.
+- Both gates are required in strict mode.
