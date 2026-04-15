@@ -1,6 +1,6 @@
 # ACTS — Agent Collaborative Tracking Standard
 
-**Version 0.5.0 — DRAFT**
+**Version 0.6.0 — DRAFT**
 
 A specification for multi-developer, multi-agent collaborative software development with structured handoffs, drift prevention, automated documentation, and mandatory code review gates.
 
@@ -10,13 +10,13 @@ A specification for multi-developer, multi-agent collaborative software developm
 
 ```text
 Standard:    ACTS (Agent Collaborative Tracking Standard)
-Version:     0.5.0
+Version:     0.6.0
 Status:      Draft
 Authors:     Tommaso + contributors
 Created:     2026-03-27
-Updated:     2026-04-10
+Updated:     2026-04-11
 License:     CC-BY-SA-4.0
-Supersedes:  0.4.0
+Supersedes:  0.5.0
 ```
 
 ### 1.1 Problem Statement
@@ -61,20 +61,19 @@ The key words "MUST", "MUST NOT", "SHOULD", "SHOULD NOT", "MAY" in this document
 | **Context Anchor** | A compact structured summary of the current task state, re-injected at the end of context to maintain instruction attention. |
 | **Decision Authority** | The trust level of a recorded decision: `developer_approved` (human-confirmed) or `agent_decided` (autonomous). |
 
-### 1.4 Changes from v0.4.0
+### 1.4 Changes from v0.5.0
 
 | Area | Change |
 |------|--------|
-| Git | Worktrees replaced by branch-per-task model — each task gets its own branch off the story branch |
-| Git | Removed worktree concurrency model — branch isolation prevents conflicts |
-| Gates | All gate types are now HARD STOPS — agent MUST NOT proceed without explicit human confirmation |
-| Gates | Removed soft gate types: `GATE: acknowledge` and `GATE: reject` |
-| Gates | New gate type: `GATE: task-review` — mandatory code review before task completion |
-| Code Review | `task-review` promoted from optional to REQUIRED operation |
-| Code Review | Tasks MUST have review approved before transitioning to DONE |
-| Code Review | If `code_review.enabled=false`, task-review gate is skipped entirely |
-| Validation | New validation: all DONE tasks must have review files or review was explicitly skipped |
-| Validation | Branch-per-task validation replaces worktree validation |
+| Conformance | New level: `acts:strict` — per-batch commit review + architecture discussion gates |
+| Gates | New gate type: `GATE: commit-review` — review batched commits before continuing |
+| Gates | New gate type: `GATE: architecture-discuss` — discuss architectural decisions with human |
+| Operations | `commit-review` — new REQUIRED operation for strict mode |
+| Operations | `architecture-discuss` — new REQUIRED operation for strict mode |
+| Operations | `task-start` updated with strict-mode commit-review loops |
+| Schema | New `strict_mode` field on story in state.json |
+| Config | `conformance_level` in acts.json supports `"strict"` |
+| Validation | New strict-mode validation rules |
 
 ---
 
