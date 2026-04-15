@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://acts-standard.org/schemas/state/v0.5.0",
+  "$id": "https://acts-standard.org/schemas/state/v0.6.0",
   "title": "ACTS Story State",
   "description": "Schema for .story/state.json — the canonical story state file.",
   "type": "object",
@@ -21,7 +21,7 @@
       "type": "string",
       "description": "ACTS specification version this file conforms to.",
       "pattern": "^\\d+\\.\\d+\\.\\d+$",
-      "examples": ["0.5.0"]
+      "examples": ["0.6.0"]
     },
     "story_id": {
       "type": "string",
@@ -149,6 +149,11 @@
         "pattern": "^[A-Z]+-\\d+$",
         "description": "Jira subtask key (e.g. PROJ-306)."
       }
+    },
+    "strict_mode": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this story runs in ACTS Strict mode (v0.6.0+)."
     }
   },
   "$defs": {
