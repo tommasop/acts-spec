@@ -127,7 +127,7 @@ Once basics work, add:
 3. **lazygit** — Install for code review gates
 4. **Templates** — Use for team coordination
 5. **MCP Context Engine** — Enable Layer 7 for context optimization
-6. **Strict mode** — Enable `conformance_level: "strict"` for per-commit review gates
+4. **Strict mode** — Enable `conformance_level: "strict"` for per-commit review gates
 
 ### Layer 7: MCP Context Engine (when context issues arise)
 
