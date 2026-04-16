@@ -33,7 +33,27 @@ Jira subtasks for each ACTS task under the parent story.
 1. **READ STATE**
    Read `.story/state.json`, `.story/plan.md`, `.story/spec.md`.
 
-2. **PRESENT TASK BREAKDOWN**
+2. **VALIDATE DEPENDENCY GRAPH**
+   Build dependency graph from `depends_on` fields in plan.md.
+
+   Check for cycles:
+   - For each task, trace dependency chain
+   - IF any chain loops back (T1→T2→T3→T1): CYCLE DETECTED
+   - Present the cycle path
+   - BLOCK until cycle resolved
+
+   Check for orphans:
+   - Tasks with no dependencies AND nothing depends on them
+   - WARNING: "Isolated task — does this fit in the story?"
+
+   Present dependency table:
+   | Task | Depends On | Status |
+   |------|-----------|--------|
+   | T1   | none      | root   |
+   | T2   | T1        | valid  |
+   | T3   | T1, T2    | valid  |
+
+3. **PRESENT TASK BREAKDOWN**
    Present a table of all tasks:
 
    | ID | Title | Deps | Priority | Acceptance Criteria |
@@ -43,7 +63,7 @@ Jira subtasks for each ACTS task under the parent story.
 
    Include the dependency graph as a visual summary.
 
-3. **GATE: approve**
+4. **GATE: approve**
    Say: "Review the task breakdown above. You can:
    - approve — accept as-is
    - add — add a new task
@@ -53,7 +73,7 @@ Jira subtasks for each ACTS task under the parent story.
 
    Wait for input.
 
-4. **HANDLE MODIFICATIONS** (loop until approved)
+5. **HANDLE MODIFICATIONS** (loop until approved)
    If the developer requests changes:
    a. Apply the modification to `.story/plan.md` and `.story/state.json`.
       - **Add:** create new task entry in both files, assign next T<n> ID.
@@ -62,16 +82,27 @@ Jira subtasks for each ACTS task under the parent story.
    b. Re-present the updated task table.
    c. Return to step 3 gate.
 
-5. **OFFER JIRA SUBTASK CREATION**
+6. **OFFER JIRA SUBTASK CREATION**
    If `jira_integration.enabled` is true in `.acts/acts.json`
    AND `jira_metadata.issue_key` exists in `state.json`:
 
    Say: "Create Jira subtasks for these <N> tasks under
-   <issue_key>? (yes/no)"
+   <issue_key>? (yes/no/dry-run)"
 
    Wait for confirmation.
 
-6. **CREATE JIRA SUBTASKS** (if accepted)
+   If `dry-run`:
+   a. Present what would be created without calling the API:
+
+   | Task | Summary | Parent | Labels | Components |
+   |------|---------|--------|--------|------------|
+   | T1   | ...     | PROJ-N | [...]  | [...]      |
+   | T2   | ...     | PROJ-N | [...]  | [...]      |
+
+   b. Say: "Dry run complete. Proceed with creation? (yes/no)"
+   c. Wait for confirmation.
+
+7. **CREATE JIRA SUBTASKS** (if accepted)
    For each task in `state.json.tasks`:
    a. Derive `project_key` from `story_id` (e.g. `PROJ-305` → `PROJ`).
    b. Call the Atlassian MCP tool to create a subtask:
@@ -95,18 +126,18 @@ Jira subtasks for each ACTS task under the parent story.
    }
    ```
 
-7. **APPROVE**
+8. **APPROVE**
    Update `.story/state.json`:
    - `spec_approved` → `true`
    - `status` → `APPROVED`
    - `updated_at` → now
 
-8. **COMMIT**
+9. **COMMIT**
    `docs(<story_id>): plan review complete`
 
-9. **INSTRUCT**
-   Say: "Story approved. Tasks are ready for preflight.
-   Run `preflight <task_id> <developer>` to begin work."
+10. **INSTRUCT**
+    Say: "Story approved. Tasks are ready for preflight.
+    Run `preflight <task_id> <developer>` to begin work."
 
 ## Constraints
 
