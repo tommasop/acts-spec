@@ -12,6 +12,11 @@ required_inputs:
     type: string
     required: false
     description: "Single task to sync. If omitted, syncs all tasks."
+  - name: dry_run
+    type: boolean
+    required: false
+    default: false
+    description: "If true, show what would change without applying."
 optional_inputs: []
 preconditions:
   - ".story/ directory MUST exist with state.json"
@@ -28,6 +33,10 @@ postconditions:
 Sync ACTS task status to Jira subtask status. ACTS is the source
 of truth — this operation pushes state FROM ACTS TO Jira, never
 the reverse.
+
+Before syncing, this operation detects conflicts between ACTS and
+Jira status. Conflicts are presented to the developer for manual
+resolution — never auto-overwritten.
 
 ## Status Mapping
 
@@ -50,7 +59,32 @@ the reverse.
    b. Check `jira_integration.enabled` is true in `.acts/acts.json`.
       If not, say: "Jira integration is disabled." STOP.
 
-3. **DETERMINE SCOPE**
+3. **DETECT CONFLICTS**
+   For each task that would be synced:
+   a. Read current Jira subtask status via
+      `atlassian_getJiraIssue` with the subtask key.
+   b. Read current ACTS status from `state.json`.
+   c. Compare statuses. If they differ, mark CONFLICT.
+
+   Present conflicts:
+
+   | Task | ACTS Status | Jira Status | Issue |
+   |------|-------------|-------------|-------|
+   | T1   | IN_PROGRESS | Done        | Jira ahead of ACTS |
+   | T2   | TODO        | Cancelled   | Jira cancelled, ACTS still TODO |
+
+   Common conflicts:
+   - Jira says "Done" but ACTS says "IN_PROGRESS" → investigate
+   - Jira says "Cancelled" but ACTS says "TODO" → update ACTS?
+   - Jira subtask doesn't exist → recreate?
+
+   IF conflicts found: present them. Ask developer how to resolve.
+   DO NOT auto-overwrite. ACTS is source of truth, but respect
+   manual Jira changes.
+
+   IF no conflicts found: continue to step 4.
+
+4. **DETERMINE SCOPE**
    If `task_id` is provided:
    - Validate it exists in `state.json.tasks`
    - Validate it exists in `jira_task_map`
@@ -59,28 +93,33 @@ the reverse.
    If `task_id` is omitted:
    - Sync list: all tasks in `jira_task_map`
 
-4. **SYNC EACH TASK**
+5. **SYNC EACH TASK** (with dry-run option)
    For each task in the sync list:
    a. Read current ACTS status from `state.json`.
    b. Read `jira_task_map[task_id]` to get the Jira subtask key.
    c. Call Atlassian MCP to get available transitions:
       `atlassian_getTransitionsForJiraIssue` with the subtask key.
    d. Determine target transition based on status mapping above.
-   e. If a matching transition exists, call
-      `atlassian_transitionJiraIssue` to apply it.
-   f. If ACTS status is `BLOCKED`, call
-      `atlassian_addCommentToJiraIssue` with the blocker details
-      from the task's notes.md (if available).
-   g. Log result: synced / skipped / failed.
+   e. If `dry_run` is true:
+      - Log: "WOULD apply transition X to subtask Y"
+      - Do NOT call `atlassian_transitionJiraIssue`
+   f. If `dry_run` is false and a matching transition exists:
+      - Call `atlassian_transitionJiraIssue` to apply it.
+   g. If ACTS status is `BLOCKED`:
+      - If `dry_run`: log "WOULD add blocker comment to subtask Y"
+      - If actual: call `atlassian_addCommentToJiraIssue` with
+        the blocker details from the task's notes.md (if available).
+   h. Log result: synced / skipped / failed (or "would-sync" in dry-run).
 
-5. **SYNC STORY STATUS** (bulk only, when `task_id` is omitted)
+6. **SYNC STORY STATUS** (bulk only, when `task_id` is omitted)
    If all tasks are `DONE` and story status is `REVIEW`:
    a. Get parent issue key from `jira_metadata.issue_key`.
    b. Get available transitions for the parent issue.
-   c. Transition the parent issue to match (e.g. "In Review").
-   d. Log result.
+   c. If `dry_run`: log "WOULD transition parent issue to In Review"
+   d. If actual: transition the parent issue to match (e.g. "In Review").
+   e. Log result.
 
-6. **PRESENT SUMMARY**
+7. **PRESENT SUMMARY**
    Present a sync report:
 
    | Task | ACTS Status | Jira Key | Jira Action | Result |
@@ -89,9 +128,12 @@ the reverse.
    | T2   | IN_PROGRESS | PROJ-307 | → In Progress | synced |
    | T3   | TODO        | PROJ-308 | (none)      | skipped |
 
+   If `dry_run` was true, prefix the report with:
+   "**DRY RUN** — no changes were applied."
+
    Include counts: synced / skipped / failed.
 
-7. **GATE: approve** (only if any failures)
+8. **GATE: approve** (only if any failures)
    If any syncs failed, present failures and say:
    "Fix the issues above and re-run tracker-sync. Ready to continue? (yes/no)"
 
@@ -106,3 +148,6 @@ the reverse.
 - Do NOT modify `state.json`. This operation only writes to Jira.
 - The status mapping table above is the default. Teams MAY customize
   via `jira_integration.sync.status_map` in `.acts/acts.json`.
+- NEVER auto-resolve conflicts. Always present them to the developer.
+- In dry-run mode, no Jira API calls that mutate state are made.
+  Read-only calls (getIssue, getTransitions) are still performed.
