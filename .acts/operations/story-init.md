@@ -70,27 +70,39 @@ initial state.
    └── sessions/
    ```
 
-2. **WRITE SPEC**
+2. **SELECT STORY TEMPLATE** (if templates exist in `.acts/templates/`)
+   Ask: "What type of story?"
+   Options:
+   - **feature**: New functionality (user-facing)
+   - **bug**: Fix for existing issue
+   - **refactor**: Code restructuring (no behavior change)
+   - **spike**: Research/exploration
+   - **config**: Setup, infrastructure, tooling
+   
+   If template chosen: load it, use as starting structure for spec.md
+   If no template or no match: write spec from scratch (existing behavior)
+
+3. **WRITE SPEC**
    Parse the `source` material and write `.story/spec.md` with:
    - **Goal** — what the feature achieves (user perspective)
    - **Acceptance Criteria** — numbered, each independently testable
    - **Technical Decisions** — architecture choices, data model, APIs
    - **Out of Scope** — explicitly listed exclusions
 
-3. **READ CONSTITUTION**
+4. **READ CONSTITUTION**
    Read `AGENTS.md` to understand architecture patterns.
    The plan MUST align with the constitution.
 
-4. **WRITE PLAN**
+5. **WRITE PLAN**
    Decompose the spec into tasks. Write `.story/plan.md`:
    - Each task independently assignable to one developer
    - Identify dependency graph
    - Maximize parallelism
    - Each task: ID, title, dependencies, likely files, acceptance
 
-5. **INIT STATE**
+6. **INIT STATE**
    Create `.story/state.json`:
-   - `acts_version`: `0.3.0`
+   - `acts_version`: Read `manifest_version` from `.acts/acts.json`. Use that value.
    - `status`: `ANALYSIS`
    - `spec_approved`: `false`
    - `context_budget`: 50000 (default)
@@ -99,24 +111,24 @@ initial state.
    - `compressed`: false
    - `jira_metadata`: (only if auto-fetched from Jira in step 0)
 
-6. **PRESENT SUMMARY**
+7. **PRESENT SUMMARY**
    Show:
    - Spec summary (goal, key acceptance criteria count)
    - Plan summary (number of tasks, dependency graph overview)
    - State file initialized
 
-7. **GATE: approve**
+8. **GATE: approve**
    Say: "Tracker initialized for <story_id>. Review the spec and plan
    with your team before proceeding. Ready to continue? (yes/no)"
    
    Wait for explicit "yes", then continue.
 
-8. **COMMIT**
+9. **COMMIT**
    `docs(<story_id>): initialize ACTS tracker`
 
-9. **INSTRUCT**
-   Say: "Team must review and approve `spec.md` and `plan.md` before
-   proceeding. Set `spec_approved: true` in state.json when ready."
+10. **INSTRUCT**
+    Say: "Team must review and approve `spec.md` and `plan.md` before
+    proceeding. Set `spec_approved: true` in state.json when ready."
 
 ## Constraints
 
