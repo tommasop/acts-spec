@@ -54,7 +54,19 @@ open questions).
    d. **Files touched** — union into one list
    e. **What was NOT done** — merge remaining items
 
-4. **WRITE COMPRESSED FILE**
+4. **QUALITY CHECK**
+   Compare compressed data against originals:
+   - Count: same number of unique decisions?
+   - Check: each decision has context + rationale?
+   - Check: each rejected approach includes WHY it was rejected?
+   - Check: all files touched are listed?
+   
+   IF any check FAILS:
+   - Present what's missing
+   - Ask: "Proceed with compression or review manually?"
+   - Wait for confirmation before writing
+
+5. **WRITE COMPRESSED FILE**
    Create `.story/sessions/compressed-<task_id>.md`:
    
    ```markdown
@@ -80,18 +92,18 @@ open questions).
    <merged remaining work>
    ```
 
-5. **PRESENT SUMMARY**
+6. **PRESENT SUMMARY**
    Show:
    - Total sessions: <N>
    - Kept (uncompressed): <keep_latest>
    - Compressed: <N - keep_latest>
    - File written: compressed-<task_id>.md
 
-6. **UPDATE STATE**
+7. **UPDATE STATE**
    - `state.json` → `compressed: true`
    - `updated_at` → now
 
-7. **COMMIT**
+8. **COMMIT**
    `chore(<story_id>): compress sessions for <task_id>`
 
 ## Constraints
