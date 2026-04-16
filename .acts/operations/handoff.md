@@ -37,16 +37,27 @@ sessions.
    `new_developer` as the developer. This validates state and
    performs context ingestion.
 
-2. **DEEP CONTEXT INGESTION**
-   a. Read ALL session summaries in `.story/sessions/` that reference
-      this `task_id`, in chronological order.
-   b. Read ALL session summaries for dependency tasks.
-   c. Read ALL files in `files_touched` for this task (partial work).
-   d. Read ALL files in `files_touched` for completed dependency tasks.
-   e. Read the git log for task branch `story/<STORY_ID>/<TASK_ID>` to
-      show what commits exist.
+2. **DETERMINE HANDOFF MODE**
+   IF same team (developer already knows the codebase): use LIGHTWEIGHT
+   IF different team OR new developer OR complex task: use FULL
+   If unsure, ask: "Lightweight or full handoff?"
 
-3. **PRODUCE HANDOFF BRIEFING**
+3. **CONTEXT INGESTION**
+
+   LIGHTWEIGHT mode:
+   - Read: this task's latest session summary (if any)
+   - Read: files in `files_touched` for this task
+   - Read: git log for this task branch (last 10 commits)
+   - Token budget: ~10k
+
+   FULL mode:
+   - Read: ALL session summaries for this task (chronological order)
+   - Read: ALL session summaries for dependency tasks
+   - Read: files in `files_touched` for this task AND dependencies
+   - Read: git log for this task branch (all commits)
+   - Token budget: ~100k
+
+4. **PRODUCE HANDOFF BRIEFING**
    Create a comprehensive briefing:
 
    ```markdown
@@ -79,12 +90,12 @@ sessions.
    - Estimated tokens used: <count>
    ```
 
-4. **PRESENT REPORTS**
+5. **PRESENT REPORTS**
    Present **Story Board** per .acts/report-protocol.md
    Present **Ownership Map** showing current file ownership
    Present the handoff briefing from step 3
 
-5. **GATE: approve**
+6. **GATE: approve**
    Say: "Handoff briefing complete. Ready to reassign <task_id> to
    <new_developer>? (yes/no)"
    
@@ -94,12 +105,12 @@ sessions.
    
    Do NOT write code until the new developer explicitly says to proceed.
 
-6. **REASSIGN**
+7. **REASSIGN**
    Update `.story/state.json`:
    - Task `assigned_to` → `new_developer`
    - `updated_at` → now
 
-7. **COMMIT**
+8. **COMMIT**
    `chore(<story_id>): handoff <task_id> to <new_developer>`
 
 ## Constraints
