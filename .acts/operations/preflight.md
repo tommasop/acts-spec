@@ -69,11 +69,16 @@ firewall between the agent and uncontrolled code generation.
      Confirm you want to proceed anyway?"
 
 6. **CONTEXT INGESTION**
-   Follow the Context Protocol (§5.2). Read files in priority order
-   within the context_budget.
-
-   Track which protocol steps you completed and which you skipped due
-   to budget exhaustion.
+   Budget: {context_budget} tokens. If exceeded, STOP and ask developer which files to skip.
+   
+   Read in this EXACT order:
+   a. `.story/spec.md` — full document
+   b. `.story/plan.md` — your task entry + 2 tasks before/after
+   c. `.story/state.json` — story status, task statuses, files_owned
+   d. Each file in `files_owned` by DONE tasks (from state.json)
+   e. Most recent session summary for this task (if any)
+   
+   Report: list files read, estimated tokens used.
 
 7. **PRESENT REPORTS**
    Present **Story Board** per .acts/report-protocol.md
