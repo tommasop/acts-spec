@@ -42,12 +42,20 @@ If conformance level is NOT `strict` in `.acts/acts.json`:
 
 ## Steps
 
-1. **DETERMINE BATCH**
-   The agent decides what constitutes a batch. Guideline:
-   - A batch is 1-5 commits that accomplish a logical unit of work
-   - Examples: "model layer complete", "API endpoint done", "tests written"
-   - NOT: every single commit (too much friction)
-   - NOT: entire task (defeats the purpose)
+1. **DETERMINE BATCH BOUNDARIES**
+   A batch is 1-5 commits. Batch when ANY of these is true:
+   - You've completed a logical unit (e.g., "model layer done", "API endpoint done")
+   - You've made 5 commits since last review
+   - Tests now pass for a major component
+   - You're about to start a different component or pattern
+   
+   Do NOT batch when:
+   - Tests are failing (fix them first)
+   - You have uncommitted changes that don't compile
+   - The batch would be a pure refactor (review separately)
+   
+   Check `.acts/acts.json` for `batch_size_hint` if configured:
+   - {"min": N, "max": M} — respect these bounds
 
 2. **COMPILE BATCH REPORT**
    Gather:
