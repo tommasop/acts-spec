@@ -68,20 +68,46 @@ architectural — should we discuss it first?"
    Recognize that the current implementation step involves a design
    choice that affects project architecture.
 
-2. **COMPILE ARCHITECTURE DECISION REPORT**
-   Gather:
-   - Context: why this decision is needed
-   - Proposed approach: what you plan to do
-   - Alternatives considered and why rejected
-   - Impact: files affected, risk level, reversibility
+2. **CLASSIFY SEVERITY**
+   Based on impact, choose one:
+
+   MINOR (add utility library, rename internal function):
+   - Impact: 1-2 files
+   - Reversible: yes
+   - Risk: low
+   - Gate: `acknowledge` (inform developer, proceed unless they stop you)
+
+   MAJOR (new module, API change, pattern change):
+   - Impact: 3-10 files
+   - Reversible: difficult
+   - Risk: medium
+   - Gate: `architecture-discuss` (hard stop, wait for yes/no/different)
+
+   CRITICAL (switch framework, DB migration, security change):
+   - Impact: 10+ files or security-critical
+   - Reversible: no
+   - Risk: high
+   - Gate: `architecture-discuss` (hard stop) + require written rationale
 
 3. **PRESENT ARCHITECTURE DECISION REPORT**
-   Present per .acts/report-protocol.md
+   Include severity classification in the report.
 
-4. **GATE: architecture-discuss**
+   If MINOR: say "This is a minor decision — I'll proceed unless you object."
+   If MAJOR: present full report, wait for approval.
+   If CRITICAL: present full report + detailed rationale, wait for written approval.
+
+4. **GATE**
+   If MINOR: inform developer of the minor decision via `.acts/report-protocol.md`.
+   Say: "Minor decision: <decision>. I'll proceed unless you object."
+   Agent MAY proceed after brief notification unless developer objects.
+
+   If MAJOR: present full report per .acts/report-protocol.md.
    Say: "I want to discuss: <decision>. Approve? (yes/no/different)"
-
    Agent MUST stop here and wait for explicit response.
+
+   If CRITICAL: present full report + written rationale.
+   Say: "CRITICAL decision: <decision>. Rationale: <details>. Written approval required."
+   Agent MUST stop here and wait for explicit written approval.
 
 5. **HANDLE RESPONSE**
    If "yes":
@@ -100,9 +126,11 @@ architectural — should we discuss it first?"
 
 ## Constraints
 
-- This is a HARD GATE — agent MUST stop and wait.
+- MINOR decisions: inform and proceed — no hard gate, but developer may stop you.
+- MAJOR/CRITICAL decisions: HARD GATE — agent MUST stop and wait.
+- CRITICAL decisions require written rationale and written approval.
 - There are no timeouts.
-- The agent MUST present this BEFORE implementing, not after.
+- The agent MUST classify severity BEFORE implementing.
 - The agent SHOULD err on the side of discussing rather than implementing silently.
 - Rejected decisions MUST be documented in task notes.
 - This gate is about DESIGN decisions, not implementation details.
