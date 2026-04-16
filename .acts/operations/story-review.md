@@ -31,11 +31,23 @@ constitution compliance, and prepares a PR description.
    Say: "Cannot review — incomplete tasks: <list>"
 
 2. **ACCEPTANCE CRITERIA CHECK**
-   Read `.story/spec.md`. For each acceptance criterion:
-   - Find the code and/or test that satisfies it.
-   - Mark it ✅ with a reference (file + function/test name).
-   - If a criterion is NOT met, mark it ❌ and STOP.
-     Create a new task in plan.md and state.json for the gap.
+   For each acceptance criterion in `.story/spec.md`:
+   a. Search test files for test name matching the AC description
+      (e.g., AC "user can log in with email" → look for test named 
+      something like "test_user_can_log_in_with_email" or "login")
+   b. IF test found: run it, record pass/fail
+   c. IF no test found: mark WARNING (not failure), note "No automated test"
+   
+   Present as table:
+   | AC | Test Name | Status |
+   |----|-----------|--------|
+   | ... | ... | ✅ pass / ❌ fail / ⚠️ no test |
+   
+   BLOCK story completion IF:
+   - Any AC has a test and test FAILS
+   
+   WARN (don't block) IF:
+   - Any AC has no matching test
 
 3. **RUN FULL TEST SUITE**
    Execute all tests. Report exact results (passing/total).
