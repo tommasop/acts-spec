@@ -43,18 +43,34 @@ constitution, and TDD principles.
    Agent MUST stop here and wait for explicit "yes".
    Do NOT begin implementation until developer confirms.
 
-4. **IMPLEMENT (TDD loop)**
-   When the language/framework supports it:
-   a. Write a failing test.
-   b. Write the minimal code to make it pass.
-   c. Refactor.
-   d. Repeat.
+4. **IMPLEMENT**
+   Determine mode:
+   - IF project has test framework configured in AGENTS.md → TDD mode
+   - IF project has no tests or is config/docs → Direct mode
 
-5. **COMMIT REGULARLY**
-   After each meaningful unit of work:
-   `feat(<story_id>): <description>`
-   
+   TDD mode:
+   a. Write ONE failing test for the behavior you need
+   b. Run test, confirm it fails (RED)
+   c. Write MINIMAL code to make test pass (GREEN)
+   d. Run test, confirm it passes
+   e. Refactor if obvious improvement exists
+   f. Commit
+   g. REPEAT for next behavior
+
+   Direct mode (for configs, docs, untestable code):
+   a. Make the change
+   b. Verify it works (run command, check output)
+   c. Commit
+   d. REPEAT for next change
+
+5. **COMMIT AFTER EACH BEHAVIOR**
+   After completing one behavior (one test passes OR one change verified):
+   `feat(<story_id>): <what you implemented>`
+
    Every commit must compile and pass existing tests.
+
+   After EVERY commit:
+   - Update `.story/tasks/<task_id>/notes.md` with: what changed, why, any decisions
 
    **In strict mode (conformance_level: "strict"):**
    After completing a logical batch of commits (1-5 commits):
@@ -63,21 +79,21 @@ constitution, and TDD principles.
    c. **GATE: commit-review** — wait for "approved" or "changes_requested"
    d. If "changes_requested": address feedback, then loop back
    e. If "approved": continue implementation
-   
+
    The agent decides what constitutes a "batch":
    - Completing the model layer
    - Finishing an API endpoint
    - Writing tests for a component
-   
+
    NOT every single commit (too much friction).
    NOT the entire task (defeats the purpose).
 
 6. **CHECK FILE OWNERSHIP**
-   If you need to modify a file owned by a DONE task:
-   - Check the plan — does your task explicitly mention this file?
-   - If yes: proceed surgically.
-   - If no: STOP. Ask the developer. If approved, note the deviation
-     in `.story/tasks/<task_id>/notes.md`.
+   For each file you're about to modify:
+   a. Check if file is in `files_owned` by any DONE task
+   b. IF yes AND file is in YOUR task's plan entry → you may modify, keep changes minimal
+   c. IF yes AND file is NOT in your task → STOP. Say: "File {path} owned by {task_id}, not in my task. Should I proceed?"
+   d. IF no (not owned): proceed freely
 
 7. **ARCHITECTURE DECISIONS (strict mode)**
    In strict mode (conformance_level: "strict"):
@@ -148,11 +164,17 @@ constitution, and TDD principles.
     
     Note: Include reference to review file in commit body if applicable.
 
-14. **SCOPE ESCAPE CHECK**
-    If you discovered work outside your task scope:
-    - Do NOT do it.
-    - Add a new task to `plan.md` and `state.json` with status `TODO`.
-    - Tell the developer.
+14. **SCOPE MONITORING** (run after EVERY commit, not just at end)
+    After each commit, check:
+    - Did I just implement something NOT in my task's acceptance criteria?
+    - Did I add a new file NOT mentioned in the plan?
+    - Did I change a pattern that affects other tasks?
+
+    IF yes to any:
+    - STOP committing that work
+    - Create new task in plan.md and state.json with status TODO
+    - Revert the out-of-scope changes
+    - Tell developer: "Found out-of-scope work. Created task {new_id}."
 
 ## Constraints
 
