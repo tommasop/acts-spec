@@ -74,6 +74,20 @@ The key words "MUST", "MUST NOT", "SHOULD", "SHOULD NOT", "MAY" in this document
 | Schema | New `strict_mode` field on story in state.json |
 | Config | `conformance_level` in acts.json supports `"strict"` |
 | Validation | New strict-mode validation rules |
+| Operations | All 13 operations rewritten for agent clarity — explicit decision trees, error handling, removed vague language |
+| Operations | `preflight` — explicit context read order with budget handling |
+| Operations | `task-start` — TDD vs Direct mode selection, scope monitoring after each commit |
+| Operations | `task-review` — clear decision tree with explicit fallback path |
+| Operations | `session-summary` — fixed duplicate step numbering, verified compliance against git |
+| Operations | `handoff` — lightweight vs full mode based on team context |
+| Operations | `story-init` — template selection (feature/bug/refactor/spike/config), dynamic version |
+| Operations | `story-review` — automated AC-to-test mapping |
+| Operations | `commit-review` — explicit batch boundary rules |
+| Operations | `architecture-discuss` — severity levels (minor/major/critical) with different gates |
+| Operations | `compress-sessions` — quality validation step before writing |
+| Operations | `plan-review` — dependency cycle detection, Jira dry-run |
+| Operations | `tracker-sync` — conflict detection, dry-run mode |
+| Operations | `validate` — conformance-level-aware checks, JSON output for CI |
 
 ---
 
