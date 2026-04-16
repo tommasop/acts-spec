@@ -51,30 +51,41 @@ mechanism that prevents context loss.
    If available, record token usage and cost estimate.
    This enables accountability tracking and usage analysis.
 
-5. **RECORD Agent Compliance**
-   Fill the Agent Compliance section based on what was ACTUALLY done.
-   Be honest about what was skipped.
+5. **VERIFY Agent Compliance**
+   Cross-check each rule in AGENTS.md Rules section against actual evidence:
+   - Check git log: did I commit all state changes? (yes/no + evidence)
+   - Check files: did I modify any files owned by DONE tasks? (yes/no + which files)
+   - Check scope: did I stay within task boundary? (yes/no + deviations)
+   - Check context: did I follow the context protocol? (yes/no + what was skipped)
+   
+   Be HONEST. Report violations. A violation + honest report is better than a fabricated claim.
 
-5. **PRESENT REPORT**
+6. **PRESENT REPORT**
    Present **Session State** per .acts/report-protocol.md
    Show the session summary sections you've written.
 
-6. **GATE: approve**
+7. **VERIFY CLAIMS**
+   Cross-check your session claims against actual work:
+   - `git log --oneline` — do commits match "What was done"?
+   - `git diff HEAD~N` — do changes match claimed work?
+   - If discrepancy: correct the session file before committing
+
+8. **GATE: approve**
    Say: "Session summary ready. Commit and push? (yes/no)"
    
    Wait for explicit confirmation before proceeding.
    If "no", address any concerns about the summary.
 
-7. **Update state.json**
+9. **Update state.json**
    - `updated_at` → now (ISO 8601)
    - `session_count` → increment by 1
 
-8. **Commit**
-   Stage all changes including the new session file.
-   `docs(<story_id>): session summary by <developer> for <task_id>`
+10. **Commit**
+    Stage all changes including the new session file.
+    `docs(<story_id>): session summary by <developer> for <task_id>`
 
-9. **Push**
-   Push the branch to remote.
+11. **Push**
+    Push the branch to remote.
 
 ## Session File Format
 
@@ -117,15 +128,14 @@ Unresolved items for next developer to clarify.
 ## Suggested next step
 The single most useful thing to do when resuming.
 
-## Agent Compliance
-- Read AGENTS.md: ✅/❌
-  - Sections confirmed: <list>
-- Read state.json: ✅/❌
-- Followed preflight protocol: ✅/❌
-- Followed context protocol: ✅/❌
-  - Steps skipped: <list or "none">
-- Deviated from plan: ✅/❌
-  - Deviations: <list or "none">
+## Agent Compliance (verified against actual work, don't just claim)
+For each rule in AGENTS.md Rules section:
+- Read state.json before writing code: ✅/❌ <evidence>
+- Did not modify files owned by DONE tasks: ✅/❌ <which files if violated>
+- Stayed within assigned task boundary: ✅/❌ <deviations if any>
+- Followed context protocol: ✅/❌ <what was skipped if any>
+
+Be HONEST. Report violations. A violation + honest report is better than a fabricated claim.
 ```
 
 ## Constraints
