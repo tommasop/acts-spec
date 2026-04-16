@@ -10,6 +10,10 @@ optional_inputs:
     type: integer
     required: false
     description: "Validate specific layer only (1, 2, or 3). Default: all."
+  - name: json
+    type: boolean
+    required: false
+    description: "Output results as JSON instead of human-readable format."
 postconditions:
   - "Validation results presented to user"
   - "No files modified"
@@ -24,6 +28,21 @@ executed version of `scripts/validate.sh` for use when a developer
 wants to check conformance without running CI.
 
 ## Steps
+
+0. **DETERMINE CONFORMANCE LEVEL**
+   Read `.acts/acts.json` → `conformance_level`
+   
+   IF "basic": check layers 1, 2 only
+   IF "standard": check layers 1, 2, 3
+   IF "full": check layers 1, 2, 3, 4
+   IF "strict": check layers 1, 2, 3, 4 + strict-specific checks
+   
+   Strict-specific checks:
+   - commit-review.md exists in .acts/operations/
+   - architecture-discuss.md exists in .acts/operations/
+   - All required operations have preconditions defined
+   - All required operations have postconditions defined
+   - Context budgets are set for all operations
 
 1. **CHECK LAYER 1: Constitution**
    - AGENTS.md exists at repo root
@@ -96,6 +115,29 @@ wants to check conformance without running CI.
 5. **SUMMARIZE**
    If all checks pass: "All conformance checks passed."
    If any fail: "Fix the issues above, then re-run validate."
+
+6. **OUTPUT FORMAT**
+   Default: human-readable checklist
+   
+   IF `--json` flag provided:
+   Output results as JSON array:
+   ```json
+   {
+     "conformance_level": "strict",
+     "passed": 12,
+     "failed": 2,
+     "warnings": 1,
+     "results": [
+       {"check": "AGENTS.md exists", "status": "pass"},
+       {"check": "state.json valid", "status": "fail", "hint": "Run validate --fix"}
+     ]
+   }
+   ```
+   
+   Add remediation hints for failures:
+   - "AGENTS.md missing" → "Create at repo root"
+   - "state.json invalid" → "Run validate --fix (if available)"
+   - "strict ops missing" → "Create commit-review.md and architecture-discuss.md in .acts/operations/"
 
 ## Constraints
 
