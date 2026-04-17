@@ -21,7 +21,7 @@ jobs:
         run: npm install -g ajv-cli
       
       - name: Validate ACTS
-        run: ./scripts/validate.sh --json
+        run: .acts/bin/acts-validate --json
 ```
 
 ---
@@ -33,7 +33,7 @@ acts-validation:
   image: node:20
   script:
     - npm install -g ajv-cli
-    - ./scripts/validate.sh --json
+    - .acts/bin/acts-validate --json
   only:
     - merge_requests
     - main
@@ -68,7 +68,7 @@ If you don't want to install lazygit in CI:
 
 ```yaml
 - name: Validate ACTS
-  run: ./scripts/validate.sh --json
+  run: .acts/bin/acts-validate --json
   env:
     ACTS_NO_REVIEW_PROVIDER: true
 ```

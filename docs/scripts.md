@@ -135,13 +135,13 @@ Standard formats defined in `.acts/report-protocol.md`:
 
 ```bash
 # Full validation
-./scripts/validate.sh
+.acts/bin/acts-validate
 
 # Single layer
-./scripts/validate.sh --layer 1
+.acts/bin/acts-validate --layer 1
 
 # Machine-readable (for CI)
-./scripts/validate.sh --json
+.acts/bin/acts-validate --json
 ```
 
 ### What It Checks
@@ -175,7 +175,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - run: ./scripts/validate.sh --json
+      - run: .acts/bin/acts-validate --json
 ```
 
 ---
@@ -322,7 +322,7 @@ If you have existing ACTS projects with the old scripts:
    rm scripts/acts.sh
    rm scripts/compress-sessions.sh
    rm -rf scripts/adapters
-   # Keep: scripts/validate.sh (CI only)
+   # Keep: .acts/bin/acts-validate (CI only)
    ```
 
 2. **Add report protocol:**

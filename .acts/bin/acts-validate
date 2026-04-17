@@ -1,0 +1,417 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# ─────────────────────────────────────────────
+# acts-validate — ACTS Conformance Validator v0.6.0
+#
+# Checks all layers per §8.2 of the ACTS spec.
+# Usage:
+#   .acts/bin/acts-validate              # full validation
+#   .acts/bin/acts-validate --layer 1    # single layer
+#   .acts/bin/acts-validate --json       # machine-readable output
+# ─────────────────────────────────────────────
+
+ACTS_DIR=".acts"
+STORY_DIR=".story"
+STATE_FILE="${STORY_DIR}/state.json"
+SCHEMAS_DIR="${ACTS_DIR}/schemas"
+VERSION="0.6.0"
+
+PASS=0
+FAIL=0
+WARN=0
+RESULTS=()
+
+# ─── Helpers ──────────────────────────────────
+
+check() {
+  local desc="$1"
+  local result="$2"
+  if [ "${result}" = "true" ]; then
+    echo "  ✅ ${desc}"
+    PASS=$((PASS + 1))
+    RESULTS+=("{\"check\":\"${desc}\",\"result\":\"pass\"}")
+  else
+    echo "  ❌ ${desc}"
+    FAIL=$((FAIL + 1))
+    RESULTS+=("{\"check\":\"${desc}\",\"result\":\"fail\"}")
+  fi
+}
+
+warn() {
+  local desc="$1"
+  local result="$2"
+  if [ "${result}" = "true" ]; then
+    echo "  ⚠️  ${desc}"
+    WARN=$((WARN + 1))
+    RESULTS+=("{\"check\":\"${desc}\",\"result\":\"warn\"}")
+  fi
+}
+
+info() {
+  echo "  ℹ️  $1"
+}
+
+# ─── Layer 1: Constitution ────────────────────
+
+validate_layer1() {
+  echo ""
+  echo "Layer 1: Constitution (AGENT.md)"
+  echo "─────────────────────────────────"
+
+  check "AGENT.md exists at repo root" \
+    "$([ -f "AGENT.md" ] && echo true || echo false)"
+
+  for section in "## Rules" "## Architecture" "## Style" "## Testing" "## Git" "## Forbidden"; do
+    check "AGENT.md contains '${section}' section" \
+      "$(grep -q "^${section}" AGENT.md 2>/dev/null && echo true || echo false)"
+  done
+
+  # Check required directives in Rules section
+  if [ -f "AGENT.md" ]; then
+    check "Rules: agent must read tracker state before writing" \
+      "$(grep -qi "read.*tracker\|read.*state.*before\|read.*state.*writing" AGENT.md 2>/dev/null && echo true || echo false)"
+    check "Rules: agent must not modify completed task files" \
+      "$(grep -qi "not.*modify.*completed\|must not.*completed\|do not.*completed" AGENT.md 2>/dev/null && echo true || echo false)"
+    check "Rules: agent must record session summary before ending" \
+      "$(grep -qi "session.*summary.*before\|record.*session.*before\|session.*summary.*end" AGENT.md 2>/dev/null && echo true || echo false)"
+    check "Rules: agent must stay within task boundary" \
+      "$(grep -qi "stay.*boundary\|within.*task\|task.*boundary\|scope.*boundary" AGENT.md 2>/dev/null && echo true || echo false)"
+  fi
+}
+
+# ─── Layer 2: State ───────────────────────────
+
+validate_layer2() {
+  echo ""
+  echo "Layer 2: State (.story/)"
+  echo "─────────────────────────"
+
+  check ".story/ directory exists" \
+    "$([ -d "${STORY_DIR}" ] && echo true || echo false)"
+
+  check "state.json exists" \
+    "$([ -f "${STATE_FILE}" ] && echo true || echo false)"
+
+  check "spec.md exists" \
+    "$([ -f "${STORY_DIR}/spec.md" ] && echo true || echo false)"
+
+  check "plan.md exists" \
+    "$([ -f "${STORY_DIR}/plan.md" ] && echo true || echo false)"
+
+  check "sessions/ directory exists" \
+    "$([ -d "${STORY_DIR}/sessions" ] && echo true || echo false)"
+
+  check "tasks/ directory exists" \
+    "$([ -d "${STORY_DIR}/tasks" ] && echo true || echo false)"
+
+  if [ ! -f "${STATE_FILE}" ]; then
+    echo "  ⏭️  Skipping state.json checks (file missing)"
+    return
+  fi
+
+  # Schema validation (if ajv-cli or similar available)
+  if command -v ajv >/dev/null 2>&1 && [ -f "${SCHEMAS_DIR}/state.json" ]; then
+    check "state.json validates against schema" \
+      "$(ajv validate -s "${SCHEMAS_DIR}/state.json" -d "${STATE_FILE}" 2>/dev/null && echo true || echo false)"
+  else
+    info "Schema validation skipped (install ajv-cli for JSON Schema validation)"
+  fi
+
+  # Required fields
+  check "state.json has acts_version" \
+    "$(jq -e '.acts_version' "${STATE_FILE}" >/dev/null 2>&1 && echo true || echo false)"
+
+  check "acts_version matches pattern (X.Y.Z)" \
+    "$(jq -r '.acts_version' "${STATE_FILE}" 2>/dev/null | grep -qP '^\d+\.\d+\.\d+$' && echo true || echo false)"
+
+  check "state.json has story_id" \
+    "$(jq -e '.story_id' "${STATE_FILE}" >/dev/null 2>&1 && echo true || echo false)"
+
+  check "state.json has title" \
+    "$(jq -e '.title' "${STATE_FILE}" >/dev/null 2>&1 && echo true || echo false)"
+
+  check "state.json has valid status" \
+    "$(jq -e '.status | IN("ANALYSIS","APPROVED","IN_PROGRESS","REVIEW","DONE")' "${STATE_FILE}" 2>/dev/null | grep -q true && echo true || echo false)"
+
+  check "state.json has spec_approved (boolean)" \
+    "$(jq -e '.spec_approved | type == "boolean"' "${STATE_FILE}" 2>/dev/null | grep -q true && echo true || echo false)"
+
+  check "state.json has created_at" \
+    "$(jq -e '.created_at' "${STATE_FILE}" >/dev/null 2>&1 && echo true || echo false)"
+
+  check "state.json has updated_at" \
+    "$(jq -e '.updated_at' "${STATE_FILE}" >/dev/null 2>&1 && echo true || echo false)"
+
+  check "state.json has context_budget >= 1000" \
+    "$(jq -e '.context_budget >= 1000' "${STATE_FILE}" 2>/dev/null | grep -q true && echo true || echo false)"
+
+  check "state.json has tasks array" \
+    "$(jq -e '.tasks | type == "array"' "${STATE_FILE}" 2>/dev/null | grep -q true && echo true || echo false)"
+
+  # State consistency checks
+  local STATUS
+  STATUS=$(jq -r '.status' "${STATE_FILE}")
+
+  check "updated_at >= created_at" \
+    "$([ "$(jq -r '.updated_at' "${STATE_FILE}" 2>/dev/null)" \> "$(jq -r '.created_at' "${STATE_FILE}" 2>/dev/null)" ] 2>/dev/null && echo true || echo false)"
+
+  # Task ID pattern
+  check "All task IDs match pattern T<N>" \
+    "$(jq -e '[.tasks[].id | test("^T\\d+$")] | all' "${STATE_FILE}" 2>/dev/null | grep -q true && echo true || echo false)"
+
+  # Task status valid
+  check "All task statuses are valid" \
+    "$(jq -e '[.tasks[].status | IN("TODO","IN_PROGRESS","BLOCKED","DONE")] | all' "${STATE_FILE}" 2>/dev/null | grep -q true && echo true || echo false)"
+
+  # Task IDs match plan.md
+  local STATE_TASKS PLAN_TASKS
+  STATE_TASKS=$(jq -r '.tasks[].id' "${STATE_FILE}" 2>/dev/null | sort)
+  PLAN_TASKS=$(grep -oP '^### \KT\d+' "${STORY_DIR}/plan.md" 2>/dev/null | sort)
+  check "Task IDs in state.json match plan.md" \
+    "$([ "${STATE_TASKS}" = "${PLAN_TASKS}" ] && echo true || echo false)"
+
+  # No DONE task with empty files_touched
+  local DONE_EMPTY
+  DONE_EMPTY=$(jq '[.tasks[] | select(.status == "DONE" and (.files_touched | length == 0))] | length' "${STATE_FILE}" 2>/dev/null)
+  check "No DONE tasks with empty files_touched" \
+    "$([ "${DONE_EMPTY}" = "0" ] && echo true || echo false)"
+
+  # No IN_PROGRESS task with null assigned_to
+  local IP_NULL
+  IP_NULL=$(jq '[.tasks[] | select(.status == "IN_PROGRESS" and .assigned_to == null)] | length' "${STATE_FILE}" 2>/dev/null)
+  check "No IN_PROGRESS tasks without assignee" \
+    "$([ "${IP_NULL}" = "0" ] && echo true || echo false)"
+
+  # Session count matches
+  local EXPECTED_COUNT ACTUAL_COUNT
+  EXPECTED_COUNT=$(jq -r '.session_count // 0' "${STATE_FILE}" 2>/dev/null)
+  ACTUAL_COUNT=$(find "${STORY_DIR}/sessions" -name "*.md" -not -name "compressed-*" 2>/dev/null | wc -l)
+  check "session_count matches session files (${EXPECTED_COUNT} vs ${ACTUAL_COUNT})" \
+    "$([ "${EXPECTED_COUNT}" = "${ACTUAL_COUNT}" ] && echo true || echo false)"
+
+  # Session file naming convention
+  local BAD_NAMES
+  BAD_NAMES=$(find "${STORY_DIR}/sessions" -name "*.md" -not -name "compressed-*" 2>/dev/null | \
+    xargs -I{} basename {} .md | \
+    grep -cvP '^\d{8}-\d{6}-\w+$' 2>/dev/null || echo "0")
+  check "All session files follow naming convention (YYYYMMdd-HHMMSS-developer.md)" \
+    "$([ "${BAD_NAMES}" = "0" ] && echo true || echo false)"
+
+  # Git consistency: branch name
+  if git rev-parse --git-dir >/dev/null 2>&1; then
+    local BRANCH STORY_ID
+    BRANCH=$(git branch --show-current 2>/dev/null || echo "unknown")
+    STORY_ID=$(jq -r '.story_id' "${STATE_FILE}" 2>/dev/null)
+    warn "Branch matches story/<STORY_ID> pattern" \
+      "$([ "${BRANCH}" = "story/${STORY_ID}" ] && echo true || echo false)"
+  fi
+
+  # Concurrency: no two IN_PROGRESS tasks in same worktree
+  local IP_COUNT
+  IP_COUNT=$(jq '[.tasks[] | select(.status == "IN_PROGRESS")] | length' "${STATE_FILE}" 2>/dev/null)
+  if [ "${IP_COUNT}" -gt 1 ]; then
+    # Check if assigned to same developer
+    local UNIQUE_DEVS
+    UNIQUE_DEVS=$(jq '[.tasks[] | select(.status == "IN_PROGRESS") | .assigned_to] | unique | length' "${STATE_FILE}" 2>/dev/null)
+    check "No multiple IN_PROGRESS tasks for different developers in same worktree" \
+      "$([ "${UNIQUE_DEVS}" -le 1 ] && echo true || echo false)"
+  fi
+}
+
+# ─── Layer 3: Operations ─────────────────────
+
+validate_layer3() {
+  echo ""
+  echo "Layer 3: Operations (.acts/)"
+  echo "────────────────────────────"
+
+  check ".acts/ directory exists" \
+    "$([ -d "${ACTS_DIR}" ] && echo true || echo false)"
+
+  check "acts.json manifest exists" \
+    "$([ -f "${ACTS_DIR}/acts.json" ] && echo true || echo false)"
+
+  # Manifest validation
+  if [ -f "${ACTS_DIR}/acts.json" ]; then
+    check "acts.json has acts_version" \
+      "$(jq -e '.acts_version' "${ACTS_DIR}/acts.json" >/dev/null 2>&1 && echo true || echo false)"
+    check "acts.json has conformance_level" \
+      "$(jq -e '.conformance_level | IN("basic","standard","full")' "${ACTS_DIR}/acts.json" 2>/dev/null | grep -q true && echo true || echo false)"
+    check "acts.json has adapter field" \
+      "$(jq -e 'has("adapter")' "${ACTS_DIR}/acts.json" 2>/dev/null | grep -q true && echo true || echo false)"
+
+    # Schema validation for manifest
+    if command -v ajv >/dev/null 2>&1 && [ -f "${SCHEMAS_DIR}/manifest.json" ]; then
+      check "acts.json validates against manifest schema" \
+        "$(ajv validate -s "${SCHEMAS_DIR}/manifest.json" -d "${ACTS_DIR}/acts.json" 2>/dev/null && echo true || echo false)"
+    fi
+  fi
+
+  # Schemas directory
+  check "schemas/ directory exists" \
+    "$([ -d "${SCHEMAS_DIR}" ] && echo true || echo false)"
+  check "schemas/state.json exists" \
+    "$([ -f "${SCHEMAS_DIR}/state.json" ] && echo true || echo false)"
+  check "schemas/manifest.json exists" \
+    "$([ -f "${SCHEMAS_DIR}/manifest.json" ] && echo true || echo false)"
+  check "schemas/operation-meta.json exists" \
+    "$([ -f "${SCHEMAS_DIR}/operation-meta.json" ] && echo true || echo false)"
+  check "schemas/session-summary.json exists" \
+    "$([ -f "${SCHEMAS_DIR}/session-summary.json" ] && echo true || echo false)"
+
+  # Required operations
+  for op in story-init preflight session-summary handoff story-review; do
+    check "Required operation: ${op}.md exists" \
+      "$([ -f "${ACTS_DIR}/operations/${op}.md" ] && echo true || echo false)"
+
+    if [ -f "${ACTS_DIR}/operations/${op}.md" ]; then
+      # Frontmatter checks
+      check "${op}.md starts with YAML frontmatter (---)" \
+        "$(head -1 "${ACTS_DIR}/operations/${op}.md" | grep -q '^---$' && echo true || echo false)"
+
+      check "${op}.md has operation_id matching filename" \
+        "$(grep -qP '^operation_id:\s*'"${op}"'' "${ACTS_DIR}/operations/${op}.md" 2>/dev/null && echo true || echo false)"
+
+      check "${op}.md has layer field" \
+        "$(grep -qP '^layer:\s*[1-5]' "${ACTS_DIR}/operations/${op}.md" 2>/dev/null && echo true || echo false)"
+
+      check "${op}.md has required field" \
+        "$(grep -qP '^required:\s*(true|false)' "${ACTS_DIR}/operations/${op}.md" 2>/dev/null && echo true || echo false)"
+
+      check "${op}.md has triggers field" \
+        "$(grep -qP '^triggers:' "${ACTS_DIR}/operations/${op}.md" 2>/dev/null && echo true || echo false)"
+
+      check "${op}.md has context_budget >= 1000" \
+        "$(grep -oP '^context_budget:\s*\K\d+' "${ACTS_DIR}/operations/${op}.md" 2>/dev/null | awk '{print ($1 >= 1000)}' | grep -q 1 && echo true || echo false)"
+
+      check "${op}.md has preconditions" \
+        "$(grep -q '^preconditions:' "${ACTS_DIR}/operations/${op}.md" 2>/dev/null && echo true || echo false)"
+
+      check "${op}.md has postconditions" \
+        "$(grep -q '^postconditions:' "${ACTS_DIR}/operations/${op}.md" 2>/dev/null && echo true || echo false)"
+
+      # Required body sections
+      check "${op}.md has ## Purpose section" \
+        "$(grep -q '^## Purpose' "${ACTS_DIR}/operations/${op}.md" 2>/dev/null && echo true || echo false)"
+
+      check "${op}.md has ## Steps section" \
+        "$(grep -q '^## Steps' "${ACTS_DIR}/operations/${op}.md" 2>/dev/null && echo true || echo false)"
+
+      check "${op}.md has ## Constraints section" \
+        "$(grep -q '^## Constraints' "${ACTS_DIR}/operations/${op}.md" 2>/dev/null && echo true || echo false)"
+
+      # Context Protocol for preflight and handoff (required per §5.2)
+      if [ "${op}" = "preflight" ] || [ "${op}" = "handoff" ]; then
+        check "${op}.md has ## Context Protocol section" \
+          "$(grep -q '^## Context Protocol' "${ACTS_DIR}/operations/${op}.md" 2>/dev/null && echo true || echo false)"
+      fi
+    fi
+  done
+
+  # Session summary format check per §4.7
+  if [ -d "${STORY_DIR}/sessions" ]; then
+    local FIRST_SESSION
+    FIRST_SESSION=$(find "${STORY_DIR}/sessions" -name "*.md" -not -name "compressed-*" 2>/dev/null | head -1)
+    if [ -n "${FIRST_SESSION}" ]; then
+      check "Session files contain Agent Compliance section" \
+        "$(grep -q '## Agent Compliance' "${FIRST_SESSION}" 2>/dev/null && echo true || echo false)"
+      check "Session files contain ## What was done" \
+        "$(grep -q '## What was done' "${FIRST_SESSION}" 2>/dev/null && echo true || echo false)"
+      check "Session files contain ## Current state" \
+        "$(grep -q '## Current state' "${FIRST_SESSION}" 2>/dev/null && echo true || echo false)"
+      check "Session files contain ## Suggested next step" \
+        "$(grep -q '## Suggested next step' "${FIRST_SESSION}" 2>/dev/null && echo true || echo false)"
+    fi
+  fi
+}
+
+# ─── Layer 4: Communication (optional) ───────
+
+validate_layer4() {
+  echo ""
+  echo "Layer 4: Communication (optional)"
+  echo "──────────────────────────────────"
+
+  local HAS_LAYER4=false
+
+  for op in tracker-sync changelog newsletter; do
+    if [ -f "${ACTS_DIR}/operations/${op}.md" ]; then
+      info "${op}.md found"
+      HAS_LAYER4=true
+    fi
+  done
+
+  if [ "${HAS_LAYER4}" = "false" ]; then
+    info "No Layer 4 operations found (optional)"
+  fi
+}
+
+# ─── Conformance level determination ─────────
+
+determine_conformance() {
+  echo ""
+  echo "═══════════════════════════════════════════"
+  echo "  ACTS Conformance Summary"
+  echo "═══════════════════════════════════════════"
+  echo "  Passed: ${PASS}"
+  echo "  Failed: ${FAIL}"
+  echo "  Warnings: ${WARN}"
+  echo ""
+
+  if [ "${FAIL}" -eq 0 ]; then
+    echo "  🏆 Conformance: FULL (all layers pass)"
+  elif [ "${FAIL}" -le 3 ]; then
+    echo "  ⚠️  Conformance: PARTIAL (${FAIL} failures)"
+  else
+    echo "  ❌ Conformance: FAIL (${FAIL} failures)"
+  fi
+
+  echo "═══════════════════════════════════════════"
+}
+
+# ─── Main ─────────────────────────────────────
+
+LAYER_FILTER=""
+JSON_OUTPUT=false
+
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --layer) LAYER_FILTER="$2"; shift 2 ;;
+    --json) JSON_OUTPUT=true; shift ;;
+    *) shift ;;
+  esac
+done
+
+echo ""
+echo "ACTS Conformance Validation v${VERSION}"
+echo "═══════════════════════════════════════════"
+
+if [ -z "${LAYER_FILTER}" ] || [ "${LAYER_FILTER}" = "1" ]; then
+  validate_layer1
+fi
+
+if [ -z "${LAYER_FILTER}" ] || [ "${LAYER_FILTER}" = "2" ]; then
+  validate_layer2
+fi
+
+if [ -z "${LAYER_FILTER}" ] || [ "${LAYER_FILTER}" = "3" ]; then
+  validate_layer3
+fi
+
+if [ -z "${LAYER_FILTER}" ] || [ "${LAYER_FILTER}" = "4" ]; then
+  validate_layer4
+fi
+
+determine_conformance
+
+if [ "${JSON_OUTPUT}" = "true" ]; then
+  echo ""
+  echo "{\"pass\":${PASS},\"fail\":${FAIL},\"warn\":${WARN}}"
+fi
+
+if [ "${FAIL}" -gt 0 ]; then
+  exit 1
+fi
+
+exit 0
