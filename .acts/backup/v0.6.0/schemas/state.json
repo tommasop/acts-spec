@@ -1,0 +1,229 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://acts-standard.org/schemas/state/v0.6.0",
+  "title": "ACTS Story State",
+  "description": "Schema for .story/state.json — the canonical story state file.",
+  "type": "object",
+  "required": [
+    "acts_version",
+    "story_id",
+    "title",
+    "status",
+    "spec_approved",
+    "created_at",
+    "updated_at",
+    "context_budget",
+    "tasks"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "acts_version": {
+      "type": "string",
+      "description": "ACTS specification version this file conforms to.",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "examples": ["0.6.0"]
+    },
+    "story_id": {
+      "type": "string",
+      "description": "External identifier (Jira key, GitHub issue number, etc.).",
+      "minLength": 1,
+      "examples": ["PROJ-42", "GH-123"]
+    },
+    "title": {
+      "type": "string",
+      "description": "Human-readable story title.",
+      "minLength": 1
+    },
+    "status": {
+      "type": "string",
+      "enum": ["ANALYSIS", "APPROVED", "IN_PROGRESS", "REVIEW", "DONE"],
+      "description": "Current story lifecycle status."
+    },
+    "spec_approved": {
+      "type": "boolean",
+      "description": "Whether the spec has been reviewed and approved."
+    },
+    "created_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the story was created."
+    },
+    "updated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last state change."
+    },
+    "context_budget": {
+      "type": "integer",
+      "minimum": 1000,
+      "description": "Default context budget in tokens for operations on this story."
+    },
+    "tasks": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/task" },
+      "description": "Ordered list of tasks for this story."
+    },
+    "session_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Count of session summary files."
+    },
+    "compressed": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether compress-sessions has been run."
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Extension point for team-specific data.",
+      "additionalProperties": true
+    },
+    "mcp_context": {
+      "type": "object",
+      "description": "Layer 7 MCP Context Engine state. Only present when Layer 7 is enabled.",
+      "properties": {
+        "anchor_version": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Version counter for the context anchor."
+        },
+        "decisions_count": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total decisions recorded in .story/decisions.json."
+        },
+        "last_compaction": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp of the last compaction run."
+        },
+        "loop_warnings": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Count of loop warnings emitted by the MCP server."
+        }
+      }
+    },
+    "jira_metadata": {
+      "type": "object",
+      "description": "Jira issue metadata. Present when the story was auto-fetched from Jira during story-init.",
+      "properties": {
+        "issue_key": {
+          "type": "string",
+          "description": "The Jira issue key (e.g. PROJ-305).",
+          "examples": ["PROJ-305"]
+        },
+        "issue_type": {
+          "type": "string",
+          "description": "Jira issue type name (e.g. Story, Task, Bug).",
+          "examples": ["Story", "Task", "Bug"]
+        },
+        "labels": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Labels assigned to the Jira issue."
+        },
+        "components": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Component names assigned to the Jira issue."
+        },
+        "url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Direct URL to the Jira issue."
+        },
+        "fetched_at": {
+          "type": "string",
+          "format": "date-time",
+          "description": "ISO 8601 timestamp when the issue was fetched."
+        }
+      },
+      "required": ["issue_key", "issue_type", "url", "fetched_at"]
+    },
+    "jira_task_map": {
+      "type": "object",
+      "description": "Mapping of ACTS task IDs to Jira subtask keys. Populated by plan-review when subtasks are created.",
+      "additionalProperties": {
+        "type": "string",
+        "pattern": "^[A-Z]+-\\d+$",
+        "description": "Jira subtask key (e.g. PROJ-306)."
+      }
+    },
+    "strict_mode": {
+      "type": "boolean",
+      "default": false,
+      "description": "Whether this story runs in ACTS Strict mode (v0.6.0+)."
+    }
+  },
+  "$defs": {
+    "task": {
+      "type": "object",
+      "required": [
+        "id",
+        "title",
+        "status",
+        "assigned_to",
+        "files_touched",
+        "depends_on"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Unique task identifier within the story.",
+          "pattern": "^T\\d+$",
+          "examples": ["T1", "T2"]
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string",
+          "enum": ["TODO", "IN_PROGRESS", "BLOCKED", "DONE"],
+          "description": "Current task status."
+        },
+        "assigned_to": {
+          "type": ["string", "null"],
+          "description": "Developer handle or null if unassigned."
+        },
+        "files_touched": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Repository-relative paths of files created or modified."
+        },
+        "depends_on": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^T\\d+$"
+          },
+          "description": "Task IDs that must be DONE before this task can start."
+        },
+        "context_priority": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 5,
+          "default": 3,
+          "description": "Context ingestion priority. 1=critical, 5=skim only."
+        },
+        "review_status": {
+          "type": "string",
+          "enum": ["pending", "approved", "changes_requested", "skipped"],
+          "default": "pending",
+          "description": "Code review status for this task."
+        },
+        "reviewed_at": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "Timestamp when review was approved."
+        },
+        "reviewed_by": {
+          "type": ["string", "null"],
+          "description": "Developer who approved the review."
+        }
+      }
+    }
+  }
+}

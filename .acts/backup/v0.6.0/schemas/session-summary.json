@@ -1,0 +1,154 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://acts-standard.org/schemas/session-summary/v0.3.0",
+  "title": "ACTS Session Summary",
+  "description": "Schema for validating session summary structure. Applies to .story/sessions/<timestamp>-<developer>.md files after markdown is parsed into sections.",
+  "type": "object",
+  "required": [
+    "developer",
+    "date",
+    "task_id",
+    "what_was_done",
+    "decisions_made",
+    "what_was_not_done",
+    "approaches_tried_and_rejected",
+    "open_questions",
+    "current_state",
+    "files_touched",
+    "suggested_next_step",
+    "agent_compliance"
+  ],
+  "additionalProperties": true,
+  "properties": {
+    "developer": {
+      "type": "string",
+      "description": "Developer's name or handle.",
+      "minLength": 1
+    },
+    "agent": {
+      "type": "string",
+      "description": "AI tool name, version, and model (e.g., 'Cursor v0.45.0 (Claude-3.5-Sonnet)')."
+    },
+    "agent_config": {
+      "type": "string",
+      "description": "Configuration preset or ruleset used by the agent."
+    },
+    "agent_model": {
+      "type": "string",
+      "description": "Specific AI model identifier (e.g., 'claude-3.5-sonnet', 'gpt-4-turbo')."
+    },
+    "tokens_used": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total tokens consumed this session."
+    },
+    "cost_estimate": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Estimated cost in USD for this session."
+    },
+    "date": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 datetime of the session."
+    },
+    "task_id": {
+      "type": "string",
+      "description": "Task ID this session worked on.",
+      "pattern": "^T\\d+$"
+    },
+    "what_was_done": {
+      "type": "string",
+      "description": "Bullet list of concrete changes."
+    },
+    "decisions_made": {
+      "type": "string",
+      "description": "Rationale for choices."
+    },
+    "what_was_not_done": {
+      "type": "string",
+      "description": "Remaining work, blocked items."
+    },
+    "approaches_tried_and_rejected": {
+      "type": "string",
+      "description": "What didn't work and why."
+    },
+    "open_questions": {
+      "type": "string",
+      "description": "Unresolved items for next developer."
+    },
+    "current_state": {
+      "type": "object",
+      "required": ["compiles", "tests_pass", "uncommitted_work"],
+      "properties": {
+        "compiles": {
+          "type": "boolean",
+          "description": "Whether the project compiles/builds successfully."
+        },
+        "tests_pass": {
+          "type": "boolean",
+          "description": "Whether the test suite passes."
+        },
+        "uncommitted_work": {
+          "type": "boolean",
+          "description": "Whether there is uncommitted work."
+        }
+      }
+    },
+    "files_touched": {
+      "type": "string",
+      "description": "List of files with descriptions."
+    },
+    "suggested_next_step": {
+      "type": "string",
+      "description": "What to do first when resuming."
+    },
+    "agent_compliance": {
+      "type": "object",
+      "required": [
+        "read_agent_md",
+        "read_state_json",
+        "followed_preflight",
+        "followed_context_protocol",
+        "deviated_from_plan"
+      ],
+      "properties": {
+        "read_agent_md": {
+          "type": "boolean",
+          "description": "Whether the agent read AGENTS.md."
+        },
+        "sections_confirmed": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Which AGENTS.md sections the agent claims to have read."
+        },
+        "read_state_json": {
+          "type": "boolean",
+          "description": "Whether the agent read state.json."
+        },
+        "followed_preflight": {
+          "type": "boolean",
+          "description": "Whether the agent followed the preflight protocol."
+        },
+        "followed_context_protocol": {
+          "type": "boolean",
+          "description": "Whether the agent followed the context protocol."
+        },
+        "context_steps_skipped": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "Which context protocol steps were skipped."
+        },
+        "deviated_from_plan": {
+          "type": "boolean",
+          "description": "Whether the agent deviated from the plan."
+        },
+        "deviations": {
+          "type": "array",
+          "items": { "type": "string" },
+          "description": "List of deviations from the plan."
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,18 @@
+{
+  "current_version": "0.6.0",
+  "framework_files": [
+    "operations",
+    "schemas",
+    "report-protocol.md",
+    "code-review-interface.json"
+  ],
+  "preserved_files": [
+    "acts.json",
+    "review-providers",
+    "adapters"
+  ],
+  "config_merge": {
+    "update_fields": ["manifest_version"],
+    "preserve_fields": ["review_provider", "review_provider_config", "agent_framework", "gh_stack", "jira_integration", "mcp_context_engine", "conformance_level", "allow_reopen_completed", "agent_roles"]
+  }
+}

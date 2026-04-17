@@ -13,7 +13,7 @@
     "numbered": true,
     "draft_prs": true
   },
-  "description": "Project-level ACTS configuration \u2014 controls behavior, integration, and protocol settings.",
+  "description": "Project-level ACTS configuration — controls behavior, integration, and protocol settings.",
   "commit_convention": "conventional",
   "review_provider": "lazygit",
   "review_provider_config": {
@@ -27,13 +27,7 @@
   "jira_integration": {
     "enabled": true,
     "description": "Jira integration for story-init auto-fetch and tracker-sync status push.",
-    "fetch_fields": [
-      "description",
-      "summary",
-      "issuetype",
-      "labels",
-      "components"
-    ],
+    "fetch_fields": ["description", "summary", "issuetype", "labels", "components"],
     "key_pattern": "^[A-Z]+-\\d+$",
     "sync": {
       "create_subtasks": true,

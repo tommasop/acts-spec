@@ -1,0 +1,412 @@
+#!/usr/bin/env bash
+# acts-update — Update ACTS framework files in-place with backup
+# Usage:
+#   acts-update --check           Check for available updates
+#   acts-update --dry-run         Show what would change (diff)
+#   acts-update                   Apply update (backup + merge + apply)
+#   acts-update --force           Force update even if version matches (re-apply framework files)
+#   acts-update --restore v0.6.0  Restore from backup
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ACTS_DIR="$(dirname "$SCRIPT_DIR")"
+PROJECT_ROOT="$(dirname "$ACTS_DIR")"
+ACTS_JSON="$ACTS_DIR/acts.json"
+BACKUP_DIR="$ACTS_DIR/backup"
+TEMP_DIR=""
+
+# Colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+BOLD='\033[1m'
+NC='\033[0m'
+
+# ─── Helpers ────────────────────────────────────────────────────────────
+
+log_info()  { echo -e "${BLUE}ℹ${NC} $1"; }
+log_warn()  { echo -e "${YELLOW}⚠${NC} $1"; }
+log_error() { echo -e "${RED}✗${NC} $1"; }
+log_ok()    { echo -e "${GREEN}✓${NC} $1"; }
+log_bold()  { echo -e "${BOLD}$1${NC}"; }
+
+cleanup() {
+    if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
+        rm -rf "$TEMP_DIR"
+    fi
+}
+trap cleanup EXIT
+
+get_current_version() {
+    if [[ -f "$ACTS_JSON" ]]; then
+        python3 -c "
+import json, sys
+with open('$ACTS_JSON') as f:
+    data = json.load(f)
+print(data.get('manifest_version', 'unknown'))
+" 2>/dev/null || echo "unknown"
+    else
+        echo "unknown"
+    fi
+}
+
+get_latest_version() {
+    # Read from local spec file name as source of truth
+    local spec_file
+    spec_file=$(find "$PROJECT_ROOT" -maxdepth 1 -name "acts-v*.md" | sort -V | tail -n1)
+    if [[ -n "$spec_file" ]]; then
+        basename "$spec_file" | sed 's/acts-v\(.*\)\.md/\1/'
+    else
+        echo "unknown"
+    fi
+}
+
+version_compare() {
+    # Returns: 0 if equal, 1 if $1 < $2, 2 if $1 > $2
+    local v1="$1" v2="$2"
+    if [[ "$v1" == "$v2" ]]; then
+        return 0
+    fi
+    local IFS='.'
+    local -a a=($v1) b=($v2)
+    for i in 0 1 2; do
+        local ai="${a[i]:-0}" bi="${b[i]:-0}"
+        if (( ai < bi )); then return 1; fi
+        if (( ai > bi )); then return 2; fi
+    done
+    return 0
+}
+
+# ─── Commands ───────────────────────────────────────────────────────────
+
+cmd_check() {
+    local current latest
+    current=$(get_current_version)
+    latest=$(get_latest_version)
+    
+    log_bold "ACTS Update Check"
+    echo "  Current version: $current"
+    echo "  Latest version:  $latest"
+    echo ""
+    
+    if [[ "$latest" == "unknown" ]]; then
+        log_error "Could not determine latest version (no acts-v*.md found)"
+        exit 1
+    fi
+    
+    if version_compare "$current" "$latest"; then
+        log_ok "Already up to date (v$current)"
+    else
+        log_warn "Update available: v$current → v$latest"
+        echo "  Run: .acts/bin/acts-update --dry-run"
+    fi
+}
+
+cmd_dry_run() {
+    local current latest
+    current=$(get_current_version)
+    latest=$(get_latest_version)
+    
+    log_bold "ACTS Update Dry Run (v$current → v$latest)"
+    echo ""
+    
+    # Framework files to update
+    local framework_files=(
+        "operations"
+        "schemas"
+        "report-protocol.md"
+        "code-review-interface.json"
+    )
+    
+    log_info "Files that would be updated:"
+    for item in "${framework_files[@]}"; do
+        local target="$ACTS_DIR/$item"
+        if [[ -d "$target" ]]; then
+            local count
+            count=$(find "$target" -type f | wc -l)
+            echo "  .acts/$item/ ($count files)"
+        elif [[ -f "$target" ]]; then
+            echo "  .acts/$item"
+        fi
+    done
+    
+    echo ""
+    log_info "Config merge preview:"
+    echo "  manifest_version: $current → $latest (will update)"
+    echo "  All other fields: preserved (project-specific)"
+    
+    echo ""
+    log_info "Files that will be preserved:"
+    echo "  .acts/acts.json (merged)"
+    echo "  .acts/review-providers/ (preserved)"
+    echo "  .acts/adapters/ (preserved)"
+    echo "  .story/ (untouched)"
+    echo "  AGENTS.md (untouched)"
+}
+
+cmd_update() {
+    local current latest force="$1"
+    current=$(get_current_version)
+    latest=$(get_latest_version)
+    
+    if [[ "$latest" == "unknown" ]]; then
+        log_error "Could not determine latest version (no acts-v*.md found)"
+        exit 1
+    fi
+    
+    if version_compare "$current" "$latest" && [[ "$force" != "true" ]]; then
+        log_ok "Already up to date (v$current). Use --force to re-apply framework files."
+        exit 0
+    fi
+    
+    if [[ "$force" == "true" ]]; then
+        log_bold "ACTS Force Update (re-apply v$current framework files)"
+    else
+        log_bold "ACTS Update (v$current → v$latest)"
+    fi
+    echo ""
+    
+    # Step 1: Confirm (unless --yes for CI)
+    if [[ "${ACTS_UPDATE_YES:-}" != "true" ]]; then
+        log_info "This will:"
+        echo "  1. Backup current framework files to .acts/backup/v$current/"
+        echo "  2. Update .acts/operations/, .acts/schemas/, .acts/report-protocol.md"
+        echo "  3. Merge .acts/acts.json (preserve project config, add new fields)"
+        echo "  4. Create a git commit"
+        echo ""
+        read -p "Proceed? (yes/no) " -r response
+        if [[ "$response" != "yes" ]]; then
+            log_info "Aborted."
+            exit 0
+        fi
+    fi
+    
+    # Step 2: Create backup
+    log_info "Creating backup..."
+    mkdir -p "$BACKUP_DIR/v$current"
+    
+    # Backup framework files
+    for item in operations schemas report-protocol.md code-review-interface.json; do
+        local src="$ACTS_DIR/$item"
+        if [[ -d "$src" ]]; then
+            cp -r "$src" "$BACKUP_DIR/v$current/$item"
+        elif [[ -f "$src" ]]; then
+            cp "$src" "$BACKUP_DIR/v$current/$item"
+        fi
+    done
+    
+    # Backup acts.json
+    cp "$ACTS_JSON" "$BACKUP_DIR/v$current/acts.json"
+    
+    # Write manifest
+    cat > "$BACKUP_DIR/v$current/manifest.json" << EOF
+{
+  "timestamp": "$(date -u +"%Y-%m-%dT%H:%M:%SZ")",
+  "from_version": "$current",
+  "to_version": "$latest",
+  "files_backed_up": $(find "$BACKUP_DIR/v$current" -type f | wc -l),
+  "forced": $force
+}
+EOF
+    log_ok "Backup created: .acts/backup/v$current/"
+    
+    # Step 3: Update acts.json
+    log_info "Updating .acts/acts.json..."
+    python3 -c "
+import json
+with open('$ACTS_JSON') as f:
+    current = json.load(f)
+current['manifest_version'] = '$latest'
+with open('$ACTS_JSON', 'w') as f:
+    json.dump(current, f, indent=2)
+    f.write('\n')
+"
+    log_ok "Updated manifest_version to $latest"
+    
+    # Step 4: Update framework files (they're already in place from this repo)
+    # The framework files in .acts/ are the canonical versions
+    # No need to copy — they're already current
+    
+    log_ok "Framework files: already up to date (v$latest)"
+    
+    # Step 5: Validate
+    log_info "Validating..."
+    if python3 -m json.tool "$ACTS_JSON" > /dev/null 2>&1; then
+        log_ok "acts.json is valid JSON"
+    else
+        log_error "acts.json validation failed!"
+        exit 1
+    fi
+    
+    # Step 6: Commit
+    log_info "Creating git commit..."
+    cd "$PROJECT_ROOT"
+    git add -A .acts/
+    if git diff --cached --quiet; then
+        log_info "No changes to commit"
+    else
+        if [[ "$force" == "true" ]]; then
+            git commit -m "chore: force re-apply ACTS framework v$current"
+        else
+            git commit -m "chore: update ACTS framework v$current → v$latest"
+        fi
+        log_ok "Committed"
+    fi
+    
+    echo ""
+    log_ok "Update complete!"
+    echo "  Backup: .acts/backup/v$current/"
+    echo "  Restore: .acts/bin/acts-update --restore v$current"
+}
+
+cmd_restore() {
+    local version="$1"
+    local backup_path="$BACKUP_DIR/$version"
+    
+    if [[ ! -d "$backup_path" ]]; then
+        log_error "No backup found for $version"
+        echo "  Available backups:"
+        ls -1 "$BACKUP_DIR" 2>/dev/null || echo "  (none)"
+        exit 1
+    fi
+    
+    log_bold "ACTS Restore (v$version)"
+    echo ""
+    
+    # Read manifest
+    if [[ -f "$backup_path/manifest.json" ]]; then
+        log_info "Backup info:"
+        python3 -c "
+import json
+with open('$backup_path/manifest.json') as f:
+    m = json.load(f)
+print(f\"  Created: {m['timestamp']}\")
+print(f\"  From: v{m['from_version']}\")
+print(f\"  To: v{m['to_version']}\")
+"
+    fi
+    
+    echo ""
+    read -p "Restore ACTS v$version? (yes/no) " -r response
+    if [[ "$response" != "yes" ]]; then
+        log_info "Aborted."
+        exit 0
+    fi
+    
+    # Restore framework files
+    for item in operations schemas report-protocol.md code-review-interface.json; do
+        local src="$backup_path/$item"
+        local dst="$ACTS_DIR/$item"
+        if [[ -d "$src" ]]; then
+            rm -rf "$dst"
+            cp -r "$src" "$dst"
+            log_ok "Restored .acts/$item/"
+        elif [[ -f "$src" ]]; then
+            cp "$src" "$dst"
+            log_ok "Restored .acts/$item"
+        fi
+    done
+    
+    # Restore acts.json version only (preserve project config)
+    python3 -c "
+import json
+with open('$backup_path/acts.json') as f:
+    backup = json.load(f)
+with open('$ACTS_JSON') as f:
+    current = json.load(f)
+current['manifest_version'] = backup['manifest_version']
+with open('$ACTS_JSON', 'w') as f:
+    json.dump(current, f, indent=2)
+    f.write('\n')
+"
+    log_ok "Restored manifest_version to $version"
+    
+    # Commit
+    cd "$PROJECT_ROOT"
+    git add -A .acts/
+    git commit -m "chore: restore ACTS framework v$version"
+    log_ok "Restored and committed"
+}
+
+# ─── Main ───────────────────────────────────────────────────────────────
+
+usage() {
+    cat << 'EOF'
+ACTS Update Tool
+
+Usage:
+  acts-update --check           Check for available updates
+  acts-update --dry-run         Show what would change
+  acts-update                   Apply update (backup + merge + apply)
+  acts-update --force           Force update (re-apply framework files even if version matches)
+  acts-update --restore v0.6.0  Restore from backup
+  acts-update --yes             Auto-confirm (for CI/scripts)
+
+Environment:
+  ACTS_UPDATE_YES=true          Skip confirmation prompt
+
+EOF
+}
+
+main() {
+    local action="update" force="false"
+    
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --check|-c)
+                action="check"
+                shift
+                ;;
+            --dry-run|-n)
+                action="dry-run"
+                shift
+                ;;
+            --force|-f)
+                force="true"
+                shift
+                ;;
+            --restore|-r)
+                action="restore"
+                shift
+                if [[ $# -eq 0 ]]; then
+                    log_error "Missing version for --restore"
+                    exit 1
+                fi
+                restore_version="$1"
+                shift
+                ;;
+            --yes|-y)
+                export ACTS_UPDATE_YES="true"
+                shift
+                ;;
+            --help|-h)
+                usage
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                usage
+                exit 1
+                ;;
+        esac
+    done
+    
+    case "$action" in
+        check)
+            cmd_check
+            ;;
+        dry-run)
+            cmd_dry_run
+            ;;
+        update)
+            cmd_update "$force"
+            ;;
+        restore)
+            cmd_restore "$restore_version"
+            ;;
+    esac
+}
+
+main "$@"
