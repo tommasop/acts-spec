@@ -214,7 +214,8 @@ with open(target, "w") as f:
     json.dump(current, f, indent=2)
     f.write("\n")
 
-print(f"  manifest_version: → {current[\"manifest_version\"]}")
+mv = current["manifest_version"]
+print(f"  manifest_version: -> {mv}")
 for field in ADD_IF_MISSING:
     if field in current and current[field] == ADD_IF_MISSING[field]:
         print(f"  {field}: added (new in v0.6.0)")
