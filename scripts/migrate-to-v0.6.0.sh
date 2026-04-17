@@ -170,19 +170,23 @@ EOF
 merge_config() {
     log_step "Merging .acts/acts.json"
     
-    python3 << 'PYTHON_EOF'
+    local source="$1"
+    local target="${ACTS_DIR}/acts.json"
+    
+    MERGE_SOURCE="${source}" MERGE_TARGET="${target}" python3 -c '
 import json
+import os
 import sys
 
-SOURCE = sys.argv[1]
-TARGET = sys.argv[2]
+source = os.environ["MERGE_SOURCE"]
+target = os.environ["MERGE_TARGET"]
 
 # Read source template
-with open(f"{SOURCE}/.acts/acts.json") as f:
+with open(f"{source}/.acts/acts.json") as f:
     template = json.load(f)
 
 # Read current config
-with open(TARGET) as f:
+with open(target) as f:
     current = json.load(f)
 
 # Fields to update from template
@@ -206,15 +210,15 @@ for field, default in ADD_IF_MISSING.items():
         current[field] = default
 
 # Write merged config
-with open(TARGET, 'w') as f:
+with open(target, "w") as f:
     json.dump(current, f, indent=2)
-    f.write('\n')
+    f.write("\n")
 
-print(f"  manifest_version: → {current['manifest_version']}")
+print(f"  manifest_version: → {current[\"manifest_version\"]}")
 for field in ADD_IF_MISSING:
     if field in current and current[field] == ADD_IF_MISSING[field]:
         print(f"  {field}: added (new in v0.6.0)")
-PYTHON_EOF
+'
     
     log_ok "Config merged"
 }
