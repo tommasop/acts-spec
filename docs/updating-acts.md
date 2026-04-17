@@ -2,7 +2,49 @@
 
 The ACTS framework lives in `.acts/` and can be updated independently of your project code.
 
-## Quick Commands
+## First-Time Setup (Existing Project)
+
+If you have an existing ACTS project and want to add the update tool:
+
+```bash
+# One-liner migration to v0.6.0 (adds update tool, bin tools, updated operations/schemas)
+curl -sL https://raw.githubusercontent.com/tommasop/acts-spec/main/scripts/migrate-to-v0.6.0.sh | bash
+
+# Or if you have the acts-spec repo locally:
+/path/to/acts-spec/scripts/migrate-to-v0.6.0.sh
+
+# Dry run (show what would change):
+curl -sL ... | bash -s -- --dry-run
+```
+
+**What the migration does:**
+
+1. Detects your current ACTS version
+2. Creates backup in `.acts/backup/vX.Y.Z/`
+3. Updates framework files (operations, schemas, report-protocol)
+4. Merges `.acts/acts.json` (preserves your config, adds new fields)
+5. Installs `.acts/bin/acts-update` and `.acts/bin/acts-validate`
+6. Validates the result
+7. Commits changes
+
+**What's preserved:**
+
+- `.acts/acts.json` — your project config (review provider, integrations, etc.)
+- `.acts/review-providers/` — your provider configs
+- `.story/` — all story data (state, sessions, reviews)
+- `AGENTS.md` — your project constitution
+
+**After migration, you'll have:**
+
+- `.acts/bin/acts-update` — update tool
+- `.acts/bin/acts-validate` — validation tool
+- All v0.6.0 operations (15 files)
+- Updated schemas
+- Backup of your previous installation
+
+## Ongoing Updates
+
+Once you have the update tool, use it for future updates:
 
 ```bash
 # Check if updates are available
