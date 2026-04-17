@@ -7,7 +7,8 @@ context_budget: 10000
 required_inputs:
   - name: story_id
     type: string
-    required: true
+    required: false
+    description: "Story identifier. If omitted and no source, triggers story-discover."
   - name: title
     type: string
     required: false
@@ -15,7 +16,11 @@ required_inputs:
     type: string
     required: false
     description: "Raw requirements: pasted text, Jira description, PRD excerpt, or file path. If omitted and story_id matches a Jira key, auto-fetched from Jira."
-optional_inputs: []
+optional_inputs:
+  - name: from_draft
+    type: boolean
+    default: false
+    description: "If true, use .story/draft-spec.md as source instead of creating new"
 preconditions:
   - ".story/ directory MUST NOT already exist (or must be empty)"
   - "AGENTS.md MUST exist at repo root"
@@ -24,6 +29,7 @@ postconditions:
   - "All task IDs in plan.md match state.json"
   - "Status is ANALYSIS"
   - "No application code has been written"
+  - "If from_draft: draft-spec.md promoted to spec.md"
 ---
 
 # story-init
@@ -36,6 +42,17 @@ source material, decomposes it into an execution plan, and sets the
 initial state.
 
 ## Steps
+
+-1. **CHECK FOR DISCOVERY MODE**
+    IF no story_id provided AND no source provided AND no from_draft:
+    - Say: "No story_id or source material provided."
+    - Run `story-discover` operation
+    - Exit (discovery handles the rest)
+    
+    IF from_draft is true:
+    - Check `.story/draft-spec.md` exists
+    - If exists: use as source, skip to step 0
+    - If not: STOP. Say: "No draft found at .story/draft-spec.md"
 
 0. **FETCH FROM JIRA** (if `source` is omitted and `story_id` matches a Jira key pattern `/^[A-Z]+-\d+$/`)
    a. Call the Atlassian MCP tool to fetch the issue by key:
@@ -83,8 +100,19 @@ initial state.
    If no template or no match: write spec from scratch (existing behavior)
 
 3. **WRITE SPEC**
-   Parse the `source` material and write `.story/spec.md` with:
+   IF from_draft:
+   - Move `.story/draft-spec.md` → `.story/spec.md`
+   - Update header: change "Draft — awaiting team review" to "Approved — team reviewed"
+   - Update source line: "Draft specification (team reviewed)"
+   - Remove "Open Questions" section if all answered
+   - Save spec.md
+   
+   ELSE:
+   - Parse the `source` material and write `.story/spec.md` with:
    - **Goal** — what the feature achieves (user perspective)
+   - **Acceptance Criteria** — numbered, each independently testable
+   - **Technical Decisions** — architecture choices, data model, APIs
+   - **Out of Scope** — explicitly listed exclusions
    - **Acceptance Criteria** — numbered, each independently testable
    - **Technical Decisions** — architecture choices, data model, APIs
    - **Out of Scope** — explicitly listed exclusions
