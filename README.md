@@ -141,6 +141,7 @@ This single command will:
 - ✅ Strict mode (optional) — per-commit review + architecture discussion gates
 - ✅ Superpowers integration — TDD, planning, code review, debugging skills
 - ✅ GitHub Stacked PRs adapter (optional) — each task as focused, reviewable PR
+- ✅ Update tool — safe framework updates with backup, merge, restore (`acts-update --check`)
 
 ## What ACTS Is NOT
 
@@ -162,8 +163,9 @@ This single command will:
 | File | Purpose |
 |------|---------|
 | [acts-v0.6.0.md](acts-v0.6.0.md) | Full specification (includes Layer 7) |
-| [.acts/operations/](.acts/operations/) | Workflow definitions (11 operations) |
+| [.acts/operations/](.acts/operations/) | Workflow definitions (15 operations) |
 | [.acts/schemas/](.acts/schemas/) | JSON schemas for validation |
+| [.acts/bin/acts-update](.acts/bin/acts-update) | Framework update tool (backup, merge, restore) |
 | [.acts/mcp-server/](.acts/mcp-server/) | Layer 7 MCP Context Engine (TypeScript) |
 | [.acts/report-protocol.md](.acts/report-protocol.md) | Standard report formats |
 | [docs/templates/](docs/templates/) | AGENTS.md templates |
