@@ -9,10 +9,10 @@ set -euo pipefail
 #
 # This script handles both fresh repositories and existing codebases.
 # It downloads ACTS from GitHub and sets up:
-#   - .acts/ directory (operations, schemas, etc.)
+#   - .acts/ directory (operations, schemas, bin tools, etc.)
 #   - .story/ directory structure
 #   - AGENTS.md (creates or appends)
-#   - Optional GitHuman installation
+#   - Optional lazygit installation (for code review)
 # ─────────────────────────────────────────────
 
 TEMP_DIR=$(mktemp -d)
@@ -65,7 +65,7 @@ done
 
 # If download failed, check if we have local files (we might be in acts-spec repo)
 if [ "$ACTS_DOWNLOADED" != true ]; then
-  if [ -f "acts-v0.4.0.md" ] && [ -d ".acts" ]; then
+  if [ -f "acts-v0.6.0.md" ] && [ -d ".acts" ]; then
     log_info "Using local ACTS files from current repository"
     ACTS_SOURCE="$REPO_ROOT"
   else
@@ -108,20 +108,26 @@ else
   fi
 fi
 
-# GitHuman installation
-if command -v npm >/dev/null 2>&1; then
-  if ! command -v githuman >/dev/null 2>&1; then
-    log_info "GitHuman not found. Installing..."
-    if npm install -g githuman; then
-      log_info "GitHuman installed successfully"
+# lazygit installation (for code review)
+if ! command -v lazygit >/dev/null 2>&1; then
+  log_info "lazygit not found. Installing..."
+  if command -v brew >/dev/null 2>&1; then
+    if brew install lazygit; then
+      log_info "lazygit installed successfully"
     else
-      log_warn "Failed to install GitHuman. Install manually: npm install -g githuman"
+      log_warn "Failed to install lazygit. Install manually: brew install lazygit"
+    fi
+  elif command -v apt-get >/dev/null 2>&1; then
+    if sudo apt-get install -y lazygit 2>/dev/null || sudo snap install lazygit 2>/dev/null; then
+      log_info "lazygit installed successfully"
+    else
+      log_warn "Failed to install lazygit. Install manually: https://github.com/jesseduffield/lazygit"
     fi
   else
-    log_info "GitHuman already installed"
+    log_warn "No package manager found. Install lazygit manually: https://github.com/jesseduffield/lazygit"
   fi
 else
-  log_warn "npm not found. Skipping GitHuman installation."
+  log_info "lazygit already installed"
 fi
 
 # Gitignore
@@ -131,7 +137,6 @@ if [ -f ".gitignore" ]; then
     cat >>.gitignore <<'EOF'
 
 # ACTS Protocol
-.story/
 .acts/mcp-server/node_modules/
 .acts/mcp-server/dist/
 EOF
@@ -150,10 +155,16 @@ echo "Next steps:"
 echo "  1. Review AGENTS.md and customize for your project"
 echo "  2. Initialize your first story with your AI agent:"
 echo "     'Initialize ACTS tracker for PROJ-XXX, title \"Your Feature\"'"
-echo "  3. Follow the ACTS workflow: preflight → task-start → session-summary → handoff"
+echo "  3. Or discover what to build: 'story-discover' (blank slate → draft spec)"
+echo "  4. Follow the ACTS workflow: preflight → task-start → session-summary → handoff"
+echo
+echo "Tools installed:"
+echo "  - .acts/bin/acts-update  (update ACTS framework)"
+echo "  - .acts/bin/acts-validate (validate conformance)"
 echo
 echo "Documentation:"
-echo "  - acts-v0.4.0.md (full specification)"
+echo "  - acts-v0.6.0.md (full specification)"
 echo "  - docs/minimal-viable-acts.md (quick start)"
+echo "  - docs/updating-acts.md (how to update)"
 echo "  - .acts/operations/ (workflow definitions)"
 
