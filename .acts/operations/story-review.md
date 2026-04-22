@@ -101,15 +101,33 @@ constitution compliance, and prepares a PR description.
    Present PR description
    Present agent compliance audit summary
 
-10. **GATE: approve**
-    Say: "Story review complete. <N>/<N> acceptance criteria met.
-    Tests: <passing>/<total>. All tasks reviewed: yes/no.
-    Ready to transition to REVIEW? (yes/no)"
+10. **INVOKE STORY-APPROVE**
+    Call the story-approve operation:
+    ```bash
+    echo '{
+      "inputs": {
+        "story_id": "<STORY_ID>",
+        "title": "<story title>",
+        "acceptance_criteria_met": <count>,
+        "acceptance_criteria_total": <count>,
+        "tests_passing": <count>,
+        "tests_total": <count>,
+        "all_tasks_reviewed": <true|false>,
+        "compliance_issues": [<list>]
+      }
+    }' | acts run story-approve
+    ```
     
-    If ANY criterion is unmet, do NOT offer this gate.
-    Instead say: "Fix the gaps above, then re-run story-review."
+    **GATE: approve**
+    The story-approve operation will:
+    - Display story report (ACs, tests, compliance)
+    - Check if all criteria are met
+    - Ask for final approval
+    - Return JSON with `approved` and `story_status` fields
     
-    Agent MUST stop here and wait for explicit "yes".
+    Parse the output:
+    - If `approved: true` and `story_status: "REVIEW"` → proceed to step 11
+    - If not approved → address gaps, then re-run story-review
 
 11. **UPDATE STATE**
     - Story status → `REVIEW`
