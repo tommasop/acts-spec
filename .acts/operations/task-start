@@ -48,6 +48,30 @@ if [ "$ACTION" == "complete" ]; then
 else
     # Normal task start (implementation mode)
     acts_log "INFO" "Starting task implementation"
+    
+    # **In strict mode (conformance_level: "strict"):**
+    # After completing a logical batch of commits (1-5 commits):
+    # a. Invoke commit-approve operation via acts_call
+    # b. Parse approval result from JSON output
+    # c. If changes_requested: address feedback, then loop back
+    # d. If approved: continue implementation
+    
+    # Note: The actual commit-approve calls happen during implementation
+    # after each batch of commits. Example usage:
+    #
+    # APPROVAL_OUTPUT=$(acts_call commit-approve \
+    #     --input batch_number="$BATCH_NUM" \
+    #     --input commit_count="$COMMIT_COUNT" \
+    #     --input files_changed='["file1.js","file2.js"]' \
+    #     --input commit_messages='["feat: add feature","fix: bug"]')
+    #
+    # APPROVAL_STATUS=$(echo "$APPROVAL_OUTPUT" | jq -r '.status')
+    #
+    # if [ "$APPROVAL_STATUS" != "approved" ]; then
+    #     acts_log "WARN" "Changes requested for batch $BATCH_NUM"
+    #     # Address feedback and loop back
+    # fi
+    
     jq -n \
         --arg task_id "$TASK_ID" \
         '{status: "success", results: {task_id: $task_id, status: "IN_PROGRESS"}, artifacts: {}}'
