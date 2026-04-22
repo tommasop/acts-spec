@@ -15,7 +15,7 @@
   },
   "description": "Project-level ACTS configuration \u2014 controls behavior, integration, and protocol settings.",
   "commit_convention": "conventional",
-  "review_provider": "lazygit",
+  "review_provider": "githuman",
   "review_provider_config": {
     "mode": "tui"
   },

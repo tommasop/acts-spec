@@ -8,6 +8,17 @@
       "args": ["--version"],
       "description": "Verify GitHuman is installed"
     },
+    "run": {
+      "cmd": "githuman",
+      "args": ["run", "--port", "{port}"],
+      "description": "Start interactive review session",
+      "options": {
+        "port": {
+          "default": 3847,
+          "description": "Port for review server"
+        }
+      }
+    },
     "serve": {
       "cmd": "githuman",
       "args": ["serve", "--port", "{port}", "--no-open"],

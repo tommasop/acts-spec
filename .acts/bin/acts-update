@@ -30,11 +30,11 @@ NC='\033[0m'
 
 # ─── Helpers ────────────────────────────────────────────────────────────
 
-log_info()  { echo -e "${BLUE}ℹ${NC} $1"; }
-log_warn()  { echo -e "${YELLOW}⚠${NC} $1"; }
-log_error() { echo -e "${RED}✗${NC} $1"; }
-log_ok()    { echo -e "${GREEN}✓${NC} $1"; }
-log_bold()  { echo -e "${BOLD}$1${NC}"; }
+log_info()  { echo -e "${BLUE}ℹ${NC} $1" >&2; }
+log_warn()  { echo -e "${YELLOW}⚠${NC} $1" >&2; }
+log_error() { echo -e "${RED}✗${NC} $1" >&2; }
+log_ok()    { echo -e "${GREEN}✓${NC} $1" >&2; }
+log_bold()  { echo -e "${BOLD}$1${NC}" >&2; }
 
 cleanup() {
     if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
@@ -57,41 +57,33 @@ print(data.get('manifest_version', 'unknown'))
 }
 
 get_latest_version_from_github() {
-    # Download the latest spec file list from GitHub
+    # Download the tarball and extract version from spec file
     local temp_dir=$(mktemp -d)
     local latest_version="unknown"
     
-    # Try to get the latest release tag first
-    local latest_tag
-    latest_tag=$(curl -s --max-time 10 "https://api.github.com/repos/$GITHUB_REPO/releases/latest" 2>/dev/null | python3 -c "
-import json, sys
-try:
-    data = json.load(sys.stdin)
-    tag = data.get('tag_name', '').lstrip('v')
-    print(tag)
-except:
-    pass
-" 2>/dev/null)
-    
-    if [[ -n "$latest_tag" && "$latest_tag" != "null" ]]; then
-        echo "$latest_tag"
-        rm -rf "$temp_dir"
-        return
-    fi
-    
-    # Fallback: try to download from main branch and detect version from spec file
     for branch in main master; do
-        local spec_list_url="$GITHUB_RAW_URL/$branch/"
-        # Download directory listing (GitHub doesn't provide this easily, so we try common versions)
-        for version in 0.6.2 0.6.1 0.6.0 0.5.0; do
-            local spec_url="$GITHUB_RAW_URL/$branch/acts-v${version}.md"
-            if curl -s --max-time 5 --head "$spec_url" 2>/dev/null | grep -q "200 OK"; then
-                latest_version="$version"
+        local tarball_url="https://github.com/$GITHUB_REPO/archive/refs/heads/$branch.tar.gz"
+        local temp_tar=$(mktemp)
+        
+        if curl -L -s --max-time 30 "$tarball_url" -o "$temp_tar" 2>/dev/null; then
+            local extract_dir=$(mktemp -d)
+            if tar -xzf "$temp_tar" -C "$extract_dir" 2>/dev/null; then
+                local source_dir=$(ls -d "$extract_dir"/* | head -1)
+                if [[ -d "$source_dir/.acts" ]]; then
+                    # Detect version from spec file
+                    local spec_file=$(ls -1 "$source_dir"/acts-v*.md 2>/dev/null | sort -V | tail -n1)
+                    if [[ -n "$spec_file" ]]; then
+                        latest_version=$(basename "$spec_file" | sed 's/acts-v\(.*\)\.md/\1/')
+                        rm -rf "$extract_dir" "$temp_tar"
+                        rm -rf "$temp_dir"
+                        echo "$latest_version"
+                        return 0
+                    fi
+                fi
             fi
-        done
-        if [[ "$latest_version" != "unknown" ]]; then
-            break
+            rm -rf "$extract_dir"
         fi
+        rm -f "$temp_tar"
     done
     
     rm -rf "$temp_dir"

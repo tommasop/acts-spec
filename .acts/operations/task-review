@@ -1,55 +1,696 @@
 #!/bin/bash
 # task-review operation
 # Reads input from stdin, writes output to stdout
+#
+# This script handles code review using GitHuman as the primary tool,
+# with fallback to lazygit and manual review when needed.
+#
+# Environment Variables:
+#   ACTS_REVIEW_MODE=summary     - Show summary view for manual review (default)
+#   ACTS_REVIEW_MODE=full        - Show file-by-file with full content for manual review
+#   ACTS_REVIEW_PROVIDER=auto    - Auto-detect available tool (default)
+#   ACTS_REVIEW_PROVIDER=githuman - Force GitHuman
+#   ACTS_REVIEW_PROVIDER=lazygit - Force lazygit
+#   ACTS_REVIEW_PROVIDER=manual  - Force manual review
 
 source .acts/lib/helpers.sh
 
 # Read input
 INPUT=$(acts_read_input)
 TASK_ID=$(acts_get_input "$INPUT" "inputs.task_id")
+STORY_ID=$(acts_get_input "$INPUT" "inputs.story_id")
+REVIEW_MODE="${ACTS_REVIEW_MODE:-summary}"
 
-acts_log "INFO" "Starting review for task $TASK_ID"
-
-# Check if review provider is configured
-if command -v lazygit &> /dev/null; then
-    acts_log "INFO" "Launching lazygit for review"
-    
-    # Launch lazygit TUI
-    lazygit
-    LAZYGIT_EXIT=$?
-    
-    acts_log "INFO" "lazygit exited with code $LAZYGIT_EXIT"
-    
-    # Check if review file was created
-    REVIEW_FILE=".story/reviews/active/${TASK_ID}-review.md"
-    if [ -f "$REVIEW_FILE" ]; then
-        acts_log "INFO" "Review completed, file found: $REVIEW_FILE"
-        
-        # Move to archive
-        mkdir -p .story/reviews/archive
-        mv "$REVIEW_FILE" ".story/reviews/archive/${TASK_ID}-review.md"
-        
-        # Output approved JSON
-        jq -n \
-            --arg review_file ".story/reviews/archive/${TASK_ID}-review.md" \
-            '{status: "approved", results: {review_status: "approved", reviewer: "human"}, artifacts: {review_file: $review_file}}'
-        exit 0
-    else
-        acts_log "WARN" "No review file found, assuming changes requested"
-        jq -n \
-            '{status: "changes_requested", results: {review_status: "changes_requested", reason: "Review incomplete or rejected"}, artifacts: {}}'
-        exit 2
+# Get provider from environment or config, default to auto-detect
+REVIEW_PROVIDER="${ACTS_REVIEW_PROVIDER:-auto}"
+if [[ "$REVIEW_PROVIDER" == "auto" ]]; then
+    # Check config file
+    if [[ -f ".acts/acts.json" ]]; then
+        REVIEW_PROVIDER=$(python3 -c "
+import json
+with open('.acts/acts.json') as f:
+    data = json.load(f)
+print(data.get('review_provider', 'auto'))
+" 2>/dev/null || echo "auto")
     fi
-else
-    # Manual review fallback
-    acts_log "INFO" "lazygit not available, using manual review"
-    
-    # Show staged diff
-    echo "=== Staged Changes ===" >&2
-    git diff --staged >&2
-    
-    # For now, assume approved (in real use, would prompt)
-    jq -n \
-        '{status: "approved", results: {review_status: "approved", reviewer: "manual"}, artifacts: {}}'
-    exit 0
 fi
+
+acts_log "INFO" "Starting review for task $TASK_ID (provider: $REVIEW_PROVIDER, mode: $REVIEW_MODE)"
+
+# Function to check if we're in an interactive terminal
+is_interactive_terminal() {
+    [[ -t 0 ]] && [[ -t 1 ]] && [[ -t 2 ]]
+}
+
+# Function to check if githuman is installed
+githuman_available() {
+    command -v githuman &> /dev/null
+}
+
+# Function to check if lazygit is installed
+lazygit_available() {
+    command -v lazygit &> /dev/null
+}
+
+# Function to get file change stats
+get_change_stats() {
+    local added=$(git diff --staged --numstat | awk '{sum+=$1} END {print sum+0}')
+    local deleted=$(git diff --staged --numstat | awk '{sum+=$2} END {print sum+0}')
+    local net=$((added - deleted))
+    local files_changed=$(git diff --staged --name-only | wc -l)
+    local new_files=$(git diff --staged --name-status | grep '^A' | wc -l)
+    local modified_files=$(git diff --staged --name-status | grep '^M' | wc -l)
+    local deleted_files=$(git diff --staged --name-status | grep '^D' | wc -l)
+    
+    echo "added=$added deleted=$deleted net=$net files=$files_changed new=$new_files modified=$modified_files deleted=$deleted_files"
+}
+
+# Function to categorize file by extension
+get_file_icon() {
+    local file="$1"
+    local ext="${file##*.}"
+    
+    case "$ext" in
+        sh|bash) echo "🔧" ;;
+        py) echo "🐍" ;;
+        js|ts|jsx|tsx) echo "📜" ;;
+        md) echo "📝" ;;
+        json|yaml|yml) echo "⚙️" ;;
+        html|css) echo "🌐" ;;
+        *) echo "📄" ;;
+    esac
+}
+
+# Function to get file status
+get_file_status() {
+    local file="$1"
+    git diff --staged --name-status | grep "$(basename "$file")$" | cut -f1
+}
+
+# Function to get line count
+get_line_count() {
+    local file="$1"
+    git diff --staged --numstat "$file" 2>/dev/null | awk '{print $1 + $2}' || echo "0"
+}
+
+# Function to truncate diff
+get_truncated_diff() {
+    local file="$1"
+    local max_lines="${2:-30}"
+    local total_lines
+    total_lines=$(git diff --staged "$file" 2>/dev/null | wc -l)
+    
+    if (( total_lines <= max_lines )); then
+        git diff --staged "$file" 2>/dev/null
+    else
+        git diff --staged "$file" 2>/dev/null | head -n "$max_lines"
+        echo ""
+        echo "... ($((total_lines - max_lines)) more lines) ..."
+        echo "Use 'git diff --staged $file' to see full diff"
+    fi
+}
+
+# Function to get full diff
+get_full_diff() {
+    local file="$1"
+    git diff --staged "$file" 2>/dev/null
+}
+
+# Function to create review artifact
+create_review_artifact() {
+    local status="$1"
+    local reviewer="$2"
+    local comments="${3:-}"
+    local tool="${4:-manual}"
+    local timestamp
+    timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+    
+    mkdir -p .story/reviews/active
+    
+    local review_file=".story/reviews/active/${TASK_ID}-review.md"
+    
+    cat > "$review_file" << EOF
+# Review — $TASK_ID
+
+- **Story:** ${STORY_ID:-unknown}
+- **Reviewer:** $reviewer
+- **Date:** $timestamp
+- **Status:** $status
+- **Tool:** $tool
+
+## Files Reviewed
+
+$(git diff --staged --name-only | sed 's/^/- /')
+
+## Comments
+
+${comments:-No comments provided}
+
+## Stats
+
+$(git diff --staged --stat)
+
+## Change Summary
+
+$(get_change_stats | tr ' ' '\n' | sed 's/^/- /')
+
+EOF
+    
+    echo "$review_file"
+}
+
+# Function to archive review
+archive_review() {
+    local review_file="$1"
+    mkdir -p .story/reviews/archive
+    mv "$review_file" ".story/reviews/archive/${TASK_ID}-review.md"
+    echo ".story/reviews/archive/${TASK_ID}-review.md"
+}
+
+# Function to generate summary view
+generate_summary_view() {
+    local stats
+    stats=$(get_change_stats)
+    eval "$stats"
+    
+    cat << EOF
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃  CODE REVIEW — Task ${TASK_ID}                                         ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+📊 CHANGES SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ $new files added     |  📝 $modified files modified  |  ❌ $deleted files deleted
+📈 +$added lines        |  📉 -$deleted lines         |  🔄 Net: $net lines
+
+EOF
+    
+    # New files section
+    if (( new > 0 )); then
+        echo "🆕 NEW FILES ($new)"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        git diff --staged --name-status | grep '^A' | cut -f2 | while read -r file; do
+            local icon=$(get_file_icon "$file")
+            local lines=$(get_line_count "$file")
+            echo "  $icon $file (+$lines lines)"
+            
+            # Show first line of diff as description
+            local desc
+            desc=$(git diff --staged "$file" 2>/dev/null | grep '^+' | grep -v '^+++' | head -1 | sed 's/^+//' | cut -c1-60)
+            if [[ -n "$desc" && "$desc" != "#!/"* && "$desc" != "#"* ]]; then
+                echo "     └─ ${desc}..."
+            elif [[ -n "$desc" ]]; then
+                echo "     └─ ${desc}"
+            fi
+        done
+        echo ""
+    fi
+    
+    # Modified files section
+    if (( modified > 0 )); then
+        echo "✏️ MODIFIED FILES ($modified)"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        git diff --staged --name-status | grep '^M' | cut -f2 | while read -r file; do
+            local icon=$(get_file_icon "$file")
+            local lines=$(get_line_count "$file")
+            echo "  $icon $file ($lines lines changed)"
+        done
+        echo ""
+    fi
+    
+    # Deleted files section
+    if (( deleted > 0 )); then
+        echo "🗑️  DELETED FILES ($deleted)"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        git diff --staged --name-status | grep '^D' | cut -f2 | while read -r file; do
+            local icon=$(get_file_icon "$file")
+            echo "  $icon $file"
+        done
+        echo ""
+    fi
+    
+    # Review checkpoints
+    cat << 'EOF'
+💡 REVIEW CHECKPOINTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ☐ Security: Any hardcoded secrets or credentials?
+  ☐ Tests: New functionality has test coverage?
+  ☐ Documentation: Public APIs/methods documented?
+  ☐ Error Handling: Edge cases handled gracefully?
+  ☐ Style: Follows project conventions (see AGENTS.md)?
+  ☐ Performance: Any obvious performance concerns?
+
+EOF
+    
+    # Show truncated diffs for larger files
+    echo "📋 KEY DIFFS (truncated)"
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    echo ""
+    
+    local count=0
+    git diff --staged --name-only | while read -r file && (( count < 3 )); do
+        echo "File: $file ($(get_line_count "$file") lines changed)"
+        echo "─────────────────────────────────────────────────────────────────"
+        get_truncated_diff "$file" 20
+        echo ""
+        echo ""
+        ((count++))
+    done
+    
+    cat << 'EOF'
+✅ HOW TO RESPOND
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Option 1 - Quick Approval:
+  approved
+  [optional: brief comment]
+
+Option 2 - Request Changes (Conventional Comments format):
+  changes:
+  - file.py:42: issue - Critical problem found
+  - file.py:56: suggestion - Propose better approach
+  - tests/test.py:12: nitpick - Minor style issue
+  - file.py:89: praise - Great solution!
+
+Labels: issue|suggestion|praise|nitpick|question|thought|todo|note
+Decorations: (blocking)|(non-blocking)|(security)|(test)|(ux)
+
+For full file-by-file review, set: ACTS_REVIEW_MODE=full
+
+EOF
+}
+
+# Function to generate full file-by-file view
+generate_full_view() {
+    local stats
+    stats=$(get_change_stats)
+    eval "$stats"
+    
+    cat << EOF
+
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃  CODE REVIEW — Task ${TASK_ID} (FULL VIEW)                             ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+📊 CHANGES SUMMARY
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+✅ $new files added     |  📝 $modified files modified  |  ❌ $deleted files deleted
+📈 +$added lines        |  📉 -$deleted lines         |  🔄 Net: $net lines
+
+EOF
+    
+    # File-by-file review
+    local file_num=1
+    local total_files=$((new + modified + deleted))
+    
+    git diff --staged --name-only | while read -r file; do
+        local icon=$(get_file_icon "$file")
+        local lines=$(get_line_count "$file")
+        local status=$(get_file_status "$file")
+        local status_text=""
+        
+        case "$status" in
+            A) status_text="ADDED" ;;
+            M) status_text="MODIFIED" ;;
+            D) status_text="DELETED" ;;
+        esac
+        
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "📄 FILE $file_num/$total_files: $file [$status_text]"
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+        echo "Lines changed: $lines"
+        
+        if [[ "$status" != "D" ]]; then
+            echo ""
+            echo "Full diff:"
+            echo "─────────────────────────────────────────────────────────────────"
+            get_full_diff "$file"
+            echo ""
+        fi
+        
+        echo ""
+        ((file_num++))
+    done
+    
+    cat << 'EOF'
+💡 REVIEW CHECKPOINTS
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+  ☐ Security: Any hardcoded secrets or credentials?
+  ☐ Tests: New functionality has test coverage?
+  ☐ Documentation: Public APIs/methods documented?
+  ☐ Error Handling: Edge cases handled gracefully?
+  ☐ Style: Follows project conventions (see AGENTS.md)?
+  ☐ Performance: Any obvious performance concerns?
+
+✅ HOW TO RESPOND
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Option 1 - Quick Approval:
+  approved
+  [optional: brief comment]
+
+Option 2 - Request Changes (Conventional Comments format):
+  changes:
+  - file.py:42: issue - Critical problem found
+  - file.py:56: suggestion - Propose better approach
+  - tests/test.py:12: nitpick - Minor style issue
+  - file.py:89: praise - Great solution!
+
+Labels: issue|suggestion|praise|nitpick|question|thought|todo|note
+Decorations: (blocking)|(non-blocking)|(security)|(test)|(ux)
+
+For summary view, set: ACTS_REVIEW_MODE=summary (default)
+
+EOF
+}
+
+# Function to run githuman review
+run_githuman_review() {
+    acts_log "INFO" "Launching GitHuman for code review..."
+    
+    local githuman_port=3847
+    local githuman_timeout=300
+    local review_export_file=".story/reviews/active/${TASK_ID}-githuman.json"
+    
+    # Create review directory
+    mkdir -p .story/reviews/active
+    
+    # Check if githuman server is already running
+    local server_pid=""
+    if curl -s "http://localhost:$githuman_port/health" > /dev/null 2>&1; then
+        acts_log "INFO" "GitHuman server already running on port $githuman_port"
+    else
+        acts_log "INFO" "Starting GitHuman server on port $githuman_port..."
+        
+        # Start githuman server in background
+        githuman serve --port "$githuman_port" --no-open &
+        server_pid=$!
+        
+        # Wait for server to be ready
+        local attempts=0
+        local max_attempts=30
+        while (( attempts < max_attempts )); do
+            if curl -s "http://localhost:$githuman_port/health" > /dev/null 2>&1; then
+                acts_log "INFO" "GitHuman server ready"
+                break
+            fi
+            sleep 1
+            ((attempts++))
+        done
+        
+        if (( attempts >= max_attempts )); then
+            acts_log "ERROR" "GitHuman server failed to start"
+            [[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null
+            return 1
+        fi
+    fi
+    
+    # Create pre-review artifact
+    create_review_artifact "in_progress" "GitHuman" "Review in progress via GitHuman" "githuman"
+    
+    if is_interactive_terminal; then
+        # Interactive mode - tell user to open browser
+        echo "" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "🌐 GitHuman Review Started" >&2
+        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "" >&2
+        echo "GitHuman server is running at: http://localhost:$githuman_port" >&2
+        echo "" >&2
+        echo "Please open your browser and review the staged changes." >&2
+        echo "" >&2
+        
+        # Wait for user to complete review
+        while true; do
+            read -p "Have you completed the review in GitHuman? (yes/no/cancel) " -r response >&2
+            case "$response" in
+                yes|y|Y|approved)
+                    break
+                    ;;
+                cancel|skip)
+                    acts_log "INFO" "Review cancelled by user"
+                    [[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null
+                    jq -n \
+                        '{status: "cancelled", results: {review_status: "cancelled"}, artifacts: {}}'
+                    return 1
+                    ;;
+                *)
+                    echo "Please enter 'yes' when review is complete or 'cancel' to abort" >&2
+                    ;;
+            esac
+        done
+        
+        # Try to export review from githuman
+        if githuman export last --output "$review_export_file" 2>/dev/null; then
+            acts_log "INFO" "GitHuman review exported to $review_export_file"
+        else
+            acts_log "WARN" "Could not export GitHuman review automatically"
+        fi
+        
+        # Ask for approval status
+        while true; do
+            read -p "Was the review approved? (yes/no) " -r response >&2
+            case "$response" in
+                yes|y|Y|approved)
+                    REVIEW_FILE=$(create_review_artifact "approved" "human via GitHuman" "Reviewed via GitHuman web interface" "githuman")
+                    ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
+                    
+                    [[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null
+                    
+                    acts_log "INFO" "Review approved, artifact archived: $ARCHIVED_FILE"
+                    
+                    jq -n \
+                        --arg review_file "$ARCHIVED_FILE" \
+                        '{status: "approved", results: {review_status: "approved", reviewer: "human via GitHuman"}, artifacts: {review_file: $review_file}}'
+                    return 0
+                    ;;
+                no|n|N|changes)
+                    read -p "Enter review comments: " -r comments >&2
+                    REVIEW_FILE=$(create_review_artifact "changes_requested" "human via GitHuman" "$comments" "githuman")
+                    ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
+                    
+                    [[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null
+                    
+                    acts_log "INFO" "Changes requested, artifact archived: $ARCHIVED_FILE"
+                    
+                    jq -n \
+                        --arg review_file "$ARCHIVED_FILE" \
+                        --arg comments "$comments" \
+                        '{status: "changes_requested", results: {review_status: "changes_requested", reason: "Review changes requested", comments: $comments}, artifacts: {review_file: $review_file}}'
+                    return 2
+                    ;;
+                *)
+                    echo "Please enter 'yes' or 'no'" >&2
+                    ;;
+            esac
+        done
+        
+    else
+        # Non-interactive mode - generate review prompt
+        acts_log "INFO" "Non-interactive environment detected"
+        acts_log "INFO" "GitHuman server started at http://localhost:$githuman_port"
+        
+        REVIEW_PROMPT=".story/reviews/active/${TASK_ID}-review-prompt.md"
+        
+        cat > "$REVIEW_PROMPT" << EOF
+┌─────────────────────────────────────────────────────────────────┐
+│  GITHUMAN REVIEW REQUIRED                                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  GitHuman server is running at:                                 │
+│  http://localhost:$githuman_port                                │
+│                                                                 │
+│  TO COMPLETE THE REVIEW:                                        │
+│                                                                 │
+│  1. Open your browser to the URL above                         │
+│  2. Review the staged changes in GitHuman                      │
+│  3. After reviewing, return here and respond with:              │
+│                                                                 │
+│     - "approved"  → if the changes look good                   │
+│     - "changes"   → list specific changes needed               │
+│                                                                 │
+│  Server PID: $server_pid                                       │
+│  To stop server: kill $server_pid                              │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+
+EOF
+        
+        # Append changes summary
+        generate_summary_view >> "$REVIEW_PROMPT"
+        
+        acts_log "INFO" "Review prompt saved to: $REVIEW_PROMPT"
+        
+        jq -n \
+            --arg prompt_file "$REVIEW_PROMPT" \
+            --arg port "$githuman_port" \
+            --arg pid "$server_pid" \
+            '{status: "manual_review_required", results: {review_status: "pending", reason: "GitHuman review required - non-interactive environment", port: $port, pid: $pid}, artifacts: {prompt_file: $prompt_file}}'
+        return 3
+    fi
+}
+
+# Function to run lazygit review
+run_lazygit_review() {
+    acts_log "INFO" "Launching lazygit for code review..."
+    
+    if ! is_interactive_terminal; then
+        acts_log "WARN" "lazygit requires interactive terminal"
+        return 1
+    fi
+    
+    # Create pre-review artifact
+    create_review_artifact "in_progress" "lazygit" "Review in progress via lazygit" "lazygit"
+    
+    # Launch lazygit
+    lazygit status
+    local exit_code=$?
+    
+    acts_log "INFO" "lazygit exited with code $exit_code"
+    
+    # After lazygit exits, prompt for review result
+    echo "" >&2
+    echo "=== Lazygit Review Complete ===" >&2
+    echo "" >&2
+    
+    while true; do
+        read -p "Was the review approved? (yes/no) " -r response >&2
+        case "$response" in
+            yes|y|Y|approved)
+                REVIEW_FILE=$(create_review_artifact "approved" "human via lazygit" "Reviewed via lazygit TUI" "lazygit")
+                ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
+                
+                acts_log "INFO" "Review approved, artifact archived: $ARCHIVED_FILE"
+                
+                jq -n \
+                    --arg review_file "$ARCHIVED_FILE" \
+                    '{status: "approved", results: {review_status: "approved", reviewer: "human via lazygit"}, artifacts: {review_file: $review_file}}'
+                return 0
+                ;;
+            no|n|N|changes)
+                read -p "Enter review comments: " -r comments >&2
+                REVIEW_FILE=$(create_review_artifact "changes_requested" "human via lazygit" "$comments" "lazygit")
+                ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
+                
+                acts_log "INFO" "Changes requested, artifact archived: $ARCHIVED_FILE"
+                
+                jq -n \
+                    --arg review_file "$ARCHIVED_FILE" \
+                    --arg comments "$comments" \
+                    '{status: "changes_requested", results: {review_status: "changes_requested", reason: "Review changes requested", comments: $comments}, artifacts: {review_file: $review_file}}'
+                return 2
+                ;;
+            *)
+                echo "Please enter 'yes' or 'no'" >&2
+                ;;
+        esac
+    done
+}
+
+# Function to run manual review fallback
+run_manual_review() {
+    acts_log "INFO" "Using manual review fallback (mode: $REVIEW_MODE)"
+    
+    # Generate the appropriate view
+    if [[ "$REVIEW_MODE" == "full" ]]; then
+        generate_full_view >&2
+    else
+        generate_summary_view >&2
+    fi
+    
+    if is_interactive_terminal; then
+        # Interactive - ask for approval
+        while true; do
+            read -p "Was the review approved? (yes/no) " -r response >&2
+            case "$response" in
+                yes|y|Y|approved)
+                    REVIEW_FILE=$(create_review_artifact "approved" "human (manual review)" "Reviewed via manual diff inspection" "manual")
+                    ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
+                    
+                    acts_log "INFO" "Review approved, artifact archived: $ARCHIVED_FILE"
+                    
+                    jq -n \
+                        --arg review_file "$ARCHIVED_FILE" \
+                        '{status: "approved", results: {review_status: "approved", reviewer: "human"}, artifacts: {review_file: $review_file}}'
+                    return 0
+                    ;;
+                no|n|N|changes)
+                    read -p "Enter review comments: " -r comments >&2
+                    REVIEW_FILE=$(create_review_artifact "changes_requested" "human (manual review)" "$comments" "manual")
+                    ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
+                    
+                    acts_log "INFO" "Changes requested, artifact archived: $ARCHIVED_FILE"
+                    
+                    jq -n \
+                        --arg review_file "$ARCHIVED_FILE" \
+                        --arg comments "$comments" \
+                        '{status: "changes_requested", results: {review_status: "changes_requested", reason: "Review changes requested", comments: $comments}, artifacts: {review_file: $review_file}}'
+                    return 2
+                    ;;
+                *)
+                    echo "Please enter 'yes' or 'no'" >&2
+                    ;;
+            esac
+        done
+    else
+        # Non-interactive
+        REVIEW_PROMPT=".story/reviews/active/${TASK_ID}-review-prompt.md"
+        mkdir -p .story/reviews/active
+        
+        if [[ "$REVIEW_MODE" == "full" ]]; then
+            generate_full_view > "$REVIEW_PROMPT"
+        else
+            generate_summary_view > "$REVIEW_PROMPT"
+        fi
+        
+        acts_log "INFO" "Review prompt created: $REVIEW_PROMPT"
+        
+        jq -n \
+            --arg prompt_file "$REVIEW_PROMPT" \
+            --arg mode "$REVIEW_MODE" \
+            '{status: "manual_review_required", results: {review_status: "pending", reason: "Manual review required - non-interactive environment", mode: $mode}, artifacts: {prompt_file: $prompt_file}}'
+        return 3
+    fi
+}
+
+# Main logic - select and run appropriate review tool
+case "$REVIEW_PROVIDER" in
+    githuman)
+        if githuman_available; then
+            run_githuman_review
+        else
+            acts_log "WARN" "GitHuman requested but not available, falling back to lazygit"
+            if lazygit_available; then
+                run_lazygit_review
+            else
+                acts_log "WARN" "lazygit also not available, using manual review"
+                run_manual_review
+            fi
+        fi
+        ;;
+    lazygit)
+        if lazygit_available; then
+            run_lazygit_review
+        else
+            acts_log "WARN" "lazygit requested but not available, falling back to manual review"
+            run_manual_review
+        fi
+        ;;
+    manual)
+        run_manual_review
+        ;;
+    auto|*)
+        # Auto-detect: prefer githuman, then lazygit, then manual
+        if githuman_available; then
+            acts_log "INFO" "Auto-detected GitHuman, launching..."
+            run_githuman_review
+        elif lazygit_available; then
+            acts_log "INFO" "Auto-detected lazygit, launching..."
+            run_lazygit_review
+        else
+            acts_log "INFO" "No review tool available, using manual review"
+            run_manual_review
+        fi
+        ;;
+esac
