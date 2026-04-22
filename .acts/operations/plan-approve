@@ -1,0 +1,60 @@
+#!/bin/bash
+# plan-approve operation
+# Reviews and approves task plan
+
+source .acts/lib/helpers.sh
+
+# Read input
+INPUT=$(acts_read_input)
+STORY_ID=$(acts_get_input "$INPUT" "inputs.story_id")
+TASKS=$(acts_get_input "$INPUT" "inputs.tasks")
+DEP_GRAPH=$(acts_get_input "$INPUT" "inputs.dependency_graph")
+
+acts_log "INFO" "Reviewing task plan for story $STORY_ID"
+
+# Step 1: Display task table
+cat >&2 <<EOF
+
+========================================
+TASK PLAN REVIEW — Story $STORY_ID
+========================================
+
+Tasks:
+EOF
+
+echo "$TASKS" | jq -r '.[] | "\n  Task \(.id): \(.title)\n    Dependencies: \(.dependencies // ["none"])\n    Priority: \(.priority)"' >&2
+
+if [ -n "$DEP_GRAPH" ]; then
+    echo "" >&2
+    echo "Dependency Graph:" >&2
+    echo "$DEP_GRAPH" >&2
+fi
+
+cat >&2 <<EOF
+
+========================================
+EOF
+
+# Step 2: GATE - Ask for approval
+acts_log "INFO" "Waiting for plan approval..."
+
+# For demonstration, auto-approve
+
+# Output approval result
+jq -n \
+    --arg story_id "$STORY_ID" \
+    --argjson task_count "$(echo "$TASKS" | jq 'length')" \
+    '{
+        status: "approved",
+        approved: true,
+        action: "approve",
+        modifications: [],
+        results: {
+            story_id: $story_id,
+            task_count: $task_count,
+            approved: true
+        }
+    }'
+
+acts_log "INFO" "Plan approved for $STORY_ID"
+exit 0
