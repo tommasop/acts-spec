@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "$id": "https://acts-standard.org/schemas/state/v0.6.0",
+  "$id": "https://acts-standard.org/schemas/state/v0.6.1",
   "title": "ACTS Story State",
   "description": "Schema for .story/state.json — the canonical story state file.",
   "type": "object",
@@ -21,7 +21,7 @@
       "type": "string",
       "description": "ACTS specification version this file conforms to.",
       "pattern": "^\\d+\\.\\d+\\.\\d+$",
-      "examples": ["0.6.0"]
+      "examples": ["0.6.1"]
     },
     "story_id": {
       "type": "string",
@@ -162,6 +162,8 @@
       "required": [
         "id",
         "title",
+        "description",
+        "acceptance_criteria",
         "status",
         "assigned_to",
         "files_touched",
@@ -177,7 +179,22 @@
         },
         "title": {
           "type": "string",
-          "minLength": 1
+          "minLength": 1,
+          "description": "Short task title."
+        },
+        "description": {
+          "type": "string",
+          "minLength": 1,
+          "description": "What this task does — implementation details and approach."
+        },
+        "acceptance_criteria": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "description": "Concrete, testable definitions of done for this task."
         },
         "status": {
           "type": "string",
