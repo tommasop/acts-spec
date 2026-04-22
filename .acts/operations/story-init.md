@@ -126,35 +126,75 @@ initial state.
    - Each task independently assignable to one developer
    - Identify dependency graph
    - Maximize parallelism
-   - Each task: ID, title, dependencies, likely files, acceptance
+   - Each task MUST include:
+     - ID, title
+     - **Description** — what the task does, implementation approach
+     - **Acceptance Criteria** — numbered list of testable definitions of done
+     - dependencies, likely files, context priority
 
-6. **INIT STATE**
+6. **TASK APPROVAL LOOP**
+   For each task in the plan, invoke the `task-approve` operation:
+   
+   ```bash
+   echo '{
+     "inputs": {
+       "task_id": "T1",
+       "title": "Task title",
+       "description": "What this task does",
+       "acceptance_criteria": ["criterion 1", "criterion 2"],
+       "dependencies": ["T2"],
+       "files_likely_touched": ["src/file.js"]
+     }
+   }' | acts run task-approve
+   ```
+   
+   **GATE: task-approval**
+   The task-approve operation will:
+   - Display the task details
+   - Ask developer to select:
+     a. **Approve** — Task is acceptable as written
+     b. **Modify** — Minor changes needed
+     c. **Rewrite** — Major changes or complete redo
+     d. **Your own answer** — Custom response
+   
+   Parse the output JSON:
+   - If `approved: true` → proceed to next task
+   - If `approved: false`:
+     - Get explanation from `explanation` field
+     - Update the task based on feedback
+     - Re-invoke task-approve for the updated task
+     - Loop until approved
+   
+   Continue until ALL tasks are approved.
+
+7. **INIT STATE**
    Create `.story/state.json`:
    - `acts_version`: Read `manifest_version` from `.acts/acts.json`. Use that value.
    - `status`: `ANALYSIS`
    - `spec_approved`: `false`
    - `context_budget`: 50000 (default)
    - `tasks`: one entry per task, all `TODO`
+   - Each task includes: `description`, `acceptance_criteria` (array)
    - `session_count`: 0
    - `compressed`: false
    - `jira_metadata`: (only if auto-fetched from Jira in step 0)
 
-7. **PRESENT SUMMARY**
+8. **PRESENT SUMMARY**
    Show:
    - Spec summary (goal, key acceptance criteria count)
-   - Plan summary (number of tasks, dependency graph overview)
+   - Plan summary (number of tasks, dependency graph overview, all tasks approved)
    - State file initialized
 
-8. **GATE: approve**
-   Say: "Tracker initialized for <story_id>. Review the spec and plan
-   with your team before proceeding. Ready to continue? (yes/no)"
+9. **GATE: approve**
+   Say: "Tracker initialized for <story_id>. All tasks reviewed and approved.
+   Review the spec and plan with your team before proceeding. Ready to continue? (yes/no)"
    
    Wait for explicit "yes", then continue.
 
-9. **COMMIT**
-   `docs(<story_id>): initialize ACTS tracker`
+10. **COMMIT**
+    `docs(<story_id>): initialize ACTS tracker`
 
-10. **INSTRUCT**
+11. **INSTRUCT**
     Say: "Team must review and approve `spec.md` and `plan.md` before
     proceeding. Set `spec_approved: true` in state.json when ready."
 
@@ -164,3 +204,7 @@ initial state.
 - Do NOT assume approval. The team must review first.
 - Task IDs MUST follow pattern `T<n>`.
 - The plan MUST reference architecture patterns from `AGENTS.md`.
+- Each task MUST include a `description` explaining what it does.
+- Each task MUST include `acceptance_criteria` — numbered list of testable criteria.
+- Each task MUST be explicitly approved before initialization completes.
+- If Modify, Rewrite, or Custom is selected, the developer MUST provide an explanation.

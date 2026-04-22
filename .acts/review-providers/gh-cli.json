@@ -1,0 +1,39 @@
+{
+  "provider": "gh-cli",
+  "cli": "gh",
+  "install": "sudo apt install gh",
+  "min_version": "2.0.0",
+  "commands": {
+    "check": {
+      "cmd": "gh",
+      "args": ["--version"],
+      "description": "Verify GitHub CLI is installed"
+    },
+    "review": {
+      "cmd": "gh",
+      "args": ["pr", "diff"],
+      "description": "Show PR diff in terminal. Use gh pr review to approve/request changes.",
+      "behavior": "interactive_cli"
+    },
+    "serve": {
+      "cmd": "gh",
+      "args": ["pr", "view", "--web"],
+      "description": "Open PR in browser for review"
+    },
+    "status": {
+      "cmd": "gh",
+      "args": ["pr", "status", "--json", "state,reviewDecision"],
+      "description": "Get PR review status"
+    }
+  },
+  "exit_codes": {
+    "0": "success",
+    "1": "error"
+  },
+  "export_format": "json",
+  "review_status_values": [
+    "approved",
+    "changes_requested",
+    "pending"
+  ]
+}

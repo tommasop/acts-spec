@@ -37,7 +37,7 @@ This project uses [superpowers](https://github.com/obra/superpowers) for agent w
 - Agent MUST record session summary before ending
 - Agent MUST stay within assigned task boundary
 - Agent MUST get developer approval before committing
-- Agent MUST run code review before task completion (v0.6.0)
+- Agent MUST run code review before task completion (v0.6.1)
 
 ### Agent Configuration
 ```json

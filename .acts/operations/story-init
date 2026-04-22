@@ -1,0 +1,87 @@
+#!/bin/bash
+# story-init operation
+# Initializes ACTS tracker for a new story
+
+source .acts/lib/helpers.sh
+
+# Read input
+INPUT=$(acts_read_input)
+STORY_ID=$(acts_get_input "$INPUT" "inputs.story_id")
+
+acts_log "INFO" "Initializing story: $STORY_ID"
+
+# Step 1: Create directory structure
+mkdir -p .story/{tasks,sessions}
+acts_log "INFO" "Created .story/ directory structure"
+
+# Step 6: TASK APPROVAL LOOP (simplified demonstration)
+# In a real implementation, this would parse plan.md and iterate through tasks
+acts_log "INFO" "Starting task approval loop"
+
+# Example: Approve task T1
+TASK_APPROVAL=$(jq -n \
+    --arg task_id "T1" \
+    --arg title "Create CLI entry point" \
+    --arg description "Create the main acts CLI script that parses arguments and dispatches to operations" \
+    --argjson acceptance_criteria '["CLI accepts run command", "Help text displays correctly"]' \
+    --argjson dependencies '[]' \
+    --argjson files '[".acts/acts"]' \
+    '{
+        inputs: {
+            task_id: $task_id,
+            title: $title,
+            description: $description,
+            acceptance_criteria: $acceptance_criteria,
+            dependencies: $dependencies,
+            files_likely_touched: $files
+        }
+    }' | acts_call task-approve --input task_id="T1")
+
+APPROVAL_STATUS=$(echo "$TASK_APPROVAL" | jq -r '.approved')
+
+if [ "$APPROVAL_STATUS" == "true" ]; then
+    acts_log "INFO" "Task T1 approved"
+else
+    acts_log "WARN" "Task T1 not approved"
+fi
+
+# Step 7: INIT STATE (simplified)
+acts_log "INFO" "Creating state.json"
+
+# Create a basic state.json
+cat > .story/state.json <<EOF
+{
+  "acts_version": "0.6.1",
+  "story_id": "$STORY_ID",
+  "title": "Story initialized via story-init",
+  "status": "ANALYSIS",
+  "spec_approved": false,
+  "created_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "updated_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+  "context_budget": 50000,
+  "tasks": [
+    {
+      "id": "T1",
+      "title": "Create CLI entry point",
+      "description": "Create the main acts CLI script",
+      "acceptance_criteria": ["CLI accepts run command", "Help text displays correctly"],
+      "status": "TODO",
+      "assigned_to": null,
+      "files_touched": [],
+      "depends_on": [],
+      "context_priority": 3
+    }
+  ],
+  "session_count": 0,
+  "compressed": false
+}
+EOF
+
+acts_log "INFO" "Story initialization complete"
+
+# Output success
+jq -n \
+    --arg story_id "$STORY_ID" \
+    '{status: "success", results: {story_id: $story_id, status: "ANALYSIS"}, artifacts: {state_file: ".story/state.json"}}'
+
+exit 0

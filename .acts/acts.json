@@ -1,5 +1,5 @@
 {
-  "manifest_version": "0.6.0",
+  "manifest_version": "0.6.1",
   "conformance_level": "strict",
   "agent_framework": {
     "enabled": true,

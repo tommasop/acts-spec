@@ -5,3 +5,5 @@ dist/
 .story/
 .acts/mcp-server/node_modules/
 .acts/mcp-server/dist/
+__pycache__/
+*.pyc
