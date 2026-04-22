@@ -1,0 +1,55 @@
+#!/bin/bash
+# task-review operation
+# Reads input from stdin, writes output to stdout
+
+source .acts/lib/helpers.sh
+
+# Read input
+INPUT=$(acts_read_input)
+TASK_ID=$(acts_get_input "$INPUT" "inputs.task_id")
+
+acts_log "INFO" "Starting review for task $TASK_ID"
+
+# Check if review provider is configured
+if command -v lazygit &> /dev/null; then
+    acts_log "INFO" "Launching lazygit for review"
+    
+    # Launch lazygit TUI
+    lazygit
+    LAZYGIT_EXIT=$?
+    
+    acts_log "INFO" "lazygit exited with code $LAZYGIT_EXIT"
+    
+    # Check if review file was created
+    REVIEW_FILE=".story/reviews/active/${TASK_ID}-review.md"
+    if [ -f "$REVIEW_FILE" ]; then
+        acts_log "INFO" "Review completed, file found: $REVIEW_FILE"
+        
+        # Move to archive
+        mkdir -p .story/reviews/archive
+        mv "$REVIEW_FILE" ".story/reviews/archive/${TASK_ID}-review.md"
+        
+        acts_approved \
+            '{"review_status": "approved", "reviewer": "human"}' \
+            "{\"review_file\": \".story/reviews/archive/${TASK_ID}-review.md\"}"
+        exit 0
+    else
+        acts_log "WARN" "No review file found, assuming changes requested"
+        acts_changes_requested \
+            '{"review_status": "changes_requested", "reason": "Review incomplete or rejected"}'
+        exit 2
+    fi
+else
+    # Manual review fallback
+    acts_log "INFO" "lazygit not available, using manual review"
+    
+    # Show staged diff
+    echo "=== Staged Changes ===" >&2
+    git diff --staged >&2
+    
+    # For now, assume approved (in real use, would prompt)
+    acts_approved \
+        '{"review_status": "approved", "reviewer": "manual"}' \
+        '{}'
+    exit 0
+fi

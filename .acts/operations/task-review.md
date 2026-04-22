@@ -4,6 +4,21 @@ layer: 3
 required: true
 triggers: "task completion (implicit)"
 context_budget: 15000
+execution:
+  type: "cli"
+  command: "task-review"
+  timeout: 300
+inputs_schema:
+  task_id:
+    type: string
+    required: true
+    validation: "^T\\d+$"
+outputs_schema:
+  review_status:
+    type: string
+    enum: ["approved", "changes_requested"]
+  review_file:
+    type: string
 required_inputs:
   - name: task_id
     type: string
