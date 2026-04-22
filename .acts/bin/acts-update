@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# acts-update — Update ACTS framework files in-place with backup
+# acts-update — Update ACTS framework files from GitHub with backup
 # Usage:
-#   acts-update --check           Check for available updates
+#   acts-update --check           Check for available updates from GitHub
 #   acts-update --dry-run         Show what would change (diff)
-#   acts-update                   Apply update (backup + merge + apply)
+#   acts-update                   Apply update from GitHub (backup + download + apply)
 #   acts-update --force           Force update even if version matches (re-apply framework files)
 #   acts-update --restore v0.6.0  Restore from backup
 
@@ -15,6 +15,10 @@ PROJECT_ROOT="$(dirname "$ACTS_DIR")"
 ACTS_JSON="$ACTS_DIR/acts.json"
 BACKUP_DIR="$ACTS_DIR/backup"
 TEMP_DIR=""
+
+# GitHub repository info
+GITHUB_REPO="tommasop/acts-spec"
+GITHUB_RAW_URL="https://raw.githubusercontent.com/$GITHUB_REPO"
 
 # Colors
 RED='\033[0;31m'
@@ -52,15 +56,86 @@ print(data.get('manifest_version', 'unknown'))
     fi
 }
 
-get_latest_version() {
-    # Read from local spec file name as source of truth
-    local spec_file
-    spec_file=$(find "$PROJECT_ROOT" -maxdepth 1 -name "acts-v*.md" | sort -V | tail -n1)
-    if [[ -n "$spec_file" ]]; then
-        basename "$spec_file" | sed 's/acts-v\(.*\)\.md/\1/'
-    else
-        echo "unknown"
+get_latest_version_from_github() {
+    # Download the latest spec file list from GitHub
+    local temp_dir=$(mktemp -d)
+    local latest_version="unknown"
+    
+    # Try to get the latest release tag first
+    local latest_tag
+    latest_tag=$(curl -s --max-time 10 "https://api.github.com/repos/$GITHUB_REPO/releases/latest" 2>/dev/null | python3 -c "
+import json, sys
+try:
+    data = json.load(sys.stdin)
+    tag = data.get('tag_name', '').lstrip('v')
+    print(tag)
+except:
+    pass
+" 2>/dev/null)
+    
+    if [[ -n "$latest_tag" && "$latest_tag" != "null" ]]; then
+        echo "$latest_tag"
+        rm -rf "$temp_dir"
+        return
     fi
+    
+    # Fallback: try to download from main branch and detect version from spec file
+    for branch in main master; do
+        local spec_list_url="$GITHUB_RAW_URL/$branch/"
+        # Download directory listing (GitHub doesn't provide this easily, so we try common versions)
+        for version in 0.6.2 0.6.1 0.6.0 0.5.0; do
+            local spec_url="$GITHUB_RAW_URL/$branch/acts-v${version}.md"
+            if curl -s --max-time 5 --head "$spec_url" 2>/dev/null | grep -q "200 OK"; then
+                latest_version="$version"
+            fi
+        done
+        if [[ "$latest_version" != "unknown" ]]; then
+            break
+        fi
+    done
+    
+    rm -rf "$temp_dir"
+    echo "$latest_version"
+}
+
+download_latest_from_github() {
+    local target_dir="$1"
+    local downloaded_version=""
+    
+    log_info "Downloading latest ACTS from GitHub..."
+    
+    for branch in main master; do
+        local tarball_url="https://github.com/$GITHUB_REPO/archive/refs/heads/$branch.tar.gz"
+        local temp_tar=$(mktemp)
+        
+        if curl -L -s --max-time 30 "$tarball_url" -o "$temp_tar" 2>/dev/null; then
+            local extract_dir=$(mktemp -d)
+            if tar -xzf "$temp_tar" -C "$extract_dir" 2>/dev/null; then
+                local source_dir=$(ls -d "$extract_dir"/* | head -1)
+                if [[ -d "$source_dir/.acts" ]]; then
+                    # Detect version from spec file
+                    local spec_file=$(ls -1 "$source_dir"/acts-v*.md 2>/dev/null | sort -V | tail -n1)
+                    if [[ -n "$spec_file" ]]; then
+                        downloaded_version=$(basename "$spec_file" | sed 's/acts-v\(.*\)\.md/\1/')
+                        
+                        # Copy framework files to target
+                        cp -r "$source_dir/.acts" "$target_dir/acts-download"
+                        mv "$target_dir/acts-download" "$target_dir/.acts"
+                        
+                        log_ok "Downloaded ACTS v$downloaded_version from GitHub"
+                        rm -rf "$extract_dir" "$temp_tar"
+                        echo "$downloaded_version"
+                        return 0
+                    fi
+                fi
+            fi
+            rm -rf "$extract_dir"
+        fi
+        rm -f "$temp_tar"
+    done
+    
+    log_error "Failed to download ACTS from GitHub"
+    return 1
 }
 
 version_compare() {
@@ -84,7 +159,8 @@ version_compare() {
 cmd_check() {
     local current latest
     current=$(get_current_version)
-    latest=$(get_latest_version)
+    log_info "Checking GitHub for latest version..."
+    latest=$(get_latest_version_from_github)
     
     log_bold "ACTS Update Check"
     echo "  Current version: $current"
@@ -92,7 +168,7 @@ cmd_check() {
     echo ""
     
     if [[ "$latest" == "unknown" ]]; then
-        log_error "Could not determine latest version (no acts-v*.md found)"
+        log_error "Could not determine latest version from GitHub"
         exit 1
     fi
     
@@ -107,7 +183,13 @@ cmd_check() {
 cmd_dry_run() {
     local current latest
     current=$(get_current_version)
-    latest=$(get_latest_version)
+    log_info "Checking GitHub for latest version..."
+    latest=$(get_latest_version_from_github)
+    
+    if [[ "$latest" == "unknown" ]]; then
+        log_error "Could not determine latest version from GitHub"
+        exit 1
+    fi
     
     log_bold "ACTS Update Dry Run (v$current → v$latest)"
     echo ""
@@ -120,7 +202,7 @@ cmd_dry_run() {
         "code-review-interface.json"
     )
     
-    log_info "Files that would be updated:"
+    log_info "Files that would be updated from GitHub:"
     for item in "${framework_files[@]}"; do
         local target="$ACTS_DIR/$item"
         if [[ -d "$target" ]]; then
@@ -149,10 +231,22 @@ cmd_dry_run() {
 cmd_update() {
     local current latest force="$1"
     current=$(get_current_version)
-    latest=$(get_latest_version)
+    
+    log_info "Fetching latest version from GitHub..."
+    
+    # Create temp dir for downloading
+    TEMP_DIR=$(mktemp -d)
+    
+    # Download latest from GitHub
+    if ! latest=$(download_latest_from_github "$TEMP_DIR"); then
+        log_error "Failed to download latest ACTS from GitHub"
+        exit 1
+    fi
+    
+    local DOWNLOADED_ACTS="$TEMP_DIR/.acts"
     
     if [[ "$latest" == "unknown" ]]; then
-        log_error "Could not determine latest version (no acts-v*.md found)"
+        log_error "Could not determine latest version from GitHub"
         exit 1
     fi
     
@@ -162,7 +256,7 @@ cmd_update() {
     fi
     
     if [[ "$force" == "true" ]]; then
-        log_bold "ACTS Force Update (re-apply v$current framework files)"
+        log_bold "ACTS Force Update (re-apply v$current framework files from GitHub)"
     else
         log_bold "ACTS Update (v$current → v$latest)"
     fi
@@ -172,7 +266,7 @@ cmd_update() {
     if [[ "${ACTS_UPDATE_YES:-}" != "true" ]]; then
         log_info "This will:"
         echo "  1. Backup current framework files to .acts/backup/v$current/"
-        echo "  2. Update .acts/operations/, .acts/schemas/, .acts/report-protocol.md"
+        echo "  2. Download and update .acts/operations/, .acts/schemas/, .acts/report-protocol.md from GitHub"
         echo "  3. Merge .acts/acts.json (preserve project config, add new fields)"
         echo "  4. Create a git commit"
         echo ""
@@ -212,7 +306,25 @@ cmd_update() {
 EOF
     log_ok "Backup created: .acts/backup/v$current/"
     
-    # Step 3: Update acts.json
+    # Step 3: Download and update framework files from GitHub
+    log_info "Downloading and updating framework files from GitHub..."
+    
+    # Update framework files from downloaded copy
+    for item in operations schemas report-protocol.md code-review-interface.json; do
+        local src="$DOWNLOADED_ACTS/$item"
+        local dst="$ACTS_DIR/$item"
+        if [[ -d "$src" ]]; then
+            rm -rf "$dst"
+            cp -r "$src" "$dst"
+            local count=$(find "$dst" -type f | wc -l)
+            log_ok "Updated .acts/$item/ ($count files)"
+        elif [[ -f "$src" ]]; then
+            cp "$src" "$dst"
+            log_ok "Updated .acts/$item"
+        fi
+    done
+    
+    # Step 4: Update acts.json version
     log_info "Updating .acts/acts.json..."
     python3 -c "
 import json
@@ -224,12 +336,6 @@ with open('$ACTS_JSON', 'w') as f:
     f.write('\n')
 "
     log_ok "Updated manifest_version to $latest"
-    
-    # Step 4: Update framework files (they're already in place from this repo)
-    # The framework files in .acts/ are the canonical versions
-    # No need to copy — they're already current
-    
-    log_ok "Framework files: already up to date (v$latest)"
     
     # Step 5: Validate
     log_info "Validating..."
@@ -337,9 +443,9 @@ usage() {
 ACTS Update Tool
 
 Usage:
-  acts-update --check           Check for available updates
+  acts-update --check           Check for available updates from GitHub
   acts-update --dry-run         Show what would change
-  acts-update                   Apply update (backup + merge + apply)
+  acts-update                   Apply update from GitHub (backup + download + apply)
   acts-update --force           Force update (re-apply framework files even if version matches)
   acts-update --restore v0.6.0  Restore from backup
   acts-update --yes             Auto-confirm (for CI/scripts)
@@ -352,6 +458,7 @@ EOF
 
 main() {
     local action="update" force="false"
+    local restore_version=""
     
     while [[ $# -gt 0 ]]; do
         case "$1" in

@@ -8,7 +8,7 @@ set -euo pipefail
 #   curl -sL https://raw.githubusercontent.com/tommasop/acts-spec/main/scripts/install-acts.sh | bash
 #
 # This script handles both fresh repositories and existing codebases.
-# It downloads ACTS from GitHub and sets up:
+# It downloads the LATEST ACTS from GitHub and sets up:
 #   - .acts/ directory (operations, schemas, bin tools, etc.)
 #   - .story/ directory structure
 #   - AGENTS.md (creates or appends)
@@ -44,18 +44,26 @@ cd "$REPO_ROOT"
 
 log_info "Installing ACTS protocol in $(basename "$REPO_ROOT")..."
 
-# Determine ACTS source - download from GitHub or use local files
-# First, try downloading from GitHub (try both main and master branches)
-log_info "Downloading ACTS from GitHub..."
+# Always download the LATEST ACTS from GitHub
+log_info "Downloading latest ACTS from GitHub..."
 ACTS_DOWNLOADED=false
 
 for branch in main master; do
   ACTS_TARBALL_URL="https://github.com/tommasop/acts-spec/archive/refs/heads/$branch.tar.gz"
-  if curl -L -s "$ACTS_TARBALL_URL" -o "$TEMP_DIR/acts-spec.tar.gz"; then
+  log_info "Attempting to download from branch: $branch"
+  
+  if curl -L -s --max-time 30 "$ACTS_TARBALL_URL" -o "$TEMP_DIR/acts-spec.tar.gz"; then
     if tar -xzf "$TEMP_DIR/acts-spec.tar.gz" -C "$TEMP_DIR" 2>/dev/null; then
       ACTS_SOURCE=$(ls -d "$TEMP_DIR"/acts-spec-* | head -1)
       if [ -d "$ACTS_SOURCE/.acts" ]; then
-        log_info "Downloaded ACTS from GitHub (branch: $branch)"
+        # Detect the latest version from the downloaded spec file
+        LATEST_SPEC=$(ls -1 "$ACTS_SOURCE"/acts-v*.md 2>/dev/null | sort -V | tail -n1)
+        if [ -n "$LATEST_SPEC" ]; then
+          LATEST_VERSION=$(basename "$LATEST_SPEC" | sed 's/acts-v\(.*\)\.md/\1/')
+          log_info "Downloaded ACTS v$LATEST_VERSION from GitHub (branch: $branch)"
+        else
+          log_info "Downloaded ACTS from GitHub (branch: $branch)"
+        fi
         ACTS_DOWNLOADED=true
         break
       fi
@@ -63,17 +71,13 @@ for branch in main master; do
   fi
 done
 
-# If download failed, check if we have local files (we might be in acts-spec repo)
+# If download failed, exit with error
 if [ "$ACTS_DOWNLOADED" != true ]; then
-  if [ -f "acts-v0.6.0.md" ] && [ -d ".acts" ]; then
-    log_info "Using local ACTS files from current repository"
-    ACTS_SOURCE="$REPO_ROOT"
-  else
-    log_error "Could not find ACTS files. Please ensure:"
-    echo "  - You have an internet connection, OR"
-    echo "  - You're running this from the acts-spec repository with .acts/ directory"
-    exit 1
-  fi
+  log_error "Could not download ACTS from GitHub. Please ensure:"
+  echo "  - You have an internet connection"
+  echo "  - GitHub is accessible"
+  echo "  - The acts-spec repository exists"
+  exit 1
 fi
 
 # Handle .acts directory
@@ -149,7 +153,10 @@ else
 EOF
 fi
 
-log_info "ACTS installation completed!"
+# Get the installed version for display
+INSTALLED_VERSION=${LATEST_VERSION:-"latest"}
+
+log_info "ACTS v$INSTALLED_VERSION installation completed!"
 echo
 echo "Next steps:"
 echo "  1. Review AGENTS.md and customize for your project"
@@ -159,12 +166,11 @@ echo "  3. Or discover what to build: 'story-discover' (blank slate → draft sp
 echo "  4. Follow the ACTS workflow: preflight → task-start → session-summary → handoff"
 echo
 echo "Tools installed:"
-echo "  - .acts/bin/acts-update  (update ACTS framework)"
+echo "  - .acts/bin/acts-update  (update ACTS framework to latest)"
 echo "  - .acts/bin/acts-validate (validate conformance)"
 echo
 echo "Documentation:"
-echo "  - acts-v0.6.0.md (full specification)"
+echo "  - acts-v$INSTALLED_VERSION.md (full specification)"
 echo "  - docs/minimal-viable-acts.md (quick start)"
 echo "  - docs/updating-acts.md (how to update)"
 echo "  - .acts/operations/ (workflow definitions)"
-
