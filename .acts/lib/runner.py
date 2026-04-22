@@ -131,7 +131,7 @@ class OperationRunner:
         # Prepare environment
         env = os.environ.copy()
         env['ACTS_OPERATION_ID'] = input_data['operation_id']
-        env['ACTS_CALLER'] = input_data.get('caller', '')
+        env['ACTS_CALLER'] = input_data.get('caller', '') or ''
 
         # Run operation
         proc = subprocess.Popen(

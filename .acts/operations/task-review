@@ -29,14 +29,15 @@ if command -v lazygit &> /dev/null; then
         mkdir -p .story/reviews/archive
         mv "$REVIEW_FILE" ".story/reviews/archive/${TASK_ID}-review.md"
         
-        acts_approved \
-            '{"review_status": "approved", "reviewer": "human"}' \
-            "{\"review_file\": \".story/reviews/archive/${TASK_ID}-review.md\"}"
+        # Output approved JSON
+        jq -n \
+            --arg review_file ".story/reviews/archive/${TASK_ID}-review.md" \
+            '{status: "approved", results: {review_status: "approved", reviewer: "human"}, artifacts: {review_file: $review_file}}'
         exit 0
     else
         acts_log "WARN" "No review file found, assuming changes requested"
-        acts_changes_requested \
-            '{"review_status": "changes_requested", "reason": "Review incomplete or rejected"}'
+        jq -n \
+            '{status: "changes_requested", results: {review_status: "changes_requested", reason: "Review incomplete or rejected"}, artifacts: {}}'
         exit 2
     fi
 else
@@ -48,8 +49,7 @@ else
     git diff --staged >&2
     
     # For now, assume approved (in real use, would prompt)
-    acts_approved \
-        '{"review_status": "approved", "reviewer": "manual"}' \
-        '{}'
+    jq -n \
+        '{status: "approved", results: {review_status: "approved", reviewer: "manual"}, artifacts: {}}'
     exit 0
 fi

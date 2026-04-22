@@ -97,7 +97,9 @@ acts_call() {
         '{operation_id: $op, caller: $caller, inputs: $inputs}')
     
     # Call operation and return output
-    echo "$invocation" | acts run "$operation_id" --parent-operation "${ACTS_OPERATION_ID:-}"
+    # Find acts CLI relative to this script
+    ACTS_CLI="$(dirname "$(dirname "${BASH_SOURCE[0]}")")/acts"
+    echo "$invocation" | "$ACTS_CLI" run "$operation_id" --parent-operation "${ACTS_OPERATION_ID:-}"
 }
 
 # Log to stderr

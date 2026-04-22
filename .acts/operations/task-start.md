@@ -4,6 +4,28 @@ layer: 3
 required: false
 triggers: "none"
 context_budget: 20000
+execution:
+  type: "cli"
+  command: "task-start"
+  timeout: 600
+inputs_schema:
+  task_id:
+    type: string
+    required: true
+    validation: "^T\\d+$"
+  action:
+    type: string
+    enum: ["start", "complete"]
+    default: "start"
+outputs_schema:
+  task_id:
+    type: string
+  status:
+    type: string
+    enum: ["IN_PROGRESS", "DONE"]
+  review_status:
+    type: string
+    enum: ["approved", "changes_requested"]
 required_inputs:
   - name: task_id
     type: string
@@ -138,17 +160,15 @@ constitution, and TDD principles.
 
 11. **TASK-REVIEW GATE (HARD STOP)**
     If `code_review.enabled` is true in `.acts/acts.json`:
-    a. Run `task-review` operation (see `.acts/operations/task-review.md`)
-    b. Present Code Review report per .acts/report-protocol.md
-    c. If review provider (e.g., lazygit) is available:
-       - Launch review tool (TUI) and wait for developer to complete review
-       - Capture review output (structured Markdown)
-       - If `changes_requested`: address feedback, then loop back to step 10
-       - Export review to `.story/reviews/active/`
-    d. If review provider is NOT available:
-       - Show all staged changes as a diff
-       - Agent MUST stop and wait for explicit manual approval
-    e. **GATE: task-review** — Wait for review approval before proceeding to step 12
+    a. Invoke task-review operation:
+       ```bash
+       echo '{"inputs": {"task_id": "T1"}}' | acts run task-review
+       ```
+    b. Parse output JSON for status field
+    c. If status == "approved": proceed to step 12
+    d. If status == "changes_requested":
+       - Address feedback
+       - Loop back to step 10
 
     If `code_review.enabled` is false:
     - Log: "Code review disabled — skipping task-review gate"
