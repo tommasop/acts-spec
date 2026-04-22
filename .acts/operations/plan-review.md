@@ -63,24 +63,37 @@ Jira subtasks for each ACTS task under the parent story.
 
    Include the dependency graph as a visual summary.
 
-4. **GATE: approve**
-   Say: "Review the task breakdown above. You can:
-   - approve — accept as-is
-   - add — add a new task
-   - remove — remove a task
-   - modify — change title, deps, or priority of a task
-   What would you like to do?"
+4. **INVOKE PLAN-APPROVE**
+   Call the plan-approve operation:
+   ```bash
+   echo '{
+     "inputs": {
+       "story_id": "<STORY_ID>",
+       "tasks": [<array of task objects>],
+       "dependency_graph": "<graph visualization>"
+     }
+   }' | acts run plan-approve
+   ```
 
-   Wait for input.
+   **GATE: approve**
+   The plan-approve operation will:
+   - Display the task table
+   - Ask developer to select: approve / add / remove / modify
+   - Return JSON with `approved` and `action` fields
 
-5. **HANDLE MODIFICATIONS** (loop until approved)
-   If the developer requests changes:
-   a. Apply the modification to `.story/plan.md` and `.story/state.json`.
-      - **Add:** create new task entry in both files, assign next T<n> ID.
-      - **Remove:** delete from both files, update dependency references.
-      - **Modify:** update the relevant fields in both files.
-   b. Re-present the updated task table.
-   c. Return to step 3 gate.
+   Parse the output:
+   - If `approved: true` → proceed to step 5
+   - If `action` is add/remove/modify:
+     a. Apply the modification to `.story/plan.md` and `.story/state.json`.
+     b. Re-invoke plan-approve with updated tasks
+     c. Loop until approved
+
+5. **HANDLE MODIFICATIONS** (called by plan-approve loop)
+   If modifications requested:
+   - **Add:** create new task entry, assign next T<n> ID
+   - **Remove:** delete from both files, update dependency references
+   - **Modify:** update relevant fields in both files
+   - Re-invoke plan-approve
 
 6. **OFFER JIRA SUBTASK CREATION**
    If `jira_integration.enabled` is true in `.acts/acts.json`
