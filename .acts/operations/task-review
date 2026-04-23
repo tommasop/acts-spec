@@ -35,6 +35,22 @@ print(data.get('review_provider', 'auto'))
     fi
 fi
 
+echo ""
+echo "══════════════════════════════════════════════════════════════════════════════════════════════════════════════════" >&2
+echo "🔒 CODE REVIEW GATE REACHED FOR TASK: $TASK_ID" >&2
+echo "══════════════════════════════════════════════════════════════════════════════════════════════════════════════════" >&2
+echo "" >&2
+echo "⚠️  THE AGENT HAS REACHED THE MANDATORY CODE REVIEW GATE" >&2
+echo "" >&2
+echo "    Review Provider: $REVIEW_PROVIDER" >&2
+echo "    Review Mode: $REVIEW_MODE" >&2
+echo "" >&2
+echo "    The agent CANNOT proceed without your explicit approval." >&2
+echo "    This is a HARD GATE - the task cannot be marked DONE without review." >&2
+echo "" >&2
+echo "══════════════════════════════════════════════════════════════════════════════════════════════════════════════════" >&2
+echo "" >&2
+
 acts_log "INFO" "Starting review for task $TASK_ID (provider: $REVIEW_PROVIDER, mode: $REVIEW_MODE)"
 
 # Function to check if we're in an interactive terminal
@@ -370,164 +386,177 @@ run_githuman_review() {
     acts_log "INFO" "Launching GitHuman for code review..."
     
     local githuman_port=3847
-    local githuman_timeout=300
-    local review_export_file=".story/reviews/active/${TASK_ID}-githuman.json"
+    local server_pid=""
+    local review_export_file=".story/reviews/active/${TASK_ID}-githuman-export.md"
     
     # Create review directory
     mkdir -p .story/reviews/active
     
-    # Check if githuman server is already running
-    local server_pid=""
-    if curl -s "http://localhost:$githuman_port/health" > /dev/null 2>&1; then
-        acts_log "INFO" "GitHuman server already running on port $githuman_port"
-    else
-        acts_log "INFO" "Starting GitHuman server on port $githuman_port..."
-        
-        # Start githuman server in background
-        githuman serve --port "$githuman_port" --no-open &
-        server_pid=$!
-        
-        # Wait for server to be ready
-        local attempts=0
-        local max_attempts=30
-        while (( attempts < max_attempts )); do
-            if curl -s "http://localhost:$githuman_port/health" > /dev/null 2>&1; then
-                acts_log "INFO" "GitHuman server ready"
-                break
-            fi
-            sleep 1
-            ((attempts++))
-        done
-        
-        if (( attempts >= max_attempts )); then
-            acts_log "ERROR" "GitHuman server failed to start"
-            [[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null
-            return 1
+    # Start githuman server
+    acts_log "INFO" "Starting GitHuman server on port $githuman_port..."
+    
+    githuman serve --port "$githuman_port" --no-open &
+    server_pid=$!
+    
+    # Wait for server to be ready
+    local attempts=0
+    local max_attempts=30
+    while (( attempts < max_attempts )); do
+        if curl -s "http://localhost:$githuman_port/health" > /dev/null 2>&1; then
+            acts_log "INFO" "GitHuman server ready"
+            break
         fi
+        sleep 1
+        ((attempts++))
+    done
+    
+    if (( attempts >= max_attempts )); then
+        acts_log "ERROR" "GitHuman server failed to start"
+        [[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null
+        return 1
     fi
     
-    # Create pre-review artifact
-    create_review_artifact "in_progress" "GitHuman" "Review in progress via GitHuman" "githuman"
+    # STEP 2: Show developer how to reach GitHuman and present menu
+    echo "" >&2
+    echo "═══════════════════════════════════════════════════════════════════" >&2
+    echo "🌐 GITHUMAN CODE REVIEW READY" >&2
+    echo "═══════════════════════════════════════════════════════════════════" >&2
+    echo "" >&2
+    echo "GitHuman is now running and ready for your review:" >&2
+    echo "" >&2
+    echo "  📍 URL: http://127.0.0.1:$githuman_port" >&2
+    echo "  🔧 Server PID: $server_pid" >&2
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+    echo "📋 INSTRUCTIONS:" >&2
+    echo "" >&2
+    echo "  1. Open your browser to: http://127.0.0.1:$githuman_port" >&2
+    echo "  2. Review the staged changes in GitHuman" >&2
+    echo "  3. Close/submit your review in the GitHuman interface" >&2
+    echo "  4. Return here and select an option from the menu below" >&2
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
     
-    if is_interactive_terminal; then
-        # Interactive mode - tell user to open browser
+    # STEP 5: Wait for developer to select menu option
+    local review_completed=false
+    local approval_status=""
+    
+    while [[ "$review_completed" == "false" ]]; do
         echo "" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
-        echo "🌐 GitHuman Review Started" >&2
-        echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+        echo "🔍 REVIEW MENU - Select an option:" >&2
         echo "" >&2
-        echo "GitHuman server is running at: http://localhost:$githuman_port" >&2
-        echo "" >&2
-        echo "Please open your browser and review the staged changes." >&2
+        echo "  [1] ✅ Approved - Changes look good, ready to merge" >&2
+        echo "  [2] 📝 Changes Requested - Need modifications before approval" >&2
+        echo "  [3] ❌ Cancel - Abort review, keep task in progress" >&2
         echo "" >&2
         
-        # Wait for user to complete review
-        while true; do
-            read -p "Have you completed the review in GitHuman? (yes/no/cancel) " -r response >&2
-            case "$response" in
-                yes|y|Y|approved)
-                    break
-                    ;;
-                cancel|skip)
-                    acts_log "INFO" "Review cancelled by user"
-                    [[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null
-                    jq -n \
-                        '{status: "cancelled", results: {review_status: "cancelled"}, artifacts: {}}'
-                    return 1
-                    ;;
-                *)
-                    echo "Please enter 'yes' when review is complete or 'cancel' to abort" >&2
-                    ;;
-            esac
-        done
-        
-        # Try to export review from githuman
-        if githuman export last --output "$review_export_file" 2>/dev/null; then
-            acts_log "INFO" "GitHuman review exported to $review_export_file"
-        else
-            acts_log "WARN" "Could not export GitHuman review automatically"
+        local menu_choice
+        if ! read_with_fallback "Enter your choice (1/2/3): " menu_choice; then
+            echo "⚠️  Failed to read input, please try again" >&2
+            continue
         fi
         
-        # Ask for approval status
-        while true; do
-            read -p "Was the review approved? (yes/no) " -r response >&2
-            case "$response" in
-                yes|y|Y|approved)
-                    REVIEW_FILE=$(create_review_artifact "approved" "human via GitHuman" "Reviewed via GitHuman web interface" "githuman")
-                    ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
-                    
-                    [[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null
-                    
-                    acts_log "INFO" "Review approved, artifact archived: $ARCHIVED_FILE"
-                    
-                    jq -n \
-                        --arg review_file "$ARCHIVED_FILE" \
-                        '{status: "approved", results: {review_status: "approved", reviewer: "human via GitHuman"}, artifacts: {review_file: $review_file}}'
-                    return 0
-                    ;;
-                no|n|N|changes)
-                    read -p "Enter review comments: " -r comments >&2
-                    REVIEW_FILE=$(create_review_artifact "changes_requested" "human via GitHuman" "$comments" "githuman")
-                    ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
-                    
-                    [[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null
-                    
-                    acts_log "INFO" "Changes requested, artifact archived: $ARCHIVED_FILE"
-                    
-                    jq -n \
-                        --arg review_file "$ARCHIVED_FILE" \
-                        --arg comments "$comments" \
-                        '{status: "changes_requested", results: {review_status: "changes_requested", reason: "Review changes requested", comments: $comments}, artifacts: {review_file: $review_file}}'
-                    return 2
-                    ;;
-                *)
-                    echo "Please enter 'yes' or 'no'" >&2
-                    ;;
-            esac
-        done
+        # Normalize input
+        menu_choice=$(echo "$menu_choice" | tr '[:upper:]' '[:lower:]' | xargs)
         
+        case "$menu_choice" in
+            1|approved|approve|yes|y)
+                approval_status="approved"
+                review_completed=true
+                ;;
+            2|changes|change|no|n)
+                approval_status="changes_requested"
+                review_completed=true
+                ;;
+            3|cancel|abort|stop|c)
+                echo "" >&2
+                echo "❌ Review cancelled by user. Task remains IN_PROGRESS." >&2
+                [[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null
+                acts_log "INFO" "Review cancelled by user"
+                jq -n \
+                    '{status: "cancelled", results: {review_status: "cancelled", reason: "Review cancelled by user"}, artifacts: {}}'
+                return 1
+                ;;
+            *)
+                echo "" >&2
+                echo "⚠️  Invalid choice. Please enter 1, 2, or 3" >&2
+                ;;
+        esac
+    done
+    
+    # STEP 6: Export the GitHuman review to MD file
+    echo "" >&2
+    echo "📤 Exporting GitHuman review..." >&2
+    
+    if githuman export last --output "$review_export_file" 2>/dev/null; then
+        acts_log "INFO" "GitHuman review exported to $review_export_file"
+        echo "  ✓ Review exported to: $review_export_file" >&2
     else
-        # Non-interactive mode - generate review prompt
-        acts_log "INFO" "Non-interactive environment detected"
-        acts_log "INFO" "GitHuman server started at http://localhost:$githuman_port"
+        acts_log "WARN" "Could not export GitHuman review automatically"
+        echo "  ⚠️  Could not auto-export review (this is OK, continuing...)" >&2
+    fi
+    
+    # STEP 7: Kill the GitHuman instance
+    echo "" >&2
+    echo "🛑 Stopping GitHuman server (PID: $server_pid)..." >&2
+    [[ -n "$server_pid" ]] && kill "$server_pid" 2>/dev/null
+    sleep 1
+    
+    # Verify server stopped
+    if curl -s "http://localhost:$githuman_port/health" > /dev/null 2>&1; then
+        acts_log "WARN" "GitHuman server still running, force killing..."
+        [[ -n "$server_pid" ]] && kill -9 "$server_pid" 2>/dev/null
+    fi
+    echo "  ✓ GitHuman server stopped" >&2
+    
+    # STEP 8: Read review file and act accordingly
+    if [[ "$approval_status" == "approved" ]]; then
+        echo "" >&2
+        echo "✅ Review APPROVED - Proceeding with task completion..." >&2
         
-        REVIEW_PROMPT=".story/reviews/active/${TASK_ID}-review-prompt.md"
+        REVIEW_FILE=$(create_review_artifact "approved" "human via GitHuman" "Reviewed via GitHuman web interface" "githuman")
+        ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
         
-        cat > "$REVIEW_PROMPT" << EOF
-┌─────────────────────────────────────────────────────────────────┐
-│  GITHUMAN REVIEW REQUIRED                                       │
-├─────────────────────────────────────────────────────────────────┤
-│                                                                 │
-│  GitHuman server is running at:                                 │
-│  http://localhost:$githuman_port                                │
-│                                                                 │
-│  TO COMPLETE THE REVIEW:                                        │
-│                                                                 │
-│  1. Open your browser to the URL above                         │
-│  2. Review the staged changes in GitHuman                      │
-│  3. After reviewing, return here and respond with:              │
-│                                                                 │
-│     - "approved"  → if the changes look good                   │
-│     - "changes"   → list specific changes needed               │
-│                                                                 │
-│  Server PID: $server_pid                                       │
-│  To stop server: kill $server_pid                              │
-│                                                                 │
-└─────────────────────────────────────────────────────────────────┘
-
-EOF
-        
-        # Append changes summary
-        generate_summary_view >> "$REVIEW_PROMPT"
-        
-        acts_log "INFO" "Review prompt saved to: $REVIEW_PROMPT"
+        acts_log "INFO" "Review approved, artifact archived: $ARCHIVED_FILE"
         
         jq -n \
-            --arg prompt_file "$REVIEW_PROMPT" \
-            --arg port "$githuman_port" \
-            --arg pid "$server_pid" \
-            '{status: "manual_review_required", results: {review_status: "pending", reason: "GitHuman review required - non-interactive environment", port: $port, pid: $pid}, artifacts: {prompt_file: $prompt_file}}'
-        return 3
+            --arg review_file "$ARCHIVED_FILE" \
+            --arg githuman_export "$review_export_file" \
+            '{status: "approved", results: {review_status: "approved", reviewer: "human via GitHuman"}, artifacts: {review_file: $review_file, githuman_export: $githuman_export}}'
+        return 0
+        
+    elif [[ "$approval_status" == "changes_requested" ]]; then
+        echo "" >&2
+        echo "📝 Changes requested. Please provide details:" >&2
+        
+        local comments
+        if ! read_with_fallback "Describe what changes are needed: " comments; then
+            comments="Changes requested via GitHuman review"
+        fi
+        
+        REVIEW_FILE=$(create_review_artifact "changes_requested" "human via GitHuman" "$comments" "githuman")
+        ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
+        
+        echo "" >&2
+        echo "📝 Changes requested recorded. Task remains IN_PROGRESS." >&2
+        echo "   Please address the feedback and run task-review again when ready." >&2
+        echo "" >&2
+        echo "   Next steps:" >&2
+        echo "   1. Make the requested changes" >&2
+        echo "   2. Stage the changes: git add ." >&2
+        echo "   3. Run review again: acts run task-review --input task_id=$TASK_ID" >&2
+        
+        acts_log "INFO" "Changes requested, artifact archived: $ARCHIVED_FILE"
+        
+        # STEP 9: Return status that will trigger a loop back
+        jq -n \
+            --arg review_file "$ARCHIVED_FILE" \
+            --arg comments "$comments" \
+            --arg githuman_export "$review_export_file" \
+            '{status: "changes_requested", results: {review_status: "changes_requested", reason: "Review changes requested", comments: $comments}, artifacts: {review_file: $review_file, githuman_export: $githuman_export}}'
+        return 2
     fi
 }
 
@@ -535,29 +564,46 @@ EOF
 run_lazygit_review() {
     acts_log "INFO" "Launching lazygit for code review..."
     
-    if ! is_interactive_terminal; then
-        acts_log "WARN" "lazygit requires interactive terminal"
-        return 1
-    fi
-    
     # Create pre-review artifact
     create_review_artifact "in_progress" "lazygit" "Review in progress via lazygit" "lazygit"
     
-    # Launch lazygit
-    lazygit status
-    local exit_code=$?
-    
-    acts_log "INFO" "lazygit exited with code $exit_code"
-    
-    # After lazygit exits, prompt for review result
     echo "" >&2
-    echo "=== Lazygit Review Complete ===" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "🔧 Lazygit Review Started" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+    
+    if is_interactive_terminal; then
+        # Launch lazygit in interactive mode
+        lazygit status
+        local exit_code=$?
+        acts_log "INFO" "lazygit exited with code $exit_code"
+    else
+        acts_log "INFO" "Running lazygit in non-interactive mode (displaying changes)"
+        # Just show the status since we can't run the TUI
+        git diff --staged --stat >&2
+    fi
+    
+    # ALWAYS wait for approval - this is a HARD GATE
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "🔒 REVIEW GATE ACTIVE - WAITING FOR APPROVAL" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+    echo "⚠️  AGENT MUST STOP HERE AND WAIT FOR EXPLICIT APPROVAL" >&2
     echo "" >&2
     
     while true; do
-        read -p "Was the review approved? (yes/no) " -r response >&2
+        echo "" >&2
+        read -p "Enter your review decision (approved/changes/cancel): " -r response < /dev/tty >&2
+        
+        # Normalize response
+        response=$(echo "$response" | tr '[:upper:]' '[:lower:]' | xargs)
+        
         case "$response" in
-            yes|y|Y|approved)
+            approved|approve|yes|y)
+                echo "" >&2
+                echo "✅ Review APPROVED - Proceeding with task completion..." >&2
                 REVIEW_FILE=$(create_review_artifact "approved" "human via lazygit" "Reviewed via lazygit TUI" "lazygit")
                 ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
                 
@@ -568,10 +614,17 @@ run_lazygit_review() {
                     '{status: "approved", results: {review_status: "approved", reviewer: "human via lazygit"}, artifacts: {review_file: $review_file}}'
                 return 0
                 ;;
-            no|n|N|changes)
-                read -p "Enter review comments: " -r comments >&2
+            changes|change|no|n|request)
+                echo "" >&2
+                echo "📝 Changes requested. Please provide your comments:" >&2
+                read -p "Review comments (describe what needs to change): " -r comments < /dev/tty >&2
+                
                 REVIEW_FILE=$(create_review_artifact "changes_requested" "human via lazygit" "$comments" "lazygit")
                 ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
+                
+                echo "" >&2
+                echo "📝 Changes requested recorded. Task remains IN_PROGRESS." >&2
+                echo "   Address the feedback and run task-review again when ready." >&2
                 
                 acts_log "INFO" "Changes requested, artifact archived: $ARCHIVED_FILE"
                 
@@ -581,11 +634,54 @@ run_lazygit_review() {
                     '{status: "changes_requested", results: {review_status: "changes_requested", reason: "Review changes requested", comments: $comments}, artifacts: {review_file: $review_file}}'
                 return 2
                 ;;
+            cancel|abort|stop)
+                echo "" >&2
+                echo "❌ Review cancelled by user. Task remains IN_PROGRESS." >&2
+                acts_log "INFO" "Review cancelled by user"
+                jq -n \
+                    '{status: "cancelled", results: {review_status: "cancelled", reason: "Review cancelled by user"}, artifacts: {}}'
+                return 1
+                ;;
             *)
-                echo "Please enter 'yes' or 'no'" >&2
+                echo "" >&2
+                echo "⚠️  Invalid response. Please enter one of:" >&2
+                echo "   - 'approved'  → if changes look good" >&2
+                echo "   - 'changes'   → to request modifications" >&2
+                echo "   - 'cancel'    → to abort the review" >&2
                 ;;
         esac
     done
+}
+
+# Function to check if we can read interactively
+can_read_interactively() {
+    # Check if /dev/tty exists and is readable
+    if [[ -r /dev/tty ]]; then
+        return 0
+    fi
+    # Check if stdin is a terminal
+    if [[ -t 0 ]]; then
+        return 0
+    fi
+    return 1
+}
+
+# Function to read with fallback
+read_with_fallback() {
+    local prompt="$1"
+    local var_name="$2"
+    
+    if [[ -r /dev/tty ]]; then
+        # Try /dev/tty first (for proper interactive input)
+        read -rp "$prompt" "$var_name" < /dev/tty
+    elif [[ -t 0 ]]; then
+        # Fall back to stdin if it's a terminal
+        read -rp "$prompt" "$var_name"
+    else
+        # No interactive input available - this shouldn't happen if we're blocking
+        # But handle it gracefully by returning empty
+        return 1
+    fi
 }
 
 # Function to run manual review fallback
@@ -599,59 +695,195 @@ run_manual_review() {
         generate_summary_view >&2
     fi
     
-    if is_interactive_terminal; then
-        # Interactive - ask for approval
-        while true; do
-            read -p "Was the review approved? (yes/no) " -r response >&2
-            case "$response" in
-                yes|y|Y|approved)
-                    REVIEW_FILE=$(create_review_artifact "approved" "human (manual review)" "Reviewed via manual diff inspection" "manual")
-                    ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
-                    
-                    acts_log "INFO" "Review approved, artifact archived: $ARCHIVED_FILE"
-                    
-                    jq -n \
-                        --arg review_file "$ARCHIVED_FILE" \
-                        '{status: "approved", results: {review_status: "approved", reviewer: "human"}, artifacts: {review_file: $review_file}}'
-                    return 0
-                    ;;
-                no|n|N|changes)
-                    read -p "Enter review comments: " -r comments >&2
-                    REVIEW_FILE=$(create_review_artifact "changes_requested" "human (manual review)" "$comments" "manual")
-                    ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
-                    
-                    acts_log "INFO" "Changes requested, artifact archived: $ARCHIVED_FILE"
-                    
-                    jq -n \
-                        --arg review_file "$ARCHIVED_FILE" \
-                        --arg comments "$comments" \
-                        '{status: "changes_requested", results: {review_status: "changes_requested", reason: "Review changes requested", comments: $comments}, artifacts: {review_file: $review_file}}'
-                    return 2
-                    ;;
-                *)
-                    echo "Please enter 'yes' or 'no'" >&2
-                    ;;
-            esac
-        done
-    else
-        # Non-interactive
-        REVIEW_PROMPT=".story/reviews/active/${TASK_ID}-review-prompt.md"
-        mkdir -p .story/reviews/active
+    # ALWAYS wait for approval - this is a HARD GATE
+    # Even in non-interactive mode, we block and wait for user input
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "🔒 REVIEW GATE ACTIVE - WAITING FOR APPROVAL" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+    echo "⚠️  AGENT MUST STOP HERE AND WAIT FOR EXPLICIT APPROVAL" >&2
+    echo "" >&2
+    echo "This is a HARD GATE. The agent cannot proceed without your review." >&2
+    echo "" >&2
+    
+    # Check if we can read interactively
+    if ! can_read_interactively; then
+        echo "⚠️  WARNING: No interactive terminal available (/dev/tty not found)" >&2
+        echo "" >&2
+        echo "Creating approval file mechanism..." >&2
+        echo "" >&2
         
-        if [[ "$REVIEW_MODE" == "full" ]]; then
-            generate_full_view > "$REVIEW_PROMPT"
-        else
-            generate_summary_view > "$REVIEW_PROMPT"
+        # Create an approval file that the user can write to
+        local approval_file=".story/reviews/active/${TASK_ID}-approval.txt"
+        
+        cat > "$approval_file" << EOF
+REVIEW GATE FOR TASK: $TASK_ID
+
+To approve this review, write one of the following to this file:
+  - "approved"  → if changes look good
+  - "changes: <your comments>" → to request modifications  
+  - "cancel"    → to abort the review
+
+Then save the file. The agent will detect your response.
+
+Current status: WAITING FOR APPROVAL
+EOF
+
+        echo "Created approval file: $approval_file" >&2
+        echo "" >&2
+        echo "Please edit this file with your decision." >&2
+        echo "The agent will wait until you provide input..." >&2
+        echo "" >&2
+        
+        # Wait for the approval file to be modified
+        local last_modified=$(stat -c %Y "$approval_file" 2>/dev/null || stat -f %m "$approval_file" 2>/dev/null)
+        local attempts=0
+        local max_attempts=3600  # Wait up to 1 hour (checking every second)
+        
+        while (( attempts < max_attempts )); do
+            sleep 1
+            local current_modified=$(stat -c %Y "$approval_file" 2>/dev/null || stat -f %m "$approval_file" 2>/dev/null)
+            
+            if [[ "$current_modified" != "$last_modified" ]]; then
+                # File was modified, read the response
+                local response
+                response=$(cat "$approval_file" | grep -v "^REVIEW GATE\|^$\|^To approve\|^  -\|^Then\|^Current\|Please\|The agent" | head -1 | xargs)
+                
+                # Convert to lowercase for comparison
+                local response_lower
+                response_lower=$(echo "$response" | tr '[:upper:]' '[:lower:]')
+                
+                case "$response_lower" in
+                    approved|approve|yes|y)
+                        echo "" >&2
+                        echo "✅ Review APPROVED - Proceeding with task completion..." >&2
+                        REVIEW_FILE=$(create_review_artifact "approved" "human (manual review)" "Reviewed via file-based approval" "manual")
+                        ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
+                        rm -f "$approval_file"
+                        
+                        acts_log "INFO" "Review approved, artifact archived: $ARCHIVED_FILE"
+                        
+                        jq -n \
+                            --arg review_file "$ARCHIVED_FILE" \
+                            '{status: "approved", results: {review_status: "approved", reviewer: "human"}, artifacts: {review_file: $review_file}}'
+                        return 0
+                        ;;
+                    changes|change*)
+                        local comments="${response#changes:}"
+                        comments=$(echo "$comments" | xargs)
+                        
+                        echo "" >&2
+                        echo "📝 Changes requested. Task remains IN_PROGRESS." >&2
+                        
+                        REVIEW_FILE=$(create_review_artifact "changes_requested" "human (manual review)" "$comments" "manual")
+                        ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
+                        rm -f "$approval_file"
+                        
+                        acts_log "INFO" "Changes requested, artifact archived: $ARCHIVED_FILE"
+                        
+                        jq -n \
+                            --arg review_file "$ARCHIVED_FILE" \
+                            --arg comments "$comments" \
+                            '{status: "changes_requested", results: {review_status: "changes_requested", reason: "Review changes requested", comments: $comments}, artifacts: {review_file: $review_file}}'
+                        return 2
+                        ;;
+                    cancel|abort|stop)
+                        echo "" >&2
+                        echo "❌ Review cancelled by user. Task remains IN_PROGRESS." >&2
+                        rm -f "$approval_file"
+                        acts_log "INFO" "Review cancelled by user"
+                        jq -n \
+                            '{status: "cancelled", results: {review_status: "cancelled", reason: "Review cancelled by user"}, artifacts: {}}'
+                        return 1
+                        ;;
+                esac
+            fi
+            
+            ((attempts++))
+            
+            # Show a waiting indicator every 10 seconds
+            if (( attempts % 10 == 0 )); then
+                echo -n "." >&2
+            fi
+        done
+        
+        # Timeout reached
+        echo "" >&2
+        echo "❌ Review timed out after 1 hour" >&2
+        rm -f "$approval_file"
+        jq -n \
+            '{status: "error", error: "Review timed out waiting for approval"}'
+        return 1
+    fi
+    
+    # Interactive mode - read from terminal
+    while true; do
+        echo "" >&2
+        local response
+        if ! read_with_fallback "Enter your review decision (approved/changes/cancel): " response; then
+            echo "⚠️  Failed to read input" >&2
+            continue
         fi
         
-        acts_log "INFO" "Review prompt created: $REVIEW_PROMPT"
+        # Normalize response
+        response=$(echo "$response" | tr '[:upper:]' '[:lower:]' | xargs)
         
-        jq -n \
-            --arg prompt_file "$REVIEW_PROMPT" \
-            --arg mode "$REVIEW_MODE" \
-            '{status: "manual_review_required", results: {review_status: "pending", reason: "Manual review required - non-interactive environment", mode: $mode}, artifacts: {prompt_file: $prompt_file}}'
-        return 3
-    fi
+        case "$response" in
+            approved|approve|yes|y)
+                echo "" >&2
+                echo "✅ Review APPROVED - Proceeding with task completion..." >&2
+                REVIEW_FILE=$(create_review_artifact "approved" "human (manual review)" "Reviewed via manual diff inspection" "manual")
+                ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
+                
+                acts_log "INFO" "Review approved, artifact archived: $ARCHIVED_FILE"
+                
+                jq -n \
+                    --arg review_file "$ARCHIVED_FILE" \
+                    '{status: "approved", results: {review_status: "approved", reviewer: "human"}, artifacts: {review_file: $review_file}}'
+                return 0
+                ;;
+            changes|change|no|n|request)
+                echo "" >&2
+                echo "📝 Changes requested. Please provide your comments:" >&2
+                local comments
+                if ! read_with_fallback "Review comments (describe what needs to change): " comments; then
+                    echo "⚠️  Failed to read comments" >&2
+                    continue
+                fi
+                
+                REVIEW_FILE=$(create_review_artifact "changes_requested" "human (manual review)" "$comments" "manual")
+                ARCHIVED_FILE=$(archive_review "$REVIEW_FILE")
+                
+                echo "" >&2
+                echo "📝 Changes requested recorded. Task remains IN_PROGRESS." >&2
+                echo "   Address the feedback and run task-review again when ready." >&2
+                
+                acts_log "INFO" "Changes requested, artifact archived: $ARCHIVED_FILE"
+                
+                jq -n \
+                    --arg review_file "$ARCHIVED_FILE" \
+                    --arg comments "$comments" \
+                    '{status: "changes_requested", results: {review_status: "changes_requested", reason: "Review changes requested", comments: $comments}, artifacts: {review_file: $review_file}}'
+                return 2
+                ;;
+            cancel|abort|stop)
+                echo "" >&2
+                echo "❌ Review cancelled by user. Task remains IN_PROGRESS." >&2
+                acts_log "INFO" "Review cancelled by user"
+                jq -n \
+                    '{status: "cancelled", results: {review_status: "cancelled", reason: "Review cancelled by user"}, artifacts: {}}'
+                return 1
+                ;;
+            *)
+                echo "" >&2
+                echo "⚠️  Invalid response. Please enter one of:" >&2
+                echo "   - 'approved'  → if changes look good" >&2
+                echo "   - 'changes'   → to request modifications" >&2
+                echo "   - 'cancel'    → to abort the review" >&2
+                ;;
+        esac
+    done
 }
 
 # Main logic - select and run appropriate review tool

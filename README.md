@@ -24,7 +24,8 @@ Your AI agent (Cursor, Claude Code, Copilot, etc.) reads operation files and exe
 │  Operation-aware context delivery            │
 ├─────────────────────────────────────────────┤
 │  Layer 6: CODE REVIEW                       │
-│  lazygit, mandatory before task completion     │
+│  GitHuman (default) or lazygit, mandatory   │
+│  before task completion                     │
 ├─────────────────────────────────────────────┤
 │  Layer 5: ADAPTERS (community)              │
 │  Tool-specific bridges                      │
@@ -68,8 +69,12 @@ cp acts-spec/docs/templates/agents-minimal.md ./AGENTS.md
 # 3. Create state directories
 mkdir -p .story/{tasks,sessions,reviews/{active,archive}}
 
-# 4. Install lazygit (for code review)
-brew install lazygit
+# 4. Install code review tool (GitHuman recommended)
+# GitHuman (default) - web-based interface
+npm install -g githuman
+
+# OR lazygit - terminal-based interface
+# brew install lazygit
 
 # 5. Install superpowers (agent workflow skills — TDD, planning, code review)
 #    See https://github.com/obra/superpowers for platform-specific install
@@ -93,8 +98,12 @@ cp -r acts-spec/.acts ./.acts/
 # 3. Create state directories
 mkdir -p .story/{tasks,sessions,reviews/{active,archive}}
 
-# 4. Install lazygit (for code review)
-brew install lazygit
+# 4. Install code review tool (GitHuman recommended)
+# GitHuman (default) - web-based interface
+npm install -g githuman
+
+# OR lazygit - terminal-based interface
+# brew install lazygit
 
 # 5. Install superpowers (agent workflow skills)
 #    See https://github.com/obra/superpowers for platform-specific install
@@ -113,7 +122,8 @@ This single command will:
 - Download and install the `.acts/` directory
 - Create the `.story/` directory structure  
 - Create or update `AGENTS.md` with ACTS integration
-- Install lazygit (for code review)
+- Install GitHuman (default, for code review - web-based)
+- Optionally install lazygit (alternative - terminal-based)
 - Install superpowers (for agent workflow skills)
 - Update `.gitignore` with recommended entries
 
@@ -121,7 +131,7 @@ This single command will:
 
 1. **Initialize a story** — Creates spec, plan, and task breakdown
 2. **Before coding** — Preflight validates scope, creates task branch, ingests context
-3. **Implement** — Agent codes on task branch, you review via lazygit
+3. **Implement** — Agent codes on task branch, you review via GitHuman (browser) or lazygit (terminal)
 4. **Code review gate** — Mandatory review before task completion (hard stop)
 5. **End your day** — Session summary captures what happened
 6. **Hand off** — Next developer picks up with full context

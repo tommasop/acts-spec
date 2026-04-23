@@ -6,6 +6,7 @@
 3. Human feedback via **GATE steps** in each operation
 4. **v0.4.0:** Mandatory code review gates before task completion
 5. **v0.4.0:** Generic CLI-based code review interface (lazygit primary)
+6. **v0.6.2:** GitHuman is now the default code review tool (web-based), lazygit still supported
 
 ---
 
@@ -27,9 +28,9 @@ User → Agent → Operation (with GATE) → Work
 ```
 User → Agent → task-start → [task-review GATE] → commit
                               ↑
-lazygit interface
-                        Human reviews code
-                        Approves/requests changes
+GitHuman interface (default)
+                        Human reviews code in browser
+                        Approves/requests changes via menu
 ```
 
 **Scripts removed:** `acts.sh`, `compress-sessions.sh`, 5 adapter scripts  
@@ -79,7 +80,8 @@ scripts/
 │   ├── session-summary.json
 │   └── review.json               # v0.4.0: Review export schema
 └── review-providers/              # v0.4.0: Provider configs
-    └── lazygit.json             # lazygit CLI configuration
+    ├── githuman.json            # GitHuman CLI configuration (default, v0.6.2+)
+    └── lazygit.json             # lazygit CLI configuration (alternative)
 ```
 
 ---
@@ -120,7 +122,7 @@ Standard formats defined in `.acts/report-protocol.md`:
 | `handoff` | After briefing | Full handoff briefing |
 | `story-review` | After acceptance check | AC checklist + PR description |
 | `story-init` | After plan creation | Spec + plan summary |
-| `task-review` | After staging, before commit | Code Review report (lazygit interface) |
+| `task-review` | After staging, before commit | Code Review report (GitHuman/lazygit interface) |
 | `commit-review` | On explicit request | Code Review report (informational) |
 
 ---
@@ -353,15 +355,17 @@ If you have existing ACTS projects with the old scripts:
    - Automatically runs `task-review`
 
 2. **Code Review Gate** (`task-review`)
-    - Starts lazygit: `lazygit`
+   - **GitHuman (default):** Starts server on port 3847, presents menu
+   - **lazygit (alternative):** Starts `lazygit` for terminal review
    - Presents **Code Review** report with URL
    - Opens browser with staged changes
-   - **GATE: review** — waits for human approval
+   - **GATE: review** — waits for human approval via menu
 
 3. **Human Review**
-   - Reviews staged changes in browser
+   - Reviews staged changes in browser (GitHuman) or terminal (lazygit)
    - Adds inline comments if needed
-   - Approves or requests changes
+   - Closes review in tool
+   - Selects option from agent menu: [1] Approved / [2] Changes / [3] Cancel
 
 4. **Completion**
    - If approved: exports review, commits completion
@@ -375,7 +379,7 @@ Enable/disable in `.acts/acts.json`:
 {
   "code_review": {
     "enabled": true,
-    "provider": "lazygit",
+    "provider": "githuman",
     "required_for_tasks": ["*"],
     "skip_for_tasks": ["docs", "chore"]
   }
@@ -397,7 +401,8 @@ Enable/disable in `.acts/acts.json`:
 
 ### Requirements
 
-- **lazygit** must be installed: `brew install lazygit`
+- **GitHuman** (default): `npm install -g githuman`
+- **OR lazygit** (alternative): `brew install lazygit`
 - Review happens **before** task completion commit
 - All reviews are **preserved** in git for audit
 - Archived reviews are **never loaded** during context ingestion
@@ -405,7 +410,8 @@ Enable/disable in `.acts/acts.json`:
 ### Backward Compatibility
 
 - **v0.3.0 projects:** Set `code_review.enabled: false` to disable
-- **Migration:** Install lazygit, enable when ready
+- **Migration:** Install GitHuman (or lazygit), enable when ready
+- **Provider selection:** Set `ACTS_REVIEW_PROVIDER=githuman|lazygit|manual`
 - **Optional:** Can enable per-story or globally
 
 ---

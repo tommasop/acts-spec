@@ -30,7 +30,7 @@ See the [AGENTS.md standard](https://agents.md/) for details.
 **Yes, for two reasons:**
 
 1. **Session summaries** — Remember what you did and why, even months later
-2. **Code review** — lazygit catches issues before commit
+2. **Code review** — GitHuman (or lazygit) catches issues before commit
 
 ## Do I need ACTS if I already have agent rules (Cursor Rules, CLAUDE.md)?
 
@@ -63,10 +63,11 @@ Any tool that can read markdown files, including those that support AGENTS.md:
 - Devin
 - Any custom agent
 
-## Do I need lazygit?
+## Do I need a code review tool?
 
-For v0.5.0 code review: yes, recommended.
+For v0.6.2+ code review: GitHuman is the default (npm install -g githuman).
 For basic ACTS: no, you can disable code review in `.acts/acts.json`.
+Alternative: lazygit is also supported (brew install lazygit).
 
 ## What's the minimum to try ACTS?
 
@@ -76,7 +77,7 @@ See [Minimal Viable ACTS](minimal-viable-acts.md).
 
 ## Is this a framework I need to install?
 
-No. ACTS is markdown files in your repo. Your agent reads them. Nothing to install except optionally lazygit for code review.
+No. ACTS is markdown files in your repo. Your agent reads them. Nothing to install except optionally GitHuman (or lazygit) for code review.
 
 ## How does ACTS compare to Cursor Rules / CLAUDE.md?
 

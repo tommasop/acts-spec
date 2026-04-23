@@ -112,9 +112,25 @@ else
   fi
 fi
 
-# lazygit installation (for code review)
+# GitHuman installation (default code review tool)
+if ! command -v githuman >/dev/null 2>&1; then
+  log_info "GitHuman not found. Installing (default code review tool)..."
+  if command -v npm >/dev/null 2>&1; then
+    if npm install -g githuman; then
+      log_info "GitHuman installed successfully"
+    else
+      log_warn "Failed to install GitHuman. Install manually: npm install -g githuman"
+    fi
+  else
+    log_warn "npm not found. Install Node.js/npm first, or use lazygit as alternative"
+  fi
+else
+  log_info "GitHuman already installed"
+fi
+
+# lazygit installation (alternative code review tool)
 if ! command -v lazygit >/dev/null 2>&1; then
-  log_info "lazygit not found. Installing..."
+  log_info "lazygit not found. Installing (alternative code review tool)..."
   if command -v brew >/dev/null 2>&1; then
     if brew install lazygit; then
       log_info "lazygit installed successfully"

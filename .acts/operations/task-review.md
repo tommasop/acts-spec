@@ -13,10 +13,13 @@ inputs_schema:
     type: string
     required: true
     validation: "^T\\d+$"
+  story_id:
+    type: string
+    required: false
 outputs_schema:
   review_status:
     type: string
-    enum: ["approved", "changes_requested"]
+    enum: ["approved", "changes_requested", "cancelled"]
   review_file:
     type: string
 required_inputs:
@@ -24,7 +27,10 @@ required_inputs:
     type: string
     required: true
     validation: "^T\\d+$"
-optional_inputs: []
+optional_inputs:
+  - name: story_id
+    type: string
+    required: false
 preconditions:
   - "Task status MUST be IN_PROGRESS"
   - "All code changes are staged (git add completed)"
@@ -44,7 +50,7 @@ Mandatory code review before any task can be marked DONE. This operation
 ensures human oversight of all AI-generated code. It is a HARD GATE —
 the agent MUST NOT complete the task until review is approved.
 
-**This operation is REQUIRED for ACTS v0.5.0 conformance.**
+**This operation is REQUIRED for ACTS v0.5.0+ conformance.**
 
 ## Pre-check
 
@@ -53,59 +59,174 @@ If `code_review.enabled` is `false` in `.acts/acts.json`:
 - Return immediately to task-start
 - Log in session summary: "Code review gate skipped (disabled in config)"
 
+## Review Providers
+
+The task-review operation supports multiple review providers with automatic fallback:
+
+1. **GitHuman** (default) - Web-based code review interface
+2. **lazygit** - Terminal UI (TUI) for git operations  
+3. **Manual** - Command-line diff review with interactive prompts
+
+Provider selection: `ACTS_REVIEW_PROVIDER=githuman|lazygit|manual|auto`
+
+## GitHuman Review Flow (Default)
+
+GitHuman provides a web-based interface for reviewing staged changes:
+
+### Step 1: Launch GitHuman Server
+- Start `githuman serve --port 3847 --no-open`
+- Wait for server health check
+- Server runs at `http://127.0.0.1:3847`
+
+### Step 2: Present Review Menu
+The agent displays:
+```
+═══════════════════════════════════════════════════════════════════
+🌐 GITHUMAN CODE REVIEW READY
+═══════════════════════════════════════════════════════════════════
+
+GitHuman is now running and ready for your review:
+
+  📍 URL: http://127.0.0.1:3847
+  🔧 Server PID: <pid>
+
+📋 INSTRUCTIONS:
+
+  1. Open your browser to: http://127.0.0.1:3847
+  2. Review the staged changes in GitHuman
+  3. Close/submit your review in the GitHuman interface
+  4. Return here and select an option from the menu below
+
+🔍 REVIEW MENU - Select an option:
+
+  [1] ✅ Approved - Changes look good, ready to merge
+  [2] 📝 Changes Requested - Need modifications before approval
+  [3] ❌ Cancel - Abort review, keep task in progress
+
+Enter your choice (1/2/3): 
+```
+
+### Step 3: Developer Reviews in Browser
+- Open browser to `http://127.0.0.1:3847`
+- Review staged changes
+- Submit review in GitHuman interface
+
+### Step 4: Developer Selects Menu Option
+- **Option 1 (Approved)**: Proceed to export and complete
+- **Option 2 (Changes Requested)**: Enter comments, task stays IN_PROGRESS
+- **Option 3 (Cancel)**: Abort review, task stays IN_PROGRESS
+
+### Step 5: Export Review
+- Run `githuman export last --output <file>`
+- Saves to `.story/reviews/active/<task_id>-githuman-export.md`
+
+### Step 6: Stop GitHuman Server
+- Kill server process
+- Verify server stopped
+
+### Step 7: Create Review Artifact
+- Generate `.story/reviews/active/<task_id>-review.md`
+- Archive to `.story/reviews/archive/`
+
+### Step 8: Handle Result
+- **Approved**: Return success, task can transition to DONE
+- **Changes Requested**: Return changes_requested, developer must:
+  1. Make requested changes
+  2. Stage: `git add .`
+  3. Re-run: `acts run task-review --input task_id=<task_id>`
+
+## lazygit Review Flow
+
+For terminal-based review:
+
+1. Launch `lazygit` focused on staged changes
+2. Present menu after lazygit exits:
+   - `[1] Approved`
+   - `[2] Changes Requested`  
+   - `[3] Cancel`
+3. Create review artifact based on selection
+4. Archive and return status
+
+## Manual Review Flow
+
+When no tools are available:
+
+1. Display formatted diff summary (summary or full mode)
+2. Show review checkpoints (security, tests, docs, etc.)
+3. Present interactive menu:
+   - `[1] Approved`
+   - `[2] Changes Requested`
+   - `[3] Cancel`
+4. Wait for developer input (reads from `/dev/tty` or file-based fallback)
+5. Create and archive review artifact
+
+**Manual Review Modes:**
+- `ACTS_REVIEW_MODE=summary` (default): Show truncated diffs and stats
+- `ACTS_REVIEW_MODE=full`: Show complete file-by-file diffs
+
 ## Steps
 
 1. **STAGE ALL CHANGES**
    Run `git add .` to stage all pending changes.
 
 2. **CHECK REVIEW PROVIDER**
-   Check if review tool is configured and available:
-   - IF tool configured (lazygit, etc.) AND available → proceed to step 3a
-   - IF tool NOT available OR tool fails → proceed to step 3b
+   - Check `ACTS_REVIEW_PROVIDER` env var or `acts.json` config
+   - Auto-detect available tools (githuman → lazygit → manual)
 
-3a. **REVIEW VIA TOOL**
-   a. Launch review tool
-   b. Wait for developer to complete review in the tool
-   c. Read review output
-   d. IF approved → proceed to step 4
-   e. IF changes_requested:
-      - Present each comment
-      - Address each concern
-      - Re-stage: `git add .`
-      - Loop back to step 2
+3. **RUN REVIEW**
+   
+   **For GitHuman:**
+   a. Launch GitHuman server on port 3847
+   b. Display URL and review menu
+   c. Wait for developer to review in browser
+   d. Wait for developer to select menu option
+   e. Export review from GitHuman
+   f. Stop GitHuman server
+   
+   **For lazygit:**
+   a. Launch lazygit TUI
+   b. Wait for developer to exit lazygit
+   c. Present approval menu
+   
+   **For Manual:**
+   a. Show formatted diff output
+   b. Present approval menu
+   c. Wait for developer input
 
-3b. **MANUAL REVIEW FALLBACK**
-   a. Show staged diff: `git diff --staged`
-   b. Present files changed with line counts
-   c. **GATE: approve** — Wait for developer to say "approved" or list changes requested
-   d. IF approved → proceed to step 4
-   e. IF changes listed:
-      - Address each item
-      - Re-stage: `git add .`
-      - Loop back to step 2
+4. **HANDLE RESULT**
+   
+   IF approved:
+   - Create review artifact with status "approved"
+   - Archive to `.story/reviews/archive/`
+   - Return success
+   
+   IF changes_requested:
+   - Create review artifact with comments
+   - Archive to `.story/reviews/archive/`
+   - Return changes_requested status
+   - Task remains IN_PROGRESS
+   
+   IF cancelled:
+   - Return cancelled status
+   - Task remains IN_PROGRESS
 
-4. **SAVE REVIEW ARTIFACT**
-   Create `.story/reviews/active/<task_id>-review.md` with:
-   ```markdown
-   # Review — <task_id>
-   - **Reviewer:** <developer or tool name>
-   - **Date:** <ISO 8601>
-   - **Status:** approved
-   - **Files reviewed:** <list>
-   - **Comments:** <any>
-   ```
-
-5. **ARCHIVE REVIEW**
-   Move from `.story/reviews/active/` to `.story/reviews/archive/`
-
-6. **UPDATE STATE**
+5. **UPDATE STATE** (handled by caller)
    Set in `state.json`:
-   - `review_status`: "approved"
-   - `reviewed_at`: now (ISO 8601)
+   - `review_status`: "approved" | "changes_requested"
+   - `reviewed_at`: ISO 8601 timestamp
    - `reviewed_by`: developer name
 
-7. **COMMIT**
-   `docs(<story_id>): review approved for <task_id>`
+## Environment Variables
+
+- `ACTS_REVIEW_PROVIDER`: Select review tool (`githuman`, `lazygit`, `manual`, `auto`)
+- `ACTS_REVIEW_MODE`: Manual review display (`summary`, `full`)
+
+## Exit Codes
+
+- `0`: Review approved
+- `1`: Error or cancelled
+- `2`: Changes requested
+- `3`: Manual review required (when no TTY available)
 
 ## Constraints
 
@@ -114,3 +235,42 @@ If `code_review.enabled` is `false` in `.acts/acts.json`:
 - If review provider fails, fall back to manual review — do NOT skip the gate.
 - The review artifact MUST be saved before the task can transition to DONE.
 - If code_review is disabled, this entire operation is skipped.
+- In non-interactive environments, uses file-based polling as fallback.
+
+## Review Artifact Format
+
+```markdown
+# Review — <task_id>
+
+- **Story:** <story_id>
+- **Reviewer:** <developer name or tool>
+- **Date:** <ISO 8601>
+- **Status:** approved | changes_requested
+- **Tool:** githuman | lazygit | manual
+
+## Files Reviewed
+
+- <file1>
+- <file2>
+
+## Comments
+
+<review comments or "No comments provided">
+
+## Stats
+
+<git diff --stat output>
+```
+
+## Example Usage
+
+```bash
+# Run with default provider (auto-detect)
+echo '{"inputs": {"task_id": "T001", "story_id": "S001"}}' | acts run task-review
+
+# Force GitHuman
+echo '{"inputs": {"task_id": "T001"}}' | ACTS_REVIEW_PROVIDER=githuman acts run task-review
+
+# Force manual review with full diffs
+echo '{"inputs": {"task_id": "T001"}}' | ACTS_REVIEW_PROVIDER=manual ACTS_REVIEW_MODE=full acts run task-review
+```

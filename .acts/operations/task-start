@@ -47,7 +47,22 @@ if [ "$ACTION" == "complete" ]; then
     fi
 else
     # Normal task start (implementation mode)
-    acts_log "INFO" "Starting task implementation"
+    acts_log "INFO" "Starting task implementation for $TASK_ID"
+    
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "🚀 TASK STARTED: $TASK_ID" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
+    echo "⚠️  IMPORTANT: When you complete this task, you MUST run:" >&2
+    echo "" >&2
+    echo "    acts run task-start --input task_id=$TASK_ID --input action=complete" >&2
+    echo "" >&2
+    echo "This will trigger the mandatory code review gate (task-review)." >&2
+    echo "The agent CANNOT mark the task as DONE without your approval." >&2
+    echo "" >&2
+    echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━" >&2
+    echo "" >&2
     
     # **In strict mode (conformance_level: "strict"):**
     # After completing a logical batch of commits (1-5 commits):
