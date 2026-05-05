@@ -195,15 +195,239 @@ pub const Database = struct {
         return output.toOwnedSlice();
     }
 
-    pub fn writeState(_self: *Database, _allocator: std.mem.Allocator, _story_id: []const u8, _json: []const u8) !void {
-        // Simple JSON parser for state write
-        // For v1.0.0, we do a basic upsert of story fields
-        // Full JSON parsing can be added in v1.1
-        _ = _self;
-        _ = _allocator;
-        _ = _story_id;
-        _ = _json;
-        std.debug.print("State write: Not fully implemented in v1.0.0. Use SQL directly or task update commands.\n", .{});
+    pub fn writeState(self: *Database, allocator: std.mem.Allocator, story_id: []const u8, json: []const u8) !void {
+        // Parse JSON and update story fields
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+        defer parsed.deinit();
+        
+        const root = parsed.value;
+        if (root != .object) return error.InvalidJson;
+        
+        // Update story fields
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "UPDATE stories SET title = COALESCE(?, title), status = COALESCE(?, status), spec_approved = COALESCE(?, spec_approved), context_budget = COALESCE(?, context_budget), strict_mode = COALESCE(?, strict_mode) WHERE id = ?";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+        
+        // Bind title
+        if (root.object.get("title")) |title| {
+            if (title == .string) {
+                _ = c.sqlite3_bind_text(stmt, 1, title.string.ptr, @intCast(title.string.len), c.SQLITE_STATIC);
+            } else {
+                _ = c.sqlite3_bind_null(stmt, 1);
+            }
+        } else {
+            _ = c.sqlite3_bind_null(stmt, 1);
+        }
+        
+        // Bind status
+        if (root.object.get("status")) |status| {
+            if (status == .string) {
+                _ = c.sqlite3_bind_text(stmt, 2, status.string.ptr, @intCast(status.string.len), c.SQLITE_STATIC);
+            } else {
+                _ = c.sqlite3_bind_null(stmt, 2);
+            }
+        } else {
+            _ = c.sqlite3_bind_null(stmt, 2);
+        }
+        
+        // Bind spec_approved
+        if (root.object.get("spec_approved")) |sa| {
+            if (sa == .bool) {
+                _ = c.sqlite3_bind_int(stmt, 3, if (sa.bool) 1 else 0);
+            } else {
+                _ = c.sqlite3_bind_null(stmt, 3);
+            }
+        } else {
+            _ = c.sqlite3_bind_null(stmt, 3);
+        }
+        
+        // Bind context_budget
+        if (root.object.get("context_budget")) |cb| {
+            if (cb == .integer) {
+                _ = c.sqlite3_bind_int(stmt, 4, @intCast(cb.integer));
+            } else {
+                _ = c.sqlite3_bind_null(stmt, 4);
+            }
+        } else {
+            _ = c.sqlite3_bind_null(stmt, 4);
+        }
+        
+        // Bind strict_mode
+        if (root.object.get("strict_mode")) |sm| {
+            if (sm == .bool) {
+                _ = c.sqlite3_bind_int(stmt, 5, if (sm.bool) 1 else 0);
+            } else {
+                _ = c.sqlite3_bind_null(stmt, 5);
+            }
+        } else {
+            _ = c.sqlite3_bind_null(stmt, 5);
+        }
+        
+        // Bind story_id
+        _ = c.sqlite3_bind_text(stmt, 6, story_id.ptr, @intCast(story_id.len), c.SQLITE_STATIC);
+        
+        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
+            return error.UpdateFailed;
+        }
+        
+        // Handle tasks array if present
+        if (root.object.get("tasks")) |tasks| {
+            if (tasks == .array) {
+                for (tasks.array.items) |task| {
+                    if (task == .object) {
+                        try self.upsertTask(task.object, story_id);
+                    }
+                }
+            }
+        }
+    }
+
+    fn upsertTask(self: *Database, task_obj: std.json.ObjectMap, story_id: []const u8) !void {
+        const task_id = task_obj.get("id") orelse return error.MissingTaskId;
+        if (task_id != .string) return error.InvalidTaskId;
+        
+        // Check if task exists
+        var check_stmt: ?*c.sqlite3_stmt = null;
+        const check_sql = "SELECT COUNT(*) FROM tasks WHERE id = ?";
+        var rc = c.sqlite3_prepare_v2(self.db, check_sql, -1, &check_stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(check_stmt);
+        
+        _ = c.sqlite3_bind_text(check_stmt, 1, task_id.string.ptr, @intCast(task_id.string.len), c.SQLITE_STATIC);
+        
+        const exists = c.sqlite3_step(check_stmt) == c.SQLITE_ROW and c.sqlite3_column_int(check_stmt, 0) > 0;
+        
+        if (exists) {
+            // Update existing task
+            var stmt: ?*c.sqlite3_stmt = null;
+            const sql = "UPDATE tasks SET title = COALESCE(?, title), description = COALESCE(?, description), status = COALESCE(?, status), assigned_to = COALESCE(?, assigned_to), context_priority = COALESCE(?, context_priority) WHERE id = ?";
+            rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+            if (rc != c.SQLITE_OK) return error.QueryFailed;
+            defer _ = c.sqlite3_finalize(stmt);
+            
+            // Bind fields
+            if (task_obj.get("title")) |v| {
+                if (v == .string) _ = c.sqlite3_bind_text(stmt, 1, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else _ = c.sqlite3_bind_null(stmt, 1);
+            } else { _ = c.sqlite3_bind_null(stmt, 1); }
+            
+            if (task_obj.get("description")) |v| {
+                if (v == .string) _ = c.sqlite3_bind_text(stmt, 2, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else _ = c.sqlite3_bind_null(stmt, 2);
+            } else { _ = c.sqlite3_bind_null(stmt, 2); }
+            
+            if (task_obj.get("status")) |v| {
+                if (v == .string) _ = c.sqlite3_bind_text(stmt, 3, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else _ = c.sqlite3_bind_null(stmt, 3);
+            } else { _ = c.sqlite3_bind_null(stmt, 3); }
+            
+            if (task_obj.get("assigned_to")) |v| {
+                if (v == .string) _ = c.sqlite3_bind_text(stmt, 4, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else _ = c.sqlite3_bind_null(stmt, 4);
+            } else { _ = c.sqlite3_bind_null(stmt, 4); }
+            
+            if (task_obj.get("context_priority")) |v| {
+                if (v == .integer) _ = c.sqlite3_bind_int(stmt, 5, @intCast(v.integer)) else _ = c.sqlite3_bind_null(stmt, 5);
+            } else { _ = c.sqlite3_bind_null(stmt, 5); }
+            
+            _ = c.sqlite3_bind_text(stmt, 6, task_id.string.ptr, @intCast(task_id.string.len), c.SQLITE_STATIC);
+            
+            if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
+                return error.UpdateFailed;
+            }
+        } else {
+            // Insert new task
+            var stmt: ?*c.sqlite3_stmt = null;
+            const sql = "INSERT INTO tasks (id, story_id, title, description, status, assigned_to, context_priority) VALUES (?, ?, ?, ?, ?, ?, ?)";
+            rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+            if (rc != c.SQLITE_OK) return error.QueryFailed;
+            defer _ = c.sqlite3_finalize(stmt);
+            
+            _ = c.sqlite3_bind_text(stmt, 1, task_id.string.ptr, @intCast(task_id.string.len), c.SQLITE_STATIC);
+            _ = c.sqlite3_bind_text(stmt, 2, story_id.ptr, @intCast(story_id.len), c.SQLITE_STATIC);
+            
+            if (task_obj.get("title")) |v| {
+                if (v == .string) _ = c.sqlite3_bind_text(stmt, 3, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else _ = c.sqlite3_bind_null(stmt, 3);
+            } else { _ = c.sqlite3_bind_null(stmt, 3); }
+            
+            if (task_obj.get("description")) |v| {
+                if (v == .string) _ = c.sqlite3_bind_text(stmt, 4, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else _ = c.sqlite3_bind_null(stmt, 4);
+            } else { _ = c.sqlite3_bind_null(stmt, 4); }
+            
+            if (task_obj.get("status")) |v| {
+                if (v == .string) _ = c.sqlite3_bind_text(stmt, 5, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else _ = c.sqlite3_bind_null(stmt, 5);
+            } else { _ = c.sqlite3_bind_null(stmt, 5); }
+            
+            if (task_obj.get("assigned_to")) |v| {
+                if (v == .string) _ = c.sqlite3_bind_text(stmt, 6, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else _ = c.sqlite3_bind_null(stmt, 6);
+            } else { _ = c.sqlite3_bind_null(stmt, 6); }
+            
+            if (task_obj.get("context_priority")) |v| {
+                if (v == .integer) _ = c.sqlite3_bind_int(stmt, 7, @intCast(v.integer)) else _ = c.sqlite3_bind_null(stmt, 7);
+            } else { _ = c.sqlite3_bind_null(stmt, 7); }
+            
+            if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
+                return error.InsertFailed;
+            }
+        }
+        
+        // Update files
+        if (task_obj.get("files_touched")) |files| {
+            if (files == .array) {
+                // Delete existing files
+                var del_stmt: ?*c.sqlite3_stmt = null;
+                const del_sql = "DELETE FROM task_files WHERE task_id = ?";
+                rc = c.sqlite3_prepare_v2(self.db, del_sql, -1, &del_stmt, null);
+                if (rc == c.SQLITE_OK) {
+                    defer _ = c.sqlite3_finalize(del_stmt);
+                    _ = c.sqlite3_bind_text(del_stmt, 1, task_id.string.ptr, @intCast(task_id.string.len), c.SQLITE_STATIC);
+                    _ = c.sqlite3_step(del_stmt);
+                }
+                
+                // Insert new files
+                for (files.array.items) |file| {
+                    if (file == .string) {
+                        var file_stmt: ?*c.sqlite3_stmt = null;
+                        const file_sql = "INSERT INTO task_files (task_id, file_path) VALUES (?, ?)";
+                        rc = c.sqlite3_prepare_v2(self.db, file_sql, -1, &file_stmt, null);
+                        if (rc == c.SQLITE_OK) {
+                            defer _ = c.sqlite3_finalize(file_stmt);
+                            _ = c.sqlite3_bind_text(file_stmt, 1, task_id.string.ptr, @intCast(task_id.string.len), c.SQLITE_STATIC);
+                            _ = c.sqlite3_bind_text(file_stmt, 2, file.string.ptr, @intCast(file.string.len), c.SQLITE_STATIC);
+                            _ = c.sqlite3_step(file_stmt);
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Update dependencies
+        if (task_obj.get("depends_on")) |deps| {
+            if (deps == .array) {
+                // Delete existing dependencies
+                var del_stmt: ?*c.sqlite3_stmt = null;
+                const del_sql = "DELETE FROM task_dependencies WHERE task_id = ?";
+                rc = c.sqlite3_prepare_v2(self.db, del_sql, -1, &del_stmt, null);
+                if (rc == c.SQLITE_OK) {
+                    defer _ = c.sqlite3_finalize(del_stmt);
+                    _ = c.sqlite3_bind_text(del_stmt, 1, task_id.string.ptr, @intCast(task_id.string.len), c.SQLITE_STATIC);
+                    _ = c.sqlite3_step(del_stmt);
+                }
+                
+                // Insert new dependencies
+                for (deps.array.items) |dep| {
+                    if (dep == .string) {
+                        var dep_stmt: ?*c.sqlite3_stmt = null;
+                        const dep_sql = "INSERT INTO task_dependencies (task_id, depends_on) VALUES (?, ?)";
+                        rc = c.sqlite3_prepare_v2(self.db, dep_sql, -1, &dep_stmt, null);
+                        if (rc == c.SQLITE_OK) {
+                            defer _ = c.sqlite3_finalize(dep_stmt);
+                            _ = c.sqlite3_bind_text(dep_stmt, 1, task_id.string.ptr, @intCast(task_id.string.len), c.SQLITE_STATIC);
+                            _ = c.sqlite3_bind_text(dep_stmt, 2, dep.string.ptr, @intCast(dep.string.len), c.SQLITE_STATIC);
+                            _ = c.sqlite3_step(dep_stmt);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub fn getTask(self: *Database, allocator: std.mem.Allocator, task_id: []const u8) ![]u8 {
@@ -354,11 +578,61 @@ pub const Database = struct {
         return output.toOwnedSlice();
     }
 
-    pub fn addDecision(_self: *Database, _allocator: std.mem.Allocator, _json: []const u8) !void {
-        _ = _self;
-        _ = _allocator;
-        _ = _json;
-        std.debug.print("Decision add: Not fully implemented in v1.0.0\n", .{});
+    pub fn addDecision(self: *Database, allocator: std.mem.Allocator, json: []const u8) !void {
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+        defer parsed.deinit();
+        
+        const root = parsed.value;
+        if (root != .object) return error.InvalidJson;
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "INSERT INTO decisions (task_id, session, topic, plan_said, decided, reason, evidence, authority, tags) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+        
+        const obj = root.object;
+        
+        // Required fields
+        if (obj.get("task_id")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 1, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else return error.MissingField;
+        } else return error.MissingField;
+        
+        if (obj.get("session")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 2, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else _ = c.sqlite3_bind_text(stmt, 2, "default", 7, c.SQLITE_STATIC);
+        } else _ = c.sqlite3_bind_text(stmt, 2, "default", 7, c.SQLITE_STATIC);
+        
+        if (obj.get("topic")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 3, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else return error.MissingField;
+        } else return error.MissingField;
+        
+        if (obj.get("plan_said")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 4, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else _ = c.sqlite3_bind_null(stmt, 4);
+        } else _ = c.sqlite3_bind_null(stmt, 4);
+        
+        if (obj.get("decided")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 5, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else return error.MissingField;
+        } else return error.MissingField;
+        
+        if (obj.get("reason")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 6, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else return error.MissingField;
+        } else return error.MissingField;
+        
+        if (obj.get("evidence")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 7, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else return error.MissingField;
+        } else return error.MissingField;
+        
+        if (obj.get("authority")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 8, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else return error.MissingField;
+        } else return error.MissingField;
+        
+        if (obj.get("tags")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 9, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else _ = c.sqlite3_bind_null(stmt, 9);
+        } else _ = c.sqlite3_bind_null(stmt, 9);
+        
+        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
+            return error.InsertFailed;
+        }
     }
 
     pub fn listDecisions(self: *Database, allocator: std.mem.Allocator, task_id: []const u8) ![]u8 {
@@ -394,18 +668,80 @@ pub const Database = struct {
         return output.toOwnedSlice();
     }
 
-    pub fn addRejectedApproach(_self: *Database, _allocator: std.mem.Allocator, _json: []const u8) !void {
-        _ = _self;
-        _ = _allocator;
-        _ = _json;
-        std.debug.print("Rejected approach add: Not fully implemented in v1.0.0\n", .{});
+    pub fn addRejectedApproach(self: *Database, allocator: std.mem.Allocator, json: []const u8) !void {
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+        defer parsed.deinit();
+        
+        const root = parsed.value;
+        if (root != .object) return error.InvalidJson;
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "INSERT INTO rejected_approaches (task_id, session, approach, reason, evidence, tags) VALUES (?, ?, ?, ?, ?, ?)";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+        
+        const obj = root.object;
+        
+        if (obj.get("task_id")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 1, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else return error.MissingField;
+        } else return error.MissingField;
+        
+        if (obj.get("session")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 2, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else _ = c.sqlite3_bind_text(stmt, 2, "default", 7, c.SQLITE_STATIC);
+        } else _ = c.sqlite3_bind_text(stmt, 2, "default", 7, c.SQLITE_STATIC);
+        
+        if (obj.get("approach")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 3, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else return error.MissingField;
+        } else return error.MissingField;
+        
+        if (obj.get("reason")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 4, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else return error.MissingField;
+        } else return error.MissingField;
+        
+        if (obj.get("evidence")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 5, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else return error.MissingField;
+        } else return error.MissingField;
+        
+        if (obj.get("tags")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 6, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else _ = c.sqlite3_bind_null(stmt, 6);
+        } else _ = c.sqlite3_bind_null(stmt, 6);
+        
+        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
+            return error.InsertFailed;
+        }
     }
 
-    pub fn addQuestion(_self: *Database, _allocator: std.mem.Allocator, _json: []const u8) !void {
-        _ = _self;
-        _ = _allocator;
-        _ = _json;
-        std.debug.print("Question add: Not fully implemented in v1.0.0\n", .{});
+    pub fn addQuestion(self: *Database, allocator: std.mem.Allocator, json: []const u8) !void {
+        const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+        defer parsed.deinit();
+        
+        const root = parsed.value;
+        if (root != .object) return error.InvalidJson;
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "INSERT INTO open_questions (task_id, question, raised_by) VALUES (?, ?, ?)";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+        
+        const obj = root.object;
+        
+        if (obj.get("task_id")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 1, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else return error.MissingField;
+        } else return error.MissingField;
+        
+        if (obj.get("question")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 2, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else return error.MissingField;
+        } else return error.MissingField;
+        
+        if (obj.get("raised_by")) |v| {
+            if (v == .string) _ = c.sqlite3_bind_text(stmt, 3, v.string.ptr, @intCast(v.string.len), c.SQLITE_STATIC) else return error.MissingField;
+        } else return error.MissingField;
+        
+        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
+            return error.InsertFailed;
+        }
     }
 
     pub fn resolveQuestion(self: *Database, question_id: []const u8, resolution: ?[]const u8, resolved_by: ?[]const u8) !void {
