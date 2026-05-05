@@ -21,15 +21,35 @@
 
 ## ACTS Integration
 
-This project uses ACTS (Agent Collaborative Tracking Standard) for multi-developer coordination.
+This project uses ACTS (Agent Collaborative Tracking Standard) v1.0.0 for multi-developer coordination.
 
 ### Rules
-- Agent MUST read `.story/state.json` before writing code
-- Agent MUST NOT modify files owned by completed tasks
+- Agent MUST read state before writing code: `acts state read`
+- Agent MUST NOT modify files owned by completed tasks: `acts scope check --task <id> --file <path>`
 - Agent MUST record session summary before ending
 - Agent MUST stay within assigned task boundary
-- Agent MUST run code review before task completion (v0.4.0)
+- Agent MUST run code review before task completion
 - Agent SHOULD use cost-effective models for routine tasks
+
+### ACTS Commands
+- `acts init <story-id>` — Initialize new ACTS story
+- `acts state read` — Read current story state
+- `acts state write --story <id>` — Update story state (JSON from stdin)
+- `acts task get <task-id>` — Get task details
+- `acts task update <id> --status <status>` — Update task status (enforces gates)
+- `acts gate add --task <id> --type <type> --status <status>` — Add gate checkpoint
+- `acts ownership map` — Show file ownership
+- `acts scope check --task <id> --file <path>` — Check if file is safe to modify
+- `acts validate` — Validate entire ACTS project
+- `acts migrate` — Force schema migration
+
+### Gate Protocol
+1. Before starting task: `acts gate add --task <id> --type approve --status approved`
+2. Before completing task: `acts gate add --task <id> --type task-review --status approved`
+
+### Data Storage
+- Structured state: SQLite at `.acts/acts.db`
+- Narratives: Markdown files in `.story/`
 
 ### Agent Configuration
 ```json

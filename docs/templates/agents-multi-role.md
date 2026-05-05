@@ -22,15 +22,35 @@
 
 ## ACTS Integration
 
-This project uses ACTS (Agent Collaborative Tracking Standard) for multi-developer coordination.
+This project uses ACTS (Agent Collaborative Tracking Standard) v1.0.0 for multi-developer coordination.
 
 ### Rules
-- Agent MUST read `.story/state.json` before writing code
-- Agent MUST NOT modify files owned by completed tasks
+- Agent MUST read state before writing code: `acts state read`
+- Agent MUST NOT modify files owned by completed tasks: `acts scope check --task <id> --file <path>`
 - Agent MUST record session summary before ending
 - Agent MUST stay within assigned task boundary
-- Agent MUST run code review before task completion (v0.4.0)
+- Agent MUST run code review before task completion
 - Agent MUST use role-specific configuration when defined
+
+### ACTS Commands
+- `acts init <story-id>` — Initialize new ACTS story
+- `acts state read` — Read current story state
+- `acts state write --story <id>` — Update story state (JSON from stdin)
+- `acts task get <task-id>` — Get task details
+- `acts task update <id> --status <status>` — Update task status (enforces gates)
+- `acts gate add --task <id> --type <type> --status <status>` — Add gate checkpoint
+- `acts ownership map` — Show file ownership
+- `acts scope check --task <id> --file <path>` — Check if file is safe to modify
+- `acts validate` — Validate entire ACTS project
+- `acts migrate` — Force schema migration
+
+### Gate Protocol
+1. Before starting task: `acts gate add --task <id> --type approve --status approved`
+2. Before completing task: `acts gate add --task <id> --type task-review --status approved`
+
+### Data Storage
+- Structured state: SQLite at `.acts/acts.db`
+- Narratives: Markdown files in `.story/`
 
 ### Role Configurations
 
@@ -60,9 +80,9 @@ This project uses ACTS (Agent Collaborative Tracking Standard) for multi-develop
 #### Pattern 1: Sequential Execution
 For stories with dependent tasks, execute sequentially:
 1. Complete frontend subtask with frontend config
-2. Run task-review, get approval
+2. Run `acts gate add --task <id> --type task-review --status approved`
 3. Complete backend subtask with backend config
-4. Run task-review, get approval
+4. Run `acts gate add --task <id> --type task-review --status approved`
 
 #### Pattern 2: Parallel Execution (Independent Files)
 For stories with independent tasks touching different file scopes:
@@ -72,10 +92,10 @@ For stories with independent tasks touching different file scopes:
 
 #### Pattern 3: Agent-Assisted Review
 For complex code review:
-1. Agent runs preflight, presents report
+1. Agent runs `acts state read`, presents report
 2. Agent suggests review approach
-3. Human reviews in GitHuman (v0.6.2+ default) or lazygit (v0.5.0)
-4. Agent addresses comments, human approves
+3. Human reviews changes
+4. Agent addresses comments, human approves via `acts gate add`
 
 ### Architecture
 - Frontend: React 19 + TypeScript

@@ -17,11 +17,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       
-      - name: Install dependencies
-        run: npm install -g ajv-cli
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+      
+      - name: Build ACTS
+        working-directory: ./acts-core
+        run: zig build release
       
       - name: Validate ACTS
-        run: .acts/bin/acts-validate --json
+        run: ./acts-core/zig-out/bin/acts validate
 ```
 
 ---
@@ -29,85 +35,64 @@ jobs:
 ## GitLab CI
 
 ```yaml
-acts-validation:
-  image: node:20
+validate-acts:
+  image: alpine:latest
+  before_script:
+    - apk add --no-cache curl tar
+    - curl -L https://github.com/tommasop/acts-spec/releases/download/v1.0.0/acts-linux-x86_64.tar.gz | tar xz
+    - mv acts-linux-x86_64 /usr/local/bin/acts
   script:
-    - npm install -g ajv-cli
-    - .acts/bin/acts-validate --json
-  only:
-    - merge_requests
-    - main
+    - acts validate
 ```
 
 ---
 
-## What Gets Validated
+## Local Pre-commit Hook
 
-- AGENTS.md has required sections
-- state.json is valid JSON
-- Session files follow naming convention
-- All required operations exist
-- No DONE tasks with empty files_touched
-- No IN_PROGRESS tasks without assignee
+```bash
+#!/bin/sh
+# .git/hooks/pre-commit
 
----
-
-## Validation Output
-
-```json
-{"pass": 42, "fail": 0, "warn": 1}
+if [ -f .acts/acts.db ]; then
+  acts validate || exit 1
+fi
 ```
 
-Non-zero `fail` count = merge blocked.
+---
+
+## Makefile Target
+
+```makefile
+validate:
+	acts validate
+
+ci: validate test lint
+```
 
 ---
 
-## Without lazygit (CI-only)
-
-If you don't want to install lazygit in CI:
+## CircleCI
 
 ```yaml
-- name: Validate ACTS
-  run: .acts/bin/acts-validate --json
-  env:
-    ACTS_NO_REVIEW_PROVIDER: true
+version: 2.1
+
+jobs:
+  validate:
+    docker:
+      - image: cimg/base:stable
+    steps:
+      - checkout
+      - run:
+          name: Install ACTS
+          command: |
+            curl -L https://github.com/tommasop/acts-spec/releases/download/v1.0.0/acts-linux-x86_64.tar.gz | tar xz
+            sudo mv acts-linux-x86_64 /usr/local/bin/acts
+      - run:
+          name: Validate
+          command: acts validate
+
+workflows:
+  validate:
+    jobs:
+      - validate
 ```
-
-This skips review provider availability checks.
-
----
-
-## MCP Server Validation (Layer 7)
-
-To verify the MCP server starts correctly in CI:
-
-```yaml
-- name: Validate MCP Server
-  run: |
-    cd .acts/mcp-server
-    npm install
-    npm run build
-    node -e "
-      const { spawn } = require('child_process');
-      const server = spawn('node', ['dist/index.js']);
-      const init = JSON.stringify({jsonrpc:'2.0',id:1,method:'initialize',params:{protocolVersion:'2025-03-26',capabilities:{},clientInfo:{name:'ci',version:'1.0.0'}}}) + '\n';
-      server.stdin.write(init);
-      server.stdout.on('data', d => {
-        const lines = d.toString().split('\n').filter(Boolean);
-        for (const line of lines) {
-          const msg = JSON.parse(line);
-          if (msg.id === 1 && msg.result) {
-            console.log('MCP server: OK — ' + msg.result.serverInfo.name + ' v' + msg.result.serverInfo.version);
-            server.kill();
-            process.exit(0);
-          }
-        }
-      });
-      setTimeout(() => { console.error('MCP server timeout'); process.exit(1); }, 5000);
-    "
-```
-
-This verifies:
-- MCP server builds successfully
-- Server starts and responds to initialize handshake
-- Capabilities are correctly advertised

@@ -8,12 +8,12 @@ ACTS is a protocol that coordinates how developers use AI coding agents on share
 
 ACTS defines:
 
-1. **Operations** — Workflows your agent executes (preflight, handoff, etc.)
-2. **State** — A `.story/` directory tracking what's been done
-3. **Gates** — Points where humans must approve before proceeding
-4. **Sessions** — Records of what happened each time someone worked
+1. **State** — A SQLite database (`.acts/acts.db`) tracking stories, tasks, and gates
+2. **Gates** — Points where humans must approve before proceeding (enforced at database level)
+3. **Sessions** — Records of what happened each time someone worked
+4. **Ownership** — Which completed tasks own which files
 
-Your AI agent reads these files and follows the rules. You approve at gates.
+Your AI agent reads state and follows the rules. SQLite triggers enforce gates.
 
 ## What is AGENTS.md?
 
@@ -30,7 +30,7 @@ See the [AGENTS.md standard](https://agents.md/) for details.
 **Yes, for two reasons:**
 
 1. **Session summaries** — Remember what you did and why, even months later
-2. **Code review** — GitHuman (or lazygit) catches issues before commit
+2. **Gate enforcement** — SQLite triggers prevent accidental state transitions
 
 ## Do I need ACTS if I already have agent rules (Cursor Rules, CLAUDE.md)?
 
@@ -46,15 +46,15 @@ No. Freelancers and open source maintainers benefit from:
 
 - Context persistence (session summaries)
 - Cost tracking (agent attribution)
-- Quality assurance (code review gates)
+- Quality assurance (gate enforcement)
 
 ## What AI tools does ACTS work with?
 
-Any tool that can read markdown files, including those that support AGENTS.md:
+Any tool that can run CLI commands:
 
 - Cursor
 - Claude Code
-- OpenCode
+- OpenCode (with plugin)
 - Copilot
 - Gemini CLI
 - Codex
@@ -63,21 +63,38 @@ Any tool that can read markdown files, including those that support AGENTS.md:
 - Devin
 - Any custom agent
 
-## Do I need a code review tool?
+## How do I install ACTS?
 
-For v0.6.2+ code review: GitHuman is the default (npm install -g githuman).
-For basic ACTS: no, you can disable code review in `.acts/acts.json`.
-Alternative: lazygit is also supported (brew install lazygit).
+```bash
+# Download pre-built binary
+curl -L https://github.com/tommasop/acts-spec/releases/download/v1.0.0/acts-linux-x86_64.tar.gz | tar xz
+sudo mv acts-linux-x86_64 /usr/local/bin/acts
+
+# Or build from source
+cd acts-core && zig build release
+```
 
 ## What's the minimum to try ACTS?
 
-3 files: `AGENTS.md`, `.acts/acts.json`, `.story/state.json`
+3 things: the binary, `AGENTS.md`, and `acts init`:
+
+```bash
+acts init TEST-1 --title "My First ACTS Story"
+# Creates:
+#   .acts/acts.db      (SQLite database)
+#   .story/plan.md     (plan template)
+#   .story/spec.md     (spec template)
+#   .story/sessions/   (session directory)
+```
 
 See [Minimal Viable ACTS](minimal-viable-acts.md).
 
 ## Is this a framework I need to install?
 
-No. ACTS is markdown files in your repo. Your agent reads them. Nothing to install except optionally GitHuman (or lazygit) for code review.
+You install a single binary (`acts`). Everything else lives in your repo:
+- `.acts/acts.db` — SQLite state
+- `.story/` — Markdown narratives
+- `AGENTS.md` — Project constitution
 
 ## How does ACTS compare to Cursor Rules / CLAUDE.md?
 
@@ -85,7 +102,7 @@ No. ACTS is markdown files in your repo. Your agent reads them. Nothing to insta
 |---|---|---|
 | Scope | One tool | Any tool |
 | Purpose | How to write code | How to coordinate work |
-| State | None | `.story/` directory |
+| State | None | SQLite database |
 | Human oversight | None | Gates at key decisions |
 | Multi-developer | Not addressed | First-class handoffs |
 | Industry standard | No (tool-specific) | Yes (AGENTS.md) |
@@ -98,36 +115,27 @@ No. ACTS is git-native. All state lives in the repository.
 
 The agent will report non-compliance in the session summary's "Agent Compliance" section. This enables you to identify patterns and adjust agent configuration.
 
+SQLite triggers also prevent invalid state transitions even if the agent tries to bypass the binary.
+
 ## How much does ACTS cost?
 
-ACTS itself is free (CC-BY-SA-4.0).
+ACTS itself is free (MIT License).
 Your AI agent tool may have costs.
-ACTS tracks token usage so you can see what you're spending.
-
-## What is Layer 7 (MCP Context Engine)?
-
-Layer 7 is an optional MCP server that provides intelligent context delivery. Instead of agents reading files ad-hoc, the server delivers pre-assembled context bundles optimized for each ACTS operation. It solves 10 standard context problems including instruction drift, tool call residue, and context degradation.
-
-Layer 7 is optional — it accelerates existing layers but doesn't replace them. The file-based system remains the source of truth.
-
-## Should I use Layer 7?
-
-**If you're starting out:** No. Begin with Layers 1-3.
-
-**If you experience context issues:** Yes. Symptoms include: agent forgets AGENTS.md rules mid-session, agent repeats rejected approaches, session summaries contain fabricated claims, agent drifts from scope on long tasks.
-
-**If you work on large stories (6+ tasks):** Recommended. Context management becomes critical at scale.
-
-See the [Layer 7 design spec](superpowers/specs/2026-03-31-acts-layer7-mcp-context-engine-design.md) for details.
+ACTS tracks token usage in session summaries so you can see what you're spending.
 
 ## What is strict mode?
 
-ACTS Strict (`conformance_level: "strict"`) adds two extra gates:
+ACTS Strict adds extra gate types:
 
-1. **Per-batch commit review** — Agent groups commits into batches (1-5) and gets your approval before continuing.
-2. **Architecture discussion** — Before making significant design decisions (new dependencies, API changes, pattern changes), agent presents its reasoning and gets your approval.
+1. **commit-review** — Agent groups commits into batches and gets approval before continuing.
+2. **architecture-discuss** — Before making significant design decisions, agent presents reasoning and gets approval.
 
-Both gates are hard stops — agent waits for your explicit confirmation. This gives you much more control over AI-generated code at the cost of more interaction.
+Enable in `.acts/acts.json`:
+```json
+{
+  "conformance_level": "strict"
+}
+```
 
 ## Do I need superpowers?
 
@@ -138,25 +146,43 @@ Superpowers handles single-developer agent quality (TDD, planning, code review, 
 
 Install at: https://github.com/obra/superpowers
 
-## What is gh-stack integration?
+## How do gates work?
 
-gh-stack (GitHub Stacked PRs) turns ACTS task branches into stacked PRs on GitHub.
-Each task gets its own focused PR with independent CI and stack navigation.
+Gates are enforced by SQLite triggers in `.acts/acts.db`:
 
-**Benefits:** Each task reviewed as focused PR, GitHub stack map for dependency navigation, ordered merge.
-
-**Requires:** `gh extension install github/gh-stack` + private preview access ([sign up](https://gh.io/stacksbeta))
-
-**Enable in `.acts/acts.json`:**
-```json
-{
-  "gh_stack": {
-    "enabled": true,
-    "prefix": "story/<STORY_ID>",
-    "numbered": true,
-    "draft_prs": true
-  }
-}
+```sql
+-- Cannot start task without preflight gate
+CREATE TRIGGER enforce_preflight_gate
+BEFORE UPDATE OF status ON tasks
+WHEN NEW.status = 'IN_PROGRESS' AND OLD.status = 'TODO'
+BEGIN
+  SELECT CASE WHEN (
+    SELECT COUNT(*) FROM gate_checkpoints
+    WHERE task_id = NEW.id AND gate_type = 'approve' AND status = 'approved'
+  ) = 0
+  THEN RAISE(ABORT, 'Cannot start task: preflight gate not approved')
+  END;
+END;
 ```
 
-**Limitation:** GitHub only. Not portable to GitLab, Bitbucket, etc.
+This means an agent **cannot** bypass gates by editing files directly. The database enforces the rules.
+
+## Can I migrate from the old JSON-based ACTS?
+
+Yes. The binary can ingest old `.story/state.json`:
+
+```bash
+cat .story/state.json | acts state write --story <story-id>
+```
+
+Then remove `.story/state.json` — SQLite is now the source of truth.
+
+## Where is the data stored?
+
+| Data | Location | Format |
+|------|----------|--------|
+| Story state, tasks, gates | `.acts/acts.db` | SQLite |
+| Decisions, approaches, questions | `.acts/acts.db` | SQLite |
+| Plan, spec | `.story/plan.md`, `.story/spec.md` | Markdown |
+| Session summaries | `.story/sessions/*.md` | Markdown |
+| Task notes | `.story/tasks/<id>/notes.md` | Markdown |
