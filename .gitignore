@@ -3,7 +3,13 @@ dist/
 
 # ACTS Protocol
 .story/
+.acts/bin/acts
 .acts/mcp-server/node_modules/
 .acts/mcp-server/dist/
 __pycache__/
 *.pyc
+
+# Zig build artifacts
+acts-core/.zig-cache/
+acts-core/zig-out/
+acts-core/*.db
