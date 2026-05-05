@@ -1,0 +1,69 @@
+name: CI
+
+on:
+  push:
+    branches: [ master, main, 'acts-core-v*' ]
+  pull_request:
+    branches: [ master, main ]
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+
+      - name: Build
+        working-directory: ./acts-core
+        run: zig build
+
+      - name: Run tests
+        working-directory: ./acts-core
+        run: zig build test
+
+      - name: Test init command
+        run: |
+          ./acts-core/zig-out/bin/acts init CI-TEST --title "CI Test Story"
+
+      - name: Test gate enforcement
+        run: |
+          sqlite3 .acts/acts.db "INSERT INTO tasks (id, story_id, title, description, status) VALUES ('T1', 'CI-TEST', 'Test', 'Desc', 'TODO');"
+          # Should fail without preflight gate
+          if ./acts-core/zig-out/bin/acts task update T1 --status IN_PROGRESS; then
+            echo "ERROR: Should have failed without preflight gate"
+            exit 1
+          fi
+          # Add preflight gate and succeed
+          ./acts-core/zig-out/bin/acts gate add --task T1 --type approve --status approved --by ci
+          ./acts-core/zig-out/bin/acts task update T1 --status IN_PROGRESS
+
+      - name: Test validate
+        run: ./acts-core/zig-out/bin/acts validate
+
+  build:
+    name: Build Release
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+
+      - name: Build release
+        working-directory: ./acts-core
+        run: zig build release
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: acts-linux-x86_64
+          path: acts-core/zig-out/bin/acts
+          if-no-files-found: error

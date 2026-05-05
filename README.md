@@ -1,200 +1,335 @@
-# ACTS — Agent Collaborative Tracking Standard
+# ACTS Core v1.0.0
 
-**The protocol for developers using AI agents on shared code.**
+**Agent Collaborative Tracking Standard** — A standalone binary for multi-developer coordination using SQLite-backed state and protocol enforcement.
 
----
+[![CI](https://github.com/tommasop/acts-spec/actions/workflows/ci.yml/badge.svg)](https://github.com/tommasop/acts-spec/actions/workflows/ci.yml)
+[![Release](https://github.com/tommasop/acts-spec/actions/workflows/release.yml/badge.svg)](https://github.com/tommasop/acts-spec/releases)
 
-## The Problem
+## What is ACTS?
 
-When multiple developers use AI coding agents on shared work, three failures emerge:
+ACTS is a protocol for coordinating AI-assisted software development across multiple sessions, developers, and tools. It prevents context loss, enforces code review gates, tracks file ownership, and maintains an audit trail of decisions.
 
-- **Drift** — agents diverge from the agreed technical design
-- **Duplication** — agents reimplement already-completed work
-- **Context loss** — handoffs between developers lose decisions and state
+**Key features:**
+- **SQLite-backed state** — Structured data (stories, tasks, gates, decisions) in `.acts/acts.db`
+- **Gate enforcement at database level** — SQLite triggers prevent invalid state transitions
+- **Markdown narratives** — Session summaries, plans, and specs remain human-readable
+- **Standalone binary** — Single Zig executable, no runtime dependencies (except libc)
+- **Cross-platform** — Linux (x86_64, aarch64), macOS (x86_64, aarch64)
 
-## The Solution
+## Installation
 
-ACTS defines a minimal, git-native protocol that sits above your tools.
+### Pre-built Binaries
 
-Your AI agent (Cursor, Claude Code, Copilot, etc.) reads operation files and executes structured workflows. Humans approve at gates. State lives in your repo.
+Download from [GitHub Releases](https://github.com/tommasop/acts-spec/releases):
 
-```text
-┌─────────────────────────────────────────────┐
-│  Layer 7: MCP CONTEXT ENGINE (OPTIONAL)     │
-│  Operation-aware context delivery            │
-├─────────────────────────────────────────────┤
-│  Layer 6: CODE REVIEW                       │
-│  GitHuman (default) or lazygit, mandatory   │
-│  before task completion                     │
-├─────────────────────────────────────────────┤
-│  Layer 5: ADAPTERS (community)              │
-│  Tool-specific bridges                      │
-├─────────────────────────────────────────────┤
-│  Layer 4: COMMUNICATION                     │
-│  Changelog, tracker sync                    │
-├─────────────────────────────────────────────┤
-│  Layer 3: OPERATIONS                        │
-│  Portable workflow definitions              │
-├─────────────────────────────────────────────┤
-│  Layer 2: STATE                             │
-│  .story/ directory, sessions                │
-├─────────────────────────────────────────────┤
-│  Layer 1: CONSTITUTION                      │
-│  AGENTS.md — shared rules                   │
-└─────────────────────────────────────────────┘
+```bash
+# Linux x86_64
+curl -L https://github.com/tommasop/acts-spec/releases/download/v1.0.0/acts-linux-x86_64.tar.gz | tar xz
+sudo mv acts-linux-x86_64 /usr/local/bin/acts
+
+# macOS Apple Silicon
+curl -L https://github.com/tommasop/acts-spec/releases/download/v1.0.0/acts-macos-aarch64.tar.gz | tar xz
+sudo mv acts-macos-aarch64 /usr/local/bin/acts
 ```
 
-## AGENTS.md Integration
+### Build from Source
 
-ACTS uses the industry-standard `AGENTS.md` file — adopted by 60k+ open source projects and supported by Cursor, Claude Code, OpenCode, Copilot, Gemini CLI, and many other tools.
+Requires [Zig 0.13.0](https://ziglang.org/download/):
 
-**One file serves dual purpose:**
+```bash
+cd acts-core
+zig build release
+# Binary: zig-out/bin/acts
+```
 
-1. **Project context** for any AI agent (setup, code style, testing)
-2. **ACTS rules** for multi-developer coordination
+### Project Setup
 
-See [AGENTS.md standard](https://agents.md/) for details.
+Add the binary to your project:
+
+```bash
+# Option 1: Copy to project
+cp acts-core/zig-out/bin/acts .acts/bin/acts
+
+# Option 2: Install globally
+zig build release && sudo cp zig-out/bin/acts /usr/local/bin/
+```
 
 ## Quick Start
 
-### New project (copy full template)
+### Initialize a Story
 
 ```bash
-# 1. Copy this repo's .acts/ directory into your project
-cp -r acts-spec/.acts ./.acts/
-
-# 2. Create your AGENTS.md (project context + ACTS rules)
-cp acts-spec/docs/templates/agents-minimal.md ./AGENTS.md
-
-# 3. Create state directories
-mkdir -p .story/{tasks,sessions,reviews/{active,archive}}
-
-# 4. Install code review tool (GitHuman recommended)
-# GitHuman (default) - web-based interface
-npm install -g githuman
-
-# OR lazygit - terminal-based interface
-# brew install lazygit
-
-# 5. Install superpowers (agent workflow skills — TDD, planning, code review)
-#    See https://github.com/obra/superpowers for platform-specific install
-#    Claude Code: /plugin install superpowers@claude-plugins-official
-#    Cursor: /add-plugin superpowers
-
-# 6. Start your first story
-# In your AI coding agent (Cursor, Claude Code, etc.):
-"Initialize ACTS tracker for PROJ-XXX, title 'Your Feature'"
+acts init PROJ-42 --title "Add user authentication"
+# Creates:
+#   .acts/acts.db      (SQLite database)
+#   .story/plan.md     (plan template)
+#   .story/spec.md     (spec template)
+#   .story/sessions/   (session directory)
 ```
 
-### Existing project (append to existing AGENTS.md)
+### Read State
 
 ```bash
-# 1. Copy this repo's .acts/ directory into your project
-cp -r acts-spec/.acts ./.acts/
-
-# 2. Append ACTS section to your existing AGENTS.md
-./acts-spec/scripts/append-acts.sh ./AGENTS.md
-
-# 3. Create state directories
-mkdir -p .story/{tasks,sessions,reviews/{active,archive}}
-
-# 4. Install code review tool (GitHuman recommended)
-# GitHuman (default) - web-based interface
-npm install -g githuman
-
-# OR lazygit - terminal-based interface
-# brew install lazygit
-
-# 5. Install superpowers (agent workflow skills)
-#    See https://github.com/obra/superpowers for platform-specific install
+acts state read
+# Outputs JSON:
+# {
+#   "story_id": "PROJ-42",
+#   "status": "ANALYSIS",
+#   "tasks": [...]
+# }
 ```
 
-### Quick Install (one-liner)
-
-For new or existing projects, use the automated installer:
+### Update State
 
 ```bash
-curl -sL https://raw.githubusercontent.com/tommasop/acts-spec/master/scripts/install-acts.sh | bash
+echo '{"status": "APPROVED", "spec_approved": true}' | acts state write --story PROJ-42
 ```
 
-This single command will:
+### Manage Tasks
 
-- Download and install the `.acts/` directory
-- Create the `.story/` directory structure  
-- Create or update `AGENTS.md` with ACTS integration
-- Install GitHuman (default, for code review - web-based)
-- Optionally install lazygit (alternative - terminal-based)
-- Install superpowers (for agent workflow skills)
-- Update `.gitignore` with recommended entries
+```bash
+# Create task (via state write)
+echo '{"tasks": [{"id": "T1", "title": "Add login endpoint", "status": "TODO"}]}' | acts state write --story PROJ-42
 
-## How It Works
+# Start task (requires preflight gate)
+acts gate add --task T1 --type approve --status approved --by developer
+acts task update T1 --status IN_PROGRESS --assigned-to alice
 
-1. **Initialize a story** — Creates spec, plan, and task breakdown
-2. **Before coding** — Preflight validates scope, creates task branch, ingests context
-3. **Implement** — Agent codes on task branch, you review via GitHuman (browser) or lazygit (terminal)
-4. **Code review gate** — Mandatory review before task completion (hard stop)
-5. **End your day** — Session summary captures what happened
-6. **Hand off** — Next developer picks up with full context
+# Complete task (requires task-review gate)
+acts gate add --task T1 --type task-review --status approved --by reviewer
+acts task update T1 --status DONE
+```
 
-## What You Get
+### Check File Ownership
 
-- ✅ Drift prevention (preflight checks scope)
-- ✅ Context persistence (session summaries in git)
-- ✅ File ownership tracking (no duplicate work)
-- ✅ Human oversight (all gates are hard stops)
-- ✅ Code review (mandatory before task completion)
-- ✅ Branch-per-task isolation (compatible with all tools)
-- ✅ Agent attribution (track what AI did and cost)
-- ✅ Industry alignment (AGENTS.md standard)
-- ✅ Context optimization (Layer 7: MCP engine eliminates tool call residue)
-- ✅ Cross-task learning (Layer 7: rejected approaches shared across tasks)
-- ✅ Strict mode (optional) — per-commit review + architecture discussion gates
-- ✅ Superpowers integration — TDD, planning, code review, debugging skills
-- ✅ GitHub Stacked PRs adapter (optional) — each task as focused, reviewable PR
-- ✅ Update tool — safe framework updates with backup, merge, restore (`acts-update --check`)
+```bash
+acts ownership map
+# Shows which DONE tasks own which files
 
-## What ACTS Is NOT
+acts scope check --task T2 --file src/auth.ts
+# {
+#   "file_path": "src/auth.ts",
+#   "action": "error",
+#   "message": "File is owned by DONE task T1. Modifications require explicit approval."
+# }
+```
 
-- ❌ A framework or library to install
-- ❌ A specific AI tool or IDE
-- ❌ A complex orchestration system
-- ❌ Tied to any vendor or platform
+### Validate Sessions
 
-## What ACTS IS
+```bash
+acts session parse .story/sessions/20260105-143022-alice.md
+# Outputs structured JSON
 
-- ✅ A protocol defined in markdown files
-- ✅ Git-native (everything in your repo)
-- ✅ Works with any AI coding agent
-- ✅ Incremental (adopt what you need)
-- ✅ Industry standard (AGENTS.md)
+acts session validate .story/sessions/20260105-143022-alice.md
+# Exit 0 if valid, 1 if missing required sections
+```
 
-## Files
+### Validate Project
 
-| File | Purpose |
-|------|---------|
-| [acts-v0.6.0.md](acts-v0.6.0.md) | Full specification (includes Layer 7) |
-| [.acts/operations/](.acts/operations/) | Workflow definitions (15 operations) |
-| [.acts/schemas/](.acts/schemas/) | JSON schemas for validation |
-| [.acts/bin/acts-update](.acts/bin/acts-update) | Framework update tool (backup, merge, restore) |
-| [.acts/mcp-server/](.acts/mcp-server/) | Layer 7 MCP Context Engine (TypeScript) |
-| [.acts/report-protocol.md](.acts/report-protocol.md) | Standard report formats |
-| [docs/templates/](docs/templates/) | AGENTS.md templates |
-| [docs/slides-acts-v0.4.0.md](docs/slides-acts-v0.4.0.md) | Presentation slides |
-| [docs/faq.md](docs/faq.md) | Frequently asked questions |
-| [docs/minimal-viable-acts.md](docs/minimal-viable-acts.md) | Absolute minimum to try ACTS |
-| [Layer 7 design spec](docs/superpowers/specs/2026-03-31-acts-layer7-mcp-context-engine-design.md) | MCP Context Engine design |
+```bash
+acts validate
+# Checks schema version, required files, session validity
+```
 
-## Design Principles
+## Command Reference
 
-| Principle | Meaning |
-|---|---|
-| **Git-native** | All state lives in the repository |
-| **Tool-agnostic** | Works with any AI coding agent |
-| **Language-agnostic** | No assumptions about your stack |
-| **Human-readable** | Every artifact is Markdown or JSON |
-| **Machine-readable** | Schemas strict enough for agents to parse |
-| **Incremental** | Adopt partially. Each layer adds value |
+| Command | Description | Example |
+|---------|-------------|---------|
+| `init <story-id>` | Initialize new story | `acts init PROJ-42` |
+| `state read` | Read story state as JSON | `acts state read` |
+| `state write` | Write story state from JSON | `echo '{...}' \| acts state write --story PROJ-42` |
+| `task get <id>` | Get task details | `acts task get T1` |
+| `task update <id>` | Update task status | `acts task update T1 --status DONE` |
+| `gate add` | Add gate checkpoint | `acts gate add --task T1 --type approve --status approved` |
+| `gate list` | List checkpoints | `acts gate list --task T1` |
+| `decision add` | Record decision | `echo '{...}' \| acts decision add` |
+| `decision list` | List decisions | `acts decision list --task T1` |
+| `approach add --rejected` | Record rejected approach | `echo '{...}' \| acts approach add --rejected` |
+| `question add` | Add open question | `echo '{...}' \| acts question add` |
+| `question resolve` | Resolve question | `acts question resolve 1 --resolution "..."` |
+| `ownership map` | Show file ownership | `acts ownership map` |
+| `scope check` | Check file scope | `acts scope check --task T1 --file src/auth.ts` |
+| `session parse` | Parse session markdown | `acts session parse file.md` |
+| `session validate` | Validate session | `acts session validate file.md` |
+| `validate` | Full project validation | `acts validate` |
+| `migrate` | Force schema migration | `acts migrate` |
+
+## Architecture
+
+### Data Model
+
+**SQLite** (`.acts/acts.db`) — Source of truth for structured data:
+- `stories` — Story metadata and status
+- `tasks` — Task definitions with status and assignments
+- `task_files` — Many-to-many mapping of tasks to files
+- `task_dependencies` — Dependency graph
+- `gate_checkpoints` — Gate approvals with timestamps
+- `decisions` — Recorded decisions with evidence
+- `rejected_approaches` — Cross-task learning
+- `open_questions` — Unresolved questions
+- `operation_log` — Audit trail
+
+**Markdown files** — Human-readable narratives:
+- `.story/plan.md` — Implementation plan
+- `.story/spec.md` — Specification and acceptance criteria
+- `.story/sessions/*.md` — Session summaries
+- `.story/tasks/<id>/notes.md` — Per-task notes
+
+### Gate Enforcement
+
+SQLite triggers enforce protocol gates at the database level:
+
+```sql
+-- Cannot start task without preflight gate
+CREATE TRIGGER enforce_preflight_gate
+BEFORE UPDATE OF status ON tasks
+WHEN NEW.status = 'IN_PROGRESS' AND OLD.status = 'TODO'
+BEGIN
+  SELECT CASE WHEN (
+    SELECT COUNT(*) FROM gate_checkpoints
+    WHERE task_id = NEW.id AND gate_type = 'approve' AND status = 'approved'
+  ) = 0
+  THEN RAISE(ABORT, 'Cannot start task: preflight gate not approved')
+  END;
+END;
+
+-- Cannot mark task DONE without task-review gate
+CREATE TRIGGER enforce_task_review_gate
+BEFORE UPDATE OF status ON tasks
+WHEN NEW.status = 'DONE' AND OLD.status != 'DONE'
+BEGIN
+  SELECT CASE WHEN (
+    SELECT COUNT(*) FROM gate_checkpoints
+    WHERE task_id = NEW.id AND gate_type = 'task-review' AND status = 'approved'
+  ) = 0
+  THEN RAISE(ABORT, 'Cannot mark task DONE: task-review gate not approved')
+  END;
+END;
+```
+
+This means:
+- An agent **cannot** bypass gates by editing files directly
+- Enforcement happens in SQLite, not in application code
+- Even if the binary is bypassed, the triggers still fire
+
+## Integration Guides
+
+### OpenCode (Plugin)
+
+The OpenCode plugin provides seamless integration with automatic context injection and a native `acts` tool.
+
+**Installation:**
+
+```bash
+# In your project's opencode.json
+{
+  "plugin": [
+    "superpowers@git+https://github.com/obra/superpowers.git",
+    "./.opencode/plugins/acts.js"
+  ]
+}
+```
+
+**What the plugin does:**
+1. Injects ACTS bootstrap context into the first user message of every session
+2. Registers an `acts` tool that the agent can call directly
+3. Auto-discovers the binary at `.acts/bin/acts`
+
+**Agent usage:**
+```
+# The agent automatically knows to:
+acts state read                           # Before writing code
+acts scope check --task T1 --file src/x   # Before modifying files
+acts gate add --task T1 --type task-review --status approved  # After review
+```
+
+See [docs/INTEGRATION.md](docs/INTEGRATION.md) for details.
+
+### Claude / Cursor / Other Editors (Manual)
+
+For editors without plugin support, agents use the binary via CLI commands.
+
+**Setup:**
+1. Install the binary (pre-built or from source)
+2. Add to project `AGENTS.md`:
+   ```markdown
+   ## ACTS Commands
+   - Read state: `acts state read`
+   - Check ownership: `acts scope check --task <id> --file <path>`
+   - Add gate: `acts gate add --task <id> --type <type> --status approved`
+   ```
+
+**Agent workflow:**
+```bash
+# 1. Preflight
+acts state read
+acts gate add --task T1 --type approve --status approved --by developer
+acts task update T1 --status IN_PROGRESS
+
+# 2. Implementation
+# ... agent writes code ...
+
+# 3. Review
+acts gate add --task T1 --type task-review --status approved --by reviewer
+acts task update T1 --status DONE
+
+# 4. Session summary
+acts session validate .story/sessions/20260105-143022-alice.md
+```
+
+See [docs/INTEGRATION.md](docs/INTEGRATION.md) for platform-specific setup.
+
+## Development
+
+### Project Structure
+
+```
+acts-core/
+├── build.zig          # Build configuration
+├── build.zig.zon      # Package manifest
+├── src/
+│   ├── main.zig       # CLI entrypoint and command dispatch
+│   ├── db.zig         # SQLite wrapper, CRUD, migrations
+│   ├── cli.zig        # Argument parsing
+│   ├── sessions.zig   # Markdown parser and validator
+│   └── schema.sql     # Embedded SQLite schema + triggers
+├── vendor/
+│   ├── sqlite3.c      # Vendored SQLite3 (amalgamation)
+│   └── sqlite3.h
+└── tests/             # Unit tests
+```
+
+### Build Commands
+
+```bash
+cd acts-core
+
+# Debug build
+zig build
+
+# Run tests
+zig build test
+
+# Release build (optimized)
+zig build release
+
+# Cross-compile for all platforms
+zig build cross
+```
+
+### Adding a New Command
+
+1. Add command parser in `src/main.zig` (`handleXxx` function)
+2. Add database method in `src/db.zig`
+3. Update `printUsage()` with new command
+4. Register in command dispatch in `main()`
 
 ## License
 
-CC-BY-SA-4.0
+MIT License — See [LICENSE](LICENSE)
+
+## Contributing
+
+1. Run `acts validate` before committing
+2. Follow the ACTS protocol for your own contributions
+3. Ensure cross-compilation passes: `zig build cross`

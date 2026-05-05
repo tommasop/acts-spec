@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-linux-gnu
+            os: ubuntu-latest
+            name: linux-x86_64
+          - target: aarch64-linux-gnu
+            os: ubuntu-latest
+            name: linux-aarch64
+          - target: x86_64-macos-none
+            os: macos-latest
+            name: macos-x86_64
+          - target: aarch64-macos-none
+            os: macos-latest
+            name: macos-aarch64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Zig
+        uses: mlugg/setup-zig@v1
+        with:
+          version: 0.13.0
+
+      - name: Build
+        working-directory: ./acts-core
+        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp acts-core/zig-out/bin/acts dist/acts-${{ matrix.name }}
+          chmod +x dist/acts-${{ matrix.name }}
+          cd dist
+          tar czf acts-${{ matrix.name }}.tar.gz acts-${{ matrix.name }}
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: acts-${{ matrix.name }}
+          path: dist/acts-${{ matrix.name }}.tar.gz
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: acts-*
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/*.tar.gz
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
