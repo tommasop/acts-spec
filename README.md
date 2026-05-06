@@ -10,6 +10,7 @@
 ACTS is a protocol for coordinating AI-assisted software development across multiple sessions, developers, and tools. It prevents context loss, enforces code review gates, tracks file ownership, and maintains an audit trail of decisions.
 
 **Key features:**
+
 - **SQLite-backed state** — Structured data (stories, tasks, gates, decisions) in `.acts/acts.db`
 - **Gate enforcement at database level** — SQLite triggers prevent invalid state transitions
 - **Markdown narratives** — Session summaries, plans, and specs remain human-readable
@@ -159,6 +160,7 @@ acts validate
 ### Data Model
 
 **SQLite** (`.acts/acts.db`) — Source of truth for structured data:
+
 - `stories` — Story metadata and status
 - `tasks` — Task definitions with status and assignments
 - `task_files` — Many-to-many mapping of tasks to files
@@ -170,6 +172,7 @@ acts validate
 - `operation_log` — Audit trail
 
 **Markdown files** — Human-readable narratives:
+
 - `.story/plan.md` — Implementation plan
 - `.story/spec.md` — Specification and acceptance criteria
 - `.story/sessions/*.md` — Session summaries
@@ -208,6 +211,7 @@ END;
 ```
 
 This means:
+
 - An agent **cannot** bypass gates by editing files directly
 - Enforcement happens in SQLite, not in application code
 - Even if the binary is bypassed, the triggers still fire
@@ -225,17 +229,19 @@ The OpenCode plugin provides seamless integration with automatic context injecti
 {
   "plugin": [
     "superpowers@git+https://github.com/obra/superpowers.git",
-    "./.opencode/plugins/acts.js"
+    "acts-spec@git+https://github.com/tommasop/acts-spec.git"
   ]
 }
 ```
 
 **What the plugin does:**
+
 1. Injects ACTS bootstrap context into the first user message of every session
 2. Registers an `acts` tool that the agent can call directly
 3. Auto-discovers the binary at `.acts/bin/acts`
 
 **Agent usage:**
+
 ```
 # The agent automatically knows to:
 acts state read                           # Before writing code
@@ -250,8 +256,10 @@ See [docs/INTEGRATION.md](docs/INTEGRATION.md) for details.
 For editors without plugin support, agents use the binary via CLI commands.
 
 **Setup:**
+
 1. Install the binary (pre-built or from source)
 2. Add to project `AGENTS.md`:
+
    ```markdown
    ## ACTS Commands
    - Read state: `acts state read`
@@ -260,6 +268,7 @@ For editors without plugin support, agents use the binary via CLI commands.
    ```
 
 **Agent workflow:**
+
 ```bash
 # 1. Preflight
 acts state read
