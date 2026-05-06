@@ -2,6 +2,19 @@
 
 This guide walks through migrating an existing ACTS 0.6.2 project to the new SQLite-backed v1.0.0 binary.
 
+The 0.6.2 `state.json` format has this structure:
+```json
+{
+  "story": { "key": "...", "title": "...", "status": "...", ... },
+  "acts": { "manifest_version": "0.6.2", "conformance_level": "...", ... },
+  "tasks": [ { "id": "T1", "files_affected": [...], "dependencies": [...], ... } ],
+  "sessions": [ { "id": "S1", "task_id": "T1", "summary": "...", ... } ],
+  "rules": { ... }
+}
+```
+
+This is migrated to SQLite `.acts/acts.db` and markdown files.
+
 ---
 
 ## What's Changed
@@ -9,13 +22,18 @@ This guide walks through migrating an existing ACTS 0.6.2 project to the new SQL
 | 0.6.2 | 1.0.0 | Action Required |
 |-------|-------|-----------------|
 | `.story/state.json` | `.acts/acts.db` (SQLite) | **Migrate data** |
+| `story.key` | `stories.id` | **Mapped** |
+| `story.status` (Jira) | `stories.status` (ACTS enum) | **Mapped** |
+| `tasks[].files_affected` | `task_files` table | **Migrated** |
+| `tasks[].dependencies` | `task_dependencies` table | **Migrated** |
+| `tasks[].owner` | `tasks.assigned_to` | **Mapped** |
+| `sessions[]` | `.story/sessions/*.md` | **Migrated** |
+| `acts` config | `.acts/acts.json` (updated) | **Migrated** |
 | Python scripts (`.acts/lib/`) | Zig binary (`acts`) | **Install binary** |
-| TypeScript MCP server (`.acts/mcp-server/`) | Removed | **Delete** |
-| Bash scripts (`.acts/bin/acts-update`, `acts-validate`) | `acts` CLI | **Delete old, use new** |
-| Operation definitions (`.acts/operations/*.md`) | Removed | **Delete** |
-| JSON schemas (`.acts/schemas/*.json`) | Embedded in binary | **Delete** |
-| `acts-update` for updates | `acts migrate` | **Use new command** |
-| `acts-validate` bash script | `acts validate` | **Use new command** |
+| TypeScript MCP server | Removed | **Delete** |
+| Bash scripts (`acts-update`, `acts-validate`) | `acts` CLI | **Delete old** |
+| Operation definitions | Removed | **Delete** |
+| JSON schemas | Embedded in binary | **Delete** |
 
 ---
 
@@ -31,7 +49,6 @@ git commit -m "backup: pre-migration to ACTS 1.0.0"
 **2. Ensure your `.story/state.json` is valid**
 
 ```bash
-# Check it's valid JSON
 python3 -m json.tool .story/state.json > /dev/null && echo "Valid JSON"
 ```
 
@@ -50,10 +67,7 @@ curl -L https://github.com/tommasop/acts-spec/releases/download/v1.0.0/acts-maco
 sudo mv acts-macos-aarch64 /usr/local/bin/acts
 
 # Option B: Build from source
-# Requires Zig 0.13.0
-git clone https://github.com/tommasop/acts-spec.git
-cd acts-spec/acts-core
-zig build release
+cd acts-core && zig build release
 sudo cp zig-out/bin/acts /usr/local/bin/
 ```
 
@@ -65,88 +79,55 @@ acts help
 
 ---
 
-## Step 2: Migrate State to SQLite
+## Step 2: Run the Migration Script
 
-**Create the SQLite database from your existing state.json:**
+Download the migration script:
 
 ```bash
-# Initialize the new database structure
-acts init $(jq -r '.story_id' .story/state.json) --title "$(jq -r '.title' .story/state.json)"
-
-# Migrate story fields
-jq -n \
-  --arg title "$(jq -r '.title' .story/state.json)" \
-  --arg status "$(jq -r '.status' .story/state.json)" \
-  --argjson spec_approved "$(jq '.spec_approved' .story/state.json)" \
-  --argjson context_budget "$(jq '.context_budget' .story/state.json)" \
-  --argjson strict_mode "$(jq '.strict_mode // false' .story/state.json)" \
-  '{title: $title, status: $status, spec_approved: $spec_approved, context_budget: $context_budget, strict_mode: $strict_mode}' \
-  | acts state write --story "$(jq -r '.story_id' .story/state.json)"
-
-# Migrate tasks
-jq -c '.tasks[]' .story/state.json | while read -r task; do
-  story_id=$(jq -r '.story_id' .story/state.json)
-  echo "[$story_id]" | jq --argjson task "$task" '{tasks: [$task]}' | acts state write --story "$story_id"
-done
+curl -L -o migrate-0.6.2-to-1.0.0.py \
+  https://raw.githubusercontent.com/tommasop/acts-spec/main/migrate-0.6.2-to-1.0.0.py
 ```
 
-**Alternative: Python migration script**
+Run it:
 
-If you have Python available, create `migrate.py`:
-
-```python
-#!/usr/bin/env python3
-import json
-import subprocess
-import sys
-
-def migrate_state(json_path):
-    with open(json_path) as f:
-        state = json.load(f)
-    
-    story_id = state['story_id']
-    
-    # Initialize
-    subprocess.run(['acts', 'init', story_id, '--title', state['title']], check=True)
-    
-    # Write story fields
-    story_update = {
-        'title': state['title'],
-        'status': state['status'],
-        'spec_approved': state.get('spec_approved', False),
-        'context_budget': state.get('context_budget', 50000),
-        'strict_mode': state.get('strict_mode', False),
-    }
-    proc = subprocess.Popen(
-        ['acts', 'state', 'write', '--story', story_id],
-        stdin=subprocess.PIPE,
-        text=True
-    )
-    proc.communicate(json.dumps(story_update))
-    proc.wait()
-    
-    # Write tasks
-    for task in state.get('tasks', []):
-        task_data = {
-            'tasks': [task]
-        }
-        proc = subprocess.Popen(
-            ['acts', 'state', 'write', '--story', story_id],
-            stdin=subprocess.PIPE,
-            text=True
-        )
-        proc.communicate(json.dumps(task_data))
-        proc.wait()
-    
-    print(f"Migrated story {story_id} with {len(state.get('tasks', []))} tasks")
-
-if __name__ == '__main__':
-    migrate_state('.story/state.json')
-```
-
-Run:
 ```bash
-python3 migrate.py
+python3 migrate-0.6.2-to-1.0.0.py .story/state.json
+```
+
+The script will:
+1. Initialize the database (`acts init <key> --title <title>`)
+2. Migrate story fields (status, spec_approved, strict_mode)
+3. Migrate all tasks with files_affected → task_files
+4. Migrate all dependencies → task_dependencies
+5. Create session markdown files from sessions[] array
+6. Update `.acts/acts.json` with migrated config
+
+Output:
+```
+Migrating story: WP-3630 — Coin Management Technical Specification
+Tasks: 7
+Sessions: 2
+
+1. Initializing database...
+2. Migrating story fields...
+3. Migrating tasks...
+   Task T1: Balance Core: Schema, Migration & Customer Read AP...
+   Task T2: Transaction Ledger & Credit/Debit Operations...
+   ...
+4. Migrating sessions...
+   Created: .story/sessions/20260429-120000-migrated.md
+5. Updating .acts/acts.json...
+
+✅ Migration complete!
+
+Database: .acts/acts.db
+Sessions: 2 files in .story/sessions/
+Tasks: 7 migrated
+
+6. Verification:
+   Tasks in database: 7
+   Files tracked: 25
+   Dependencies: 8
 ```
 
 ---
@@ -159,7 +140,7 @@ acts state read
 
 # Should show your story with all tasks
 # Compare with old state:
-# cat .story/state.json
+# cat .story/state.json | jq '.story, .tasks | length'
 ```
 
 ---
@@ -251,14 +232,19 @@ If using OpenCode, add to `opencode.json`:
 # Validate everything works
 acts validate
 
-# Test gate enforcement (create a test task first)
+# Test gate enforcement
+cat .story/state.json  # Should NOT exist anymore
+
+# Check ownership
+acts ownership map
+
 # This should FAIL without preflight gate:
-acts task update T1 --status IN_PROGRESS
+acts task update T3 --status IN_PROGRESS
 # → "Cannot start task: preflight gate not approved"
 
 # Add gate and retry:
-acts gate add --task T1 --type approve --status approved --by developer
-acts task update T1 --status IN_PROGRESS
+acts gate add --task T3 --type approve --status approved --by developer
+acts task update T3 --status IN_PROGRESS
 # → Success
 ```
 
@@ -275,21 +261,6 @@ If you had CI validating ACTS, update your workflow:
 ```
 
 **After (1.0.0):**
-```yaml
-- name: Setup Zig
-  uses: mlugg/setup-zig@v1
-  with:
-    version: 0.13.0
-
-- name: Build ACTS
-  working-directory: ./acts-core
-  run: zig build release
-
-- name: Validate ACTS
-  run: ./acts-core/zig-out/bin/acts validate
-```
-
-Or download pre-built binary:
 ```yaml
 - name: Install ACTS
   run: |
@@ -325,18 +296,24 @@ acts migrate
 
 ### Tasks missing after migration
 
-Check the migration script output. If tasks weren't migrated:
-```bash
-# Manual insert
-sqlite3 .acts/acts.db "INSERT INTO tasks (id, story_id, title, description, status) VALUES ('T1', 'PROJ-42', 'Title', 'Desc', 'TODO');"
-```
+Check the migration script output. If tasks weren't migrated, the script will show errors. Common issues:
+- `story.key` missing → script uses "UNKNOWN"
+- `tasks[].id` missing → task is skipped
+- Malformed JSON → script exits with error
+
+### Sessions not migrated
+
+Sessions are converted to markdown files in `.story/sessions/`. If missing:
+- Check the script had write permissions
+- Check `sessions` array existed in state.json
+- Sessions with missing `task_id` are still created but may have "UNKNOWN" task reference
 
 ### Binary not in PATH
 
 If `acts` command not found:
 ```bash
 # Use absolute path or add to PATH
-export PATH="$PATH:/path/to/acts"
+export PATH="$PATH:/path/to/acts/binary"
 ```
 
 ---
@@ -349,11 +326,14 @@ If something goes wrong:
 # Restore old state.json from git
 git checkout HEAD -- .story/state.json
 
-# Restore old scripts
+# Restore old scripts (if you kept them in git)
 git checkout HEAD -- .acts/lib .acts/mcp-server .acts/operations .acts/schemas
 
 # Remove SQLite database
 rm .acts/acts.db
+
+# Remove migrated sessions
+rm -rf .story/sessions/*-migrated.md
 ```
 
 ---
