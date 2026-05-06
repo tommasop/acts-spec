@@ -1,0 +1,21 @@
+{
+  "name": "acts-spec",
+  "version": "1.0.0",
+  "description": "ACTS (Agent Collaborative Tracking Standard) OpenCode plugin",
+  "type": "module",
+  "main": ".opencode/plugins/acts.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tommasop/acts-spec.git"
+  },
+  "keywords": [
+    "acts",
+    "agent",
+    "tracking",
+    "collaboration",
+    "opencode",
+    "plugin"
+  ],
+  "author": "Tommaso Patrizi",
+  "license": "MIT"
+}

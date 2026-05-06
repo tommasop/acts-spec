@@ -46,6 +46,7 @@ User Message
 
 ```bash
 # Option A: Copy to project
+mkdir -p .acts/bin
 cp acts-core/zig-out/bin/acts .acts/bin/acts
 
 # Option B: Global install
@@ -60,7 +61,7 @@ Add to your project's `opencode.json` (or global `~/.config/opencode/opencode.js
 {
   "plugin": [
     "superpowers@git+https://github.com/obra/superpowers.git",
-    "./.opencode/plugins/acts.js"
+    "acts-spec@git+https://github.com/tommasop/acts-spec.git"
   ]
 }
 ```
