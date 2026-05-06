@@ -430,6 +430,126 @@ If a section is empty, write "None" rather than omitting it.
 
 ---
 
+## Starting Stories from AI Input
+
+You can initialize a new ACTS story directly from AI agent input in three ways:
+
+### Option 1: Raw Story Analysis
+
+The agent receives a raw text description and initializes the story:
+
+```
+User: "Create a story for adding user authentication with OAuth2, 
+       JWT tokens, and refresh token rotation"
+
+Agent:
+1. Parse the description into structured format
+2. Run: acts init AUTH-101 --title "Add OAuth2 Authentication"
+3. Write analysis to .story/spec.md:
+
+# Specification — Add OAuth2 Authentication
+
+## Overview
+Implement OAuth2-based authentication with JWT tokens and refresh rotation.
+
+## Requirements
+- OAuth2 login (Google, GitHub)
+- JWT access tokens (15min expiry)
+- Refresh token rotation
+- Logout endpoint (invalidate tokens)
+
+## Acceptance Criteria
+1. POST /auth/login redirects to OAuth provider
+2. POST /auth/callback exchanges code for tokens
+3. POST /auth/refresh rotates refresh token
+4. POST /auth/logout invalidates all tokens
+5. 401 for expired/invalid tokens
+```
+
+4. Update story status:
+   echo '{"status": "ANALYSIS"}' | acts state write --story AUTH-101
+```
+
+### Option 2: Jira Story ID
+
+The agent fetches details from Jira and initializes:
+
+```
+User: "Start working on Jira ticket PROJ-305"
+
+Agent:
+1. Fetch from Jira (via Jira MCP tool or API):
+   - Summary: "Add shopping cart"
+   - Description: "Users need a cart..."
+   - Acceptance criteria
+
+2. Run: acts init PROJ-305 --title "Add shopping cart"
+
+3. Write Jira details to .story/spec.md
+
+4. Create tasks from Jira subtasks or generate them:
+   echo '{"tasks": [
+     {"id": "T1", "title": "Setup cart model", "status": "TODO"},
+     {"id": "T2", "title": "Add cart API", "status": "TODO"}
+   ]}' | acts state write --story PROJ-305
+```
+
+### Option 3: Title Only (Analysis Phase)
+
+Start with just a title, let the agent do the analysis:
+
+```
+User: "Start a story called 'Add dark mode'"
+
+Agent:
+1. Run: acts init UI-42 --title "Add dark mode"
+   
+   Story starts in ANALYSIS status automatically
+
+2. Agent analyzes and writes spec:
+   - Research dark mode approaches
+   - Write .story/spec.md with findings
+   - Define acceptance criteria
+
+3. Once spec is ready, transition:
+   echo '{"status": "APPROVED", "spec_approved": true}' \
+     | acts state write --story UI-42
+```
+
+### Comparison
+
+| Approach | Input | Agent Work | Best For |
+|----------|-------|------------|----------|
+| Raw analysis | Full description | Structure + initialize | Detailed requirements known |
+| Jira ID | Ticket reference | Fetch + initialize | Teams using Jira |
+| Title only | Just title | Analyze + initialize | Exploration, discovery |
+
+### Implementation Notes
+
+**For OpenCode plugin:**
+The plugin could add a `story-init` tool that accepts:
+```json
+{
+  "story_id": "PROJ-305",
+  "title": "Add shopping cart",
+  "source": "jira",
+  "description": "...",
+  "acceptance_criteria": ["..."]
+}
+```
+
+**For manual CLI:**
+The agent uses standard tools:
+```bash
+acts init <id> --title "..."
+# Then Write tool to create .story/spec.md
+# Then acts state write to add tasks
+```
+
+**Current limitation:** `acts init` doesn't accept `--description` or `--analysis` flags. The agent must write these to `.story/spec.md` after initialization. This is intentional — the binary manages structured state (SQLite), while narrative content lives in markdown files.
+
+---
+
 ## Future: MCP Server
 
 A Model Context Protocol (MCP) server is planned for v1.1. This will provide:
