@@ -4,6 +4,7 @@ Migrate ACTS 0.6.2 state.json to 1.0.0 SQLite database.
 
 Usage:
     python3 migrate-0.6.2-to-1.0.0.py .story/state.json
+    python3 migrate-0.6.2-to-1.0.0.py .story/state.json --acts-binary ./.acts/bin/acts
 
 This handles the real-world 0.6.2 format with:
     - story section (key, url, title, status, assignee, etc.)
@@ -13,12 +14,52 @@ This handles the real-world 0.6.2 format with:
     - rules section
 """
 
+import argparse
 import json
+import shutil
 import sqlite3
 import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+
+
+def find_acts_binary(args_binary=None):
+    """Find the acts binary."""
+    if args_binary:
+        binary = Path(args_binary)
+        if binary.exists():
+            return str(binary.resolve())
+        else:
+            print(f"Error: Specified acts binary not found: {args_binary}")
+            sys.exit(1)
+    
+    # Check PATH
+    acts_in_path = shutil.which("acts")
+    if acts_in_path:
+        return acts_in_path
+    
+    # Check common locations
+    common_locations = [
+        ".acts/bin/acts",
+        "./acts-core/zig-out/bin/acts",
+        "../acts-core/zig-out/bin/acts",
+        "../../acts-core/zig-out/bin/acts",
+    ]
+    for loc in common_locations:
+        path = Path(loc)
+        if path.exists():
+            return str(path.resolve())
+    
+    print("Error: acts binary not found.")
+    print("\nOptions:")
+    print("  1. Add acts to your PATH")
+    print("  2. Specify the binary path:")
+    print("     python3 migrate-0.6.2-to-1.0.0.py .story/state.json --acts-binary ./.acts/bin/acts")
+    print("\nTo install acts:")
+    print("  curl -L https://github.com/tommasop/acts-spec/releases/download/v1.0.0/acts-linux-x86_64.tar.gz | tar xz")
+    print("  sudo mv acts-linux-x86_64 /usr/local/bin/acts")
+    sys.exit(1)
 
 
 def map_story_status(status):
@@ -43,7 +84,7 @@ def map_task_status(status):
     return status_map.get(status.upper(), "TODO")
 
 
-def migrate_state(json_path, db_path=".acts/acts.db"):
+def migrate_state(json_path, acts_binary, db_path=".acts/acts.db"):
     """Migrate 0.6.2 state.json to 1.0.0 SQLite database."""
     
     # Read the old state
@@ -61,12 +102,13 @@ def migrate_state(json_path, db_path=".acts/acts.db"):
     print(f"Migrating story: {story_id} — {story_title}")
     print(f"Tasks: {len(tasks)}")
     print(f"Sessions: {len(sessions)}")
+    print(f"Acts binary: {acts_binary}")
     
     # Initialize the database using acts binary
     # This creates the schema with triggers
     print("\n1. Initializing database...")
     result = subprocess.run(
-        ["acts", "init", story_id, "--title", story_title],
+        [acts_binary, "init", story_id, "--title", story_title],
         capture_output=True,
         text=True
     )
