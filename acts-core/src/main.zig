@@ -85,6 +85,8 @@ fn printUsage() !void {
         \\  session validate <file.md>   Validate session markdown
         \\  session list --task <id>     List and parse sessions for task
         \\  operation log --id <op>      Log operation from stdin JSON
+        \\  operation list [--task <id>] List logged operations
+        \\  operation show <id>          Show operation details
         \\  validate                     Validate entire ACTS project
         \\  migrate                      Force schema migration
         \\  help                         Show this help
@@ -180,6 +182,193 @@ fn handleState(allocator: std.mem.Allocator, args: []const []const u8) !void {
     }
 }
 
+// Review provider configuration
+const ReviewCommand = struct {
+    cmd: []const u8,
+    args: []const []const u8,
+};
+
+fn loadReviewProvider(allocator: std.mem.Allocator) !?[]const u8 {
+    const acts_json_path = ".acts/acts.json";
+    const file = std.fs.cwd().openFile(acts_json_path, .{}) catch |err| {
+        if (err == error.FileNotFound) return null;
+        return err;
+    };
+    defer file.close();
+
+    const content = try file.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(content);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, content, .{});
+    defer parsed.deinit();
+
+    if (parsed.value != .object) return null;
+    const obj = parsed.value.object;
+
+    if (obj.get("review_provider")) |provider| {
+        if (provider == .string) {
+            return try allocator.dupe(u8, provider.string);
+        }
+    }
+    return null;
+}
+
+fn loadReviewCommand(allocator: std.mem.Allocator, provider_name: []const u8) !?ReviewCommand {
+    const filename = try std.mem.concat(allocator, u8, &[_][]const u8{ provider_name, ".json" });
+    defer allocator.free(filename);
+    const provider_path = try std.fs.path.join(allocator, &[_][]const u8{ ".acts", "review-providers", filename });
+    defer allocator.free(provider_path);
+
+    const file = std.fs.cwd().openFile(provider_path, .{}) catch |err| {
+        if (err == error.FileNotFound) return null;
+        return err;
+    };
+    defer file.close();
+
+    const content = try file.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(content);
+
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, content, .{});
+    defer parsed.deinit();
+
+    if (parsed.value != .object) return null;
+    const obj = parsed.value.object;
+
+    // Look for commands in priority order: review > run > serve
+    const commands = obj.get("commands") orelse return null;
+    if (commands != .object) return null;
+    const cmds = commands.object;
+
+    var selected_cmd: ?std.json.ObjectMap = null;
+    for ([_][]const u8{ "review", "run", "serve" }) |cmd_name| {
+        if (cmds.get(cmd_name)) |cmd| {
+            if (cmd == .object) {
+                selected_cmd = cmd.object;
+                break;
+            }
+        }
+    }
+
+    const cmd_obj = selected_cmd orelse return null;
+
+    const cmd_field = cmd_obj.get("cmd") orelse return null;
+    if (cmd_field != .string) return null;
+
+    // Load options for template substitution
+    var options: std.json.ObjectMap = undefined;
+    var has_options = false;
+    if (cmd_obj.get("options")) |opts| {
+        if (opts == .object) {
+            options = opts.object;
+            has_options = true;
+        }
+    }
+
+    var arg_list = std.ArrayList([]const u8).init(allocator);
+    errdefer {
+        for (arg_list.items) |item| allocator.free(item);
+        arg_list.deinit();
+    }
+
+    if (cmd_obj.get("args")) |args_field| {
+        if (args_field == .array) {
+            for (args_field.array.items) |arg| {
+                if (arg == .string) {
+                    var arg_str = try allocator.dupe(u8, arg.string);
+                    
+                    // Substitute template variables with defaults from options
+                    if (has_options) {
+                        var iter = options.iterator();
+                        while (iter.next()) |entry| {
+                            const placeholder = try std.mem.concat(allocator, u8, &[_][]const u8{ "{", entry.key_ptr.*, "}" });
+                            defer allocator.free(placeholder);
+                            
+                            if (std.mem.indexOf(u8, arg_str, placeholder)) |_| {
+                                // Get default value from options
+                                if (entry.value_ptr.* == .object) {
+                                    const opt_obj = entry.value_ptr.*.object;
+                                    if (opt_obj.get("default")) |default_val| {
+                                        var default_str: []const u8 = "";
+                                        switch (default_val) {
+                                            .string => |s| default_str = s,
+                                            .integer => |n| {
+                                                const buf = try allocator.alloc(u8, 32);
+                                                const len = std.fmt.formatIntBuf(buf, n, 10, .lower, .{});
+                                                default_str = buf[0..len];
+                                            },
+                                            .bool => |b| default_str = if (b) "true" else "false",
+                                            else => {},
+                                        }
+                                        
+                                        const new_arg = try std.mem.replaceOwned(u8, allocator, arg_str, placeholder, default_str);
+                                        allocator.free(arg_str);
+                                        arg_str = new_arg;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    
+                    try arg_list.append(arg_str);
+                }
+            }
+        }
+    }
+
+    return ReviewCommand{
+        .cmd = try allocator.dupe(u8, cmd_field.string),
+        .args = try arg_list.toOwnedSlice(),
+    };
+}
+
+fn spawnReviewTool(allocator: std.mem.Allocator, command: ReviewCommand) !std.process.Child {
+    var argv = std.ArrayList([]const u8).init(allocator);
+    defer argv.deinit();
+
+    try argv.append(command.cmd);
+    for (command.args) |arg| {
+        try argv.append(arg);
+    }
+
+    var child = std.process.Child.init(argv.items, allocator);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = .Ignore;
+
+    try child.spawn();
+    return child;
+}
+
+fn waitForReviewApproval(database: *db.Database, task_id: []const u8, timeout_secs: u64) !bool {
+    const poll_interval_ms = 5000;
+    const max_iterations = (timeout_secs * 1000) / poll_interval_ms;
+    const stdout = std.io.getStdOut().writer();
+
+    var iteration: u64 = 0;
+    while (iteration < max_iterations) : (iteration += 1) {
+        const approved = try database.hasApprovedReviewGate(task_id);
+        if (approved) {
+            try stdout.writeAll("\n✓ Task-review gate approved by human developer.\n");
+            return true;
+        }
+
+        if (iteration % 12 == 0) { // Every minute
+            try stdout.print("Waiting for human review approval... ({d} minutes elapsed)\n", .{iteration / 12});
+        }
+
+        std.time.sleep(poll_interval_ms * std.time.ns_per_ms);
+    }
+
+    try stdout.writeAll("\n✗ Timeout: No human review approval received.\n");
+    return false;
+}
+
+fn freeReviewCommand(allocator: std.mem.Allocator, command: ReviewCommand) void {
+    allocator.free(command.cmd);
+    for (command.args) |arg| allocator.free(arg);
+    allocator.free(command.args);
+}
+
 fn handleTask(allocator: std.mem.Allocator, args: []const []const u8) !void {
     if (args.len < 2) {
         std.debug.print("Usage: acts task <get|update> <task-id> [options]\n", .{});
@@ -215,6 +404,55 @@ fn handleTask(allocator: std.mem.Allocator, args: []const []const u8) !void {
         try stdout.writeAll(task);
         try stdout.writeAll("\n");
     } else if (std.mem.eql(u8, subcommand, "update")) {
+        // Check if transitioning to DONE requires human review
+        if (status != null and std.mem.eql(u8, status.?, "DONE")) {
+            const has_review = try database.hasApprovedReviewGate(task_id);
+            if (!has_review) {
+                const stdout = std.io.getStdOut().writer();
+                try stdout.print("\n⚠ Task-review gate required for task {s}.\n", .{task_id});
+                try stdout.writeAll("Code review must be performed by a human developer.\n\n");
+
+                // Try to load and spawn review tool
+                if (try loadReviewProvider(allocator)) |provider_name| {
+                    defer allocator.free(provider_name);
+
+                    if (try loadReviewCommand(allocator, provider_name)) |command| {
+                        defer freeReviewCommand(allocator, command);
+
+                        try stdout.print("Spawning review tool: {s}\n", .{command.cmd});
+                        for (command.args) |arg| {
+                            try stdout.print("  {s}\n", .{arg});
+                        }
+                        try stdout.writeAll("\n");
+
+                        var child = try spawnReviewTool(allocator, command);
+                        defer _ = child.kill() catch {};
+
+                        try stdout.writeAll("Waiting for human developer to complete review...\n");
+                        try stdout.writeAll("(The review tool is running. Approve the review to proceed.)\n\n");
+
+                        const approved = try waitForReviewApproval(&database, task_id, 3600); // 1 hour timeout
+                        if (!approved) {
+                            std.debug.print("\nTask update aborted: human review not approved within timeout.\n", .{});
+                            std.debug.print("Please run the review tool manually and then re-run this command.\n", .{});
+                            std.process.exit(1);
+                        }
+                    } else {
+                        try stdout.print("Warning: Could not load review command for provider '{s}'\n", .{provider_name});
+                        try stdout.writeAll("Please run your review tool manually, then:\n");
+                        try stdout.print("  acts gate add --task {s} --type task-review --status approved --by \"<developer>\"\n", .{task_id});
+                        try stdout.writeAll("Then re-run: acts task update {s} --status DONE\n\n");
+                        std.process.exit(1);
+                    }
+                } else {
+                    try stdout.writeAll("No review provider configured in .acts/acts.json\n");
+                    try stdout.writeAll("Please add a review provider or manually run:\n");
+                    try stdout.print("  acts gate add --task {s} --type task-review --status approved --by \"<developer>\"\n", .{task_id});
+                    try stdout.writeAll("Then re-run: acts task update {s} --status DONE\n\n");
+                    std.process.exit(1);
+                }
+            }
+        }
         try database.updateTask(task_id, status, assigned_to);
     } else {
         std.debug.print("Unknown task subcommand: {s}\n", .{subcommand});
@@ -261,6 +499,30 @@ fn handleGate(allocator: std.mem.Allocator, args: []const []const u8) !void {
             std.debug.print("Usage: acts gate add --task <id> --type <type> --status <status> [--by <name>]\n", .{});
             std.process.exit(1);
         }
+        
+        // Enforce human developer approval for task-review gates
+        if (std.mem.eql(u8, gate_type.?, "task-review")) {
+            if (approved_by == null or approved_by.?.len == 0) {
+                std.debug.print("Error: task-review gates MUST be approved by a human developer.\n", .{});
+                std.debug.print("Usage: acts gate add --task {s} --type task-review --status approved --by \"<human-developer-name>\"\n", .{task_id.?});
+                std.debug.print("Agents cannot approve their own code reviews.\n", .{});
+                std.process.exit(1);
+            }
+            
+            // Block common agent names
+            const blocked_names = [_][]const u8{ "agent", "ai", "claude", "cursor", "copilot", "gpt", "assistant", "opencode", "model" };
+            const lower_name = try std.ascii.allocLowerString(allocator, approved_by.?);
+            defer allocator.free(lower_name);
+            
+            for (blocked_names) |blocked| {
+                if (std.mem.indexOf(u8, lower_name, blocked) != null) {
+                    std.debug.print("Error: '{s}' appears to be an agent name. task-review gates MUST be approved by a human developer.\n", .{approved_by.?});
+                    std.debug.print("Please use your actual name.\n", .{});
+                    std.process.exit(1);
+                }
+            }
+        }
+        
         try database.addGate(task_id.?, gate_type.?, status.?, approved_by);
     } else if (std.mem.eql(u8, subcommand, "list")) {
         if (task_id == null) {
@@ -492,39 +754,73 @@ fn handleSession(allocator: std.mem.Allocator, args: []const []const u8) !void {
 }
 
 fn handleOperation(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 2 or !std.mem.eql(u8, args[0], "log")) {
-        std.debug.print("Usage: acts operation log --id <operation-id> [--task <task-id>] (reads JSON from stdin)\n", .{});
+    if (args.len < 1) {
+        std.debug.print("Usage: acts operation <log|list|show> [options]\n", .{});
         std.process.exit(1);
     }
     
-    var operation_id: ?[]const u8 = null;
-    var task_id: ?[]const u8 = null;
-    
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--id") and i + 1 < args.len) {
-            operation_id = args[i + 1];
-            i += 1;
-        } else if (std.mem.eql(u8, args[i], "--task") and i + 1 < args.len) {
-            task_id = args[i + 1];
-            i += 1;
-        }
-    }
-    
-    if (operation_id == null) {
-        std.debug.print("Usage: acts operation log --id <operation-id> [--task <task-id>]\n", .{});
-        std.process.exit(1);
-    }
+    const subcommand = args[0];
     
     const db_path = ".acts/acts.db";
     var database = try db.Database.open(db_path);
     defer database.close();
     try database.migrate();
     
-    const stdin = std.io.getStdIn().reader();
-    const input = try stdin.readAllAlloc(allocator, 1024 * 1024);
-    defer allocator.free(input);
-    try database.logOperation(allocator, operation_id.?, task_id, input);
+    const stdout = std.io.getStdOut().writer();
+    
+    if (std.mem.eql(u8, subcommand, "log")) {
+        var operation_id: ?[]const u8 = null;
+        var task_id: ?[]const u8 = null;
+        
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--id") and i + 1 < args.len) {
+                operation_id = args[i + 1];
+                i += 1;
+            } else if (std.mem.eql(u8, args[i], "--task") and i + 1 < args.len) {
+                task_id = args[i + 1];
+                i += 1;
+            }
+        }
+        
+        if (operation_id == null) {
+            std.debug.print("Usage: acts operation log --id <operation-id> [--task <task-id>]\n", .{});
+            std.process.exit(1);
+        }
+        
+        const stdin = std.io.getStdIn().reader();
+        const input = try stdin.readAllAlloc(allocator, 1024 * 1024);
+        defer allocator.free(input);
+        try database.logOperation(allocator, operation_id.?, task_id, input);
+    } else if (std.mem.eql(u8, subcommand, "list")) {
+        var task_id: ?[]const u8 = null;
+        
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--task") and i + 1 < args.len) {
+                task_id = args[i + 1];
+                i += 1;
+            }
+        }
+        
+        const ops = try database.listOperations(allocator, task_id);
+        defer allocator.free(ops);
+        try stdout.writeAll(ops);
+        try stdout.writeAll("\n");
+    } else if (std.mem.eql(u8, subcommand, "show")) {
+        if (args.len < 2) {
+            std.debug.print("Usage: acts operation show <operation-id>\n", .{});
+            std.process.exit(1);
+        }
+        const operation_id = args[1];
+        const op = try database.getOperation(allocator, operation_id);
+        defer allocator.free(op);
+        try stdout.writeAll(op);
+        try stdout.writeAll("\n");
+    } else {
+        std.debug.print("Unknown operation subcommand: {s}\n", .{subcommand});
+        std.process.exit(1);
+    }
 }
 
 fn handleValidate(_allocator: std.mem.Allocator, args: []const []const u8) !void {

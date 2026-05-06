@@ -578,6 +578,21 @@ pub const Database = struct {
         return output.toOwnedSlice();
     }
 
+    pub fn hasApprovedReviewGate(self: *Database, task_id: []const u8) !bool {
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "SELECT COUNT(*) FROM gate_checkpoints WHERE task_id = ? AND gate_type = 'task-review' AND status = 'approved'";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+
+        _ = c.sqlite3_bind_text(stmt, 1, task_id.ptr, @intCast(task_id.len), c.SQLITE_STATIC);
+
+        if (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            return c.sqlite3_column_int(stmt, 0) > 0;
+        }
+        return false;
+    }
+
     pub fn addDecision(self: *Database, allocator: std.mem.Allocator, json: []const u8) !void {
         const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
         defer parsed.deinit();
@@ -877,5 +892,117 @@ pub const Database = struct {
         if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
             return error.InsertFailed;
         }
+    }
+
+    pub fn listOperations(self: *Database, allocator: std.mem.Allocator, task_id: ?[]const u8) ![]u8 {
+        var output = std.ArrayList(u8).init(allocator);
+        defer output.deinit();
+        const writer = output.writer();
+        
+        try writer.writeAll("[\n");
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = if (task_id != null)
+            "SELECT id, operation_id, task_id, timestamp, caller FROM operation_log WHERE task_id = ? ORDER BY timestamp DESC"
+        else
+            "SELECT id, operation_id, task_id, timestamp, caller FROM operation_log ORDER BY timestamp DESC";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+        
+        if (task_id) |t| {
+            _ = c.sqlite3_bind_text(stmt, 1, t.ptr, @intCast(t.len), c.SQLITE_STATIC);
+        }
+        
+        var first = true;
+        while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            if (!first) try writer.writeAll(",\n");
+            first = false;
+            
+            try writer.writeAll("  {\n");
+            try writer.print("    \"id\": {d},\n", .{c.sqlite3_column_int(stmt, 0)});
+            try writer.print("    \"operation_id\": \"{s}\",\n", .{std.mem.span(c.sqlite3_column_text(stmt, 1))});
+            
+            const tid = c.sqlite3_column_text(stmt, 2);
+            if (tid != null) {
+                try writer.print("    \"task_id\": \"{s}\",\n", .{std.mem.span(tid)});
+            } else {
+                try writer.writeAll("    \"task_id\": null,\n");
+            }
+            
+            try writer.print("    \"timestamp\": \"{s}\",\n", .{std.mem.span(c.sqlite3_column_text(stmt, 3))});
+            
+            const caller = c.sqlite3_column_text(stmt, 4);
+            if (caller != null) {
+                try writer.print("    \"caller\": \"{s}\"\n", .{std.mem.span(caller)});
+            } else {
+                try writer.writeAll("    \"caller\": null\n");
+            }
+            try writer.writeAll("  }");
+        }
+        
+        try writer.writeAll("\n]");
+        return output.toOwnedSlice();
+    }
+
+    pub fn getOperation(self: *Database, allocator: std.mem.Allocator, operation_id: []const u8) ![]u8 {
+        var output = std.ArrayList(u8).init(allocator);
+        defer output.deinit();
+        const writer = output.writer();
+        
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "SELECT id, operation_id, task_id, timestamp, caller, input_json, output_json, exit_code FROM operation_log WHERE operation_id = ? ORDER BY timestamp DESC LIMIT 1";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+        
+        _ = c.sqlite3_bind_text(stmt, 1, operation_id.ptr, @intCast(operation_id.len), c.SQLITE_STATIC);
+        
+        if (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            try writer.writeAll("{\n");
+            try writer.print("  \"id\": {d},\n", .{c.sqlite3_column_int(stmt, 0)});
+            try writer.print("  \"operation_id\": \"{s}\",\n", .{std.mem.span(c.sqlite3_column_text(stmt, 1))});
+            
+            const tid = c.sqlite3_column_text(stmt, 2);
+            if (tid != null) {
+                try writer.print("  \"task_id\": \"{s}\",\n", .{std.mem.span(tid)});
+            } else {
+                try writer.writeAll("  \"task_id\": null,\n");
+            }
+            
+            try writer.print("  \"timestamp\": \"{s}\",\n", .{std.mem.span(c.sqlite3_column_text(stmt, 3))});
+            
+            const caller = c.sqlite3_column_text(stmt, 4);
+            if (caller != null) {
+                try writer.print("  \"caller\": \"{s}\",\n", .{std.mem.span(caller)});
+            } else {
+                try writer.writeAll("  \"caller\": null,\n");
+            }
+            
+            const input_json = c.sqlite3_column_text(stmt, 5);
+            if (input_json != null) {
+                try writer.print("  \"input_json\": {s},\n", .{std.mem.span(input_json)});
+            } else {
+                try writer.writeAll("  \"input_json\": null,\n");
+            }
+            
+            const output_json = c.sqlite3_column_text(stmt, 6);
+            if (output_json != null) {
+                try writer.print("  \"output_json\": {s},\n", .{std.mem.span(output_json)});
+            } else {
+                try writer.writeAll("  \"output_json\": null,\n");
+            }
+            
+            if (c.sqlite3_column_type(stmt, 7) != c.SQLITE_NULL) {
+                try writer.print("  \"exit_code\": {d}\n", .{c.sqlite3_column_int(stmt, 7)});
+            } else {
+                try writer.writeAll("  \"exit_code\": null\n");
+            }
+            try writer.writeAll("}");
+        } else {
+            return error.OperationNotFound;
+        }
+        
+        return output.toOwnedSlice();
     }
 };

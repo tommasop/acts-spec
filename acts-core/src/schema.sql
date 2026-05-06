@@ -120,19 +120,8 @@ CREATE INDEX IF NOT EXISTS idx_questions_task ON open_questions(task_id);
 CREATE INDEX IF NOT EXISTS idx_oplog_task ON operation_log(task_id);
 
 -- Enforcement triggers
-CREATE TRIGGER IF NOT EXISTS enforce_task_review_gate
-BEFORE UPDATE OF status ON tasks
-WHEN NEW.status = 'DONE' AND OLD.status != 'DONE'
-BEGIN
-  SELECT CASE WHEN (
-    SELECT COUNT(*) FROM gate_checkpoints
-    WHERE task_id = NEW.id
-    AND gate_type = 'task-review'
-    AND status = 'approved'
-  ) = 0
-  THEN RAISE(ABORT, 'Cannot mark task DONE: task-review gate not approved')
-  END;
-END;
+-- NOTE: task-review gate is enforced at application level via review tool
+-- (see acts task update --status DONE for review tool integration)
 
 CREATE TRIGGER IF NOT EXISTS enforce_preflight_gate
 BEFORE UPDATE OF status ON tasks
