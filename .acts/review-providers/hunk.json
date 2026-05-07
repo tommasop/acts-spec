@@ -1,0 +1,28 @@
+{
+  "provider": "hunk",
+  "cli": "hunk",
+  "install": "npm i -g hunkdiff",
+  "min_version": "0.10.0",
+  "commands": {
+    "check": {
+      "cmd": "hunk",
+      "args": ["--version"],
+      "description": "Verify hunk is installed"
+    },
+    "review": {
+      "cmd": "hunk",
+      "args": ["diff"],
+      "description": "Launch hunk TUI to review working tree changes. Human reviews diffs, then manually approves the gate.",
+      "behavior": "interactive_tui"
+    }
+  },
+  "exit_codes": {
+    "0": "review_complete",
+    "1": "error"
+  },
+  "export_format": "markdown",
+  "review_status_values": [
+    "approved",
+    "changes_requested"
+  ]
+}

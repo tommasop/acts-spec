@@ -186,6 +186,7 @@ fn handleState(allocator: std.mem.Allocator, args: []const []const u8) !void {
 const ReviewCommand = struct {
     cmd: []const u8,
     args: []const []const u8,
+    behavior: []const u8,
 };
 
 fn loadReviewProvider(allocator: std.mem.Allocator) !?[]const u8 {
@@ -254,6 +255,16 @@ fn loadReviewCommand(allocator: std.mem.Allocator, provider_name: []const u8) !?
     const cmd_field = cmd_obj.get("cmd") orelse return null;
     if (cmd_field != .string) return null;
 
+    // Load behavior (default: background)
+    var behavior: []const u8 = try allocator.dupe(u8, "background");
+    errdefer allocator.free(behavior);
+    if (cmd_obj.get("behavior")) |b| {
+        if (b == .string) {
+            allocator.free(behavior);
+            behavior = try allocator.dupe(u8, b.string);
+        }
+    }
+
     // Load options for template substitution
     var options: std.json.ObjectMap = undefined;
     var has_options = false;
@@ -318,6 +329,7 @@ fn loadReviewCommand(allocator: std.mem.Allocator, provider_name: []const u8) !?
     return ReviewCommand{
         .cmd = try allocator.dupe(u8, cmd_field.string),
         .args = try arg_list.toOwnedSlice(),
+        .behavior = behavior,
     };
 }
 
@@ -337,6 +349,41 @@ fn spawnReviewTool(allocator: std.mem.Allocator, command: ReviewCommand) !std.pr
 
     try child.spawn();
     return child;
+}
+
+fn trySpawnTmux(allocator: std.mem.Allocator, command: ReviewCommand) !?std.process.Child {
+    var argv = std.ArrayList([]const u8).init(allocator);
+    defer argv.deinit();
+
+    try argv.append("tmux");
+    try argv.append("new-session");
+    try argv.append("-d");
+    try argv.append("-s");
+    try argv.append("acts-review");
+    try argv.append(command.cmd);
+    for (command.args) |arg| {
+        try argv.append(arg);
+    }
+
+    var child = std.process.Child.init(argv.items, allocator);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = .Ignore;
+
+    child.spawn() catch {
+        return null;
+    };
+    return child;
+}
+
+fn killTmuxSession(allocator: std.mem.Allocator) void {
+    var argv = [_][]const u8{ "tmux", "kill-session", "-t", "acts-review" };
+    var child = std.process.Child.init(&argv, allocator);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = .Ignore;
+    _ = child.spawn() catch {};
+    _ = child.wait() catch {};
 }
 
 fn waitForReviewApproval(database: *db.Database, task_id: []const u8, timeout_secs: u64) !bool {
@@ -367,6 +414,7 @@ fn freeReviewCommand(allocator: std.mem.Allocator, command: ReviewCommand) void 
     allocator.free(command.cmd);
     for (command.args) |arg| allocator.free(arg);
     allocator.free(command.args);
+    allocator.free(command.behavior);
 }
 
 fn handleTask(allocator: std.mem.Allocator, args: []const []const u8) !void {
@@ -419,19 +467,47 @@ fn handleTask(allocator: std.mem.Allocator, args: []const []const u8) !void {
                     if (try loadReviewCommand(allocator, provider_name)) |command| {
                         defer freeReviewCommand(allocator, command);
 
-                        try stdout.print("Spawning review tool: {s}\n", .{command.cmd});
+                        try stdout.print("Review tool: {s}\n", .{command.cmd});
                         for (command.args) |arg| {
                             try stdout.print("  {s}\n", .{arg});
                         }
                         try stdout.writeAll("\n");
 
-                        var child = try spawnReviewTool(allocator, command);
-                        defer _ = child.kill() catch {};
+                        const is_interactive = std.mem.eql(u8, command.behavior, "interactive_tui");
+                        var child: ?std.process.Child = null;
 
-                        try stdout.writeAll("Waiting for human developer to complete review...\n");
-                        try stdout.writeAll("(The review tool is running. Approve the review to proceed.)\n\n");
+                        if (is_interactive) {
+                            child = try trySpawnTmux(allocator, command);
+                            if (child != null) {
+                                try stdout.writeAll("Opened review tool in tmux session 'acts-review'.\n");
+                                try stdout.writeAll("Attach anytime with: tmux attach -t acts-review\n\n");
+                            } else {
+                                try stdout.writeAll("Could not open tmux session. Please run the review tool manually:\n\n");
+                                try stdout.print("  {s}", .{command.cmd});
+                                for (command.args) |arg| {
+                                    try stdout.print(" {s}", .{arg});
+                                }
+                                try stdout.writeAll("\n\n");
+                                try stdout.print("Then approve with:\n  acts gate add --task {s} --type task-review --status approved --by \"<developer>\"\n\n", .{task_id});
+                            }
+                        } else {
+                            child = try spawnReviewTool(allocator, command);
+                            try stdout.writeAll("Review tool spawned in background.\n");
+                            try stdout.writeAll("(The review tool is running. Approve the review to proceed.)\n\n");
+                        }
+
+                        try stdout.writeAll("Waiting for human developer to complete review...\n\n");
 
                         const approved = try waitForReviewApproval(&database, task_id, 3600); // 1 hour timeout
+
+                        if (child) |*c| {
+                            if (is_interactive) {
+                                killTmuxSession(allocator);
+                            } else {
+                                _ = c.kill() catch {};
+                            }
+                        }
+
                         if (!approved) {
                             std.debug.print("\nTask update aborted: human review not approved within timeout.\n", .{});
                             std.debug.print("Please run the review tool manually and then re-run this command.\n", .{});
