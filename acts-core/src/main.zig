@@ -351,18 +351,29 @@ fn spawnReviewTool(allocator: std.mem.Allocator, command: ReviewCommand) !std.pr
     return child;
 }
 
-fn trySpawnTmux(allocator: std.mem.Allocator, command: ReviewCommand) !?std.process.Child {
+fn spawnHunkDaemon(allocator: std.mem.Allocator) !?std.process.Child {
+    var argv = [_][]const u8{ "hunk", "daemon", "serve" };
+    var child = std.process.Child.init(&argv, allocator);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Ignore;
+    child.stderr_behavior = .Ignore;
+
+    child.spawn() catch {
+        return null;
+    };
+
+    // Give daemon time to bind its port
+    std.time.sleep(2 * std.time.ns_per_s);
+    return child;
+}
+
+fn seedHunkSession(allocator: std.mem.Allocator, command: ReviewCommand) void {
     var argv = std.ArrayList([]const u8).init(allocator);
     defer argv.deinit();
 
-    try argv.append("tmux");
-    try argv.append("new-session");
-    try argv.append("-d");
-    try argv.append("-s");
-    try argv.append("acts-review");
-    try argv.append(command.cmd);
+    argv.append(command.cmd) catch return;
     for (command.args) |arg| {
-        try argv.append(arg);
+        argv.append(arg) catch return;
     }
 
     var child = std.process.Child.init(argv.items, allocator);
@@ -371,18 +382,17 @@ fn trySpawnTmux(allocator: std.mem.Allocator, command: ReviewCommand) !?std.proc
     child.stderr_behavior = .Ignore;
 
     child.spawn() catch {
-        return null;
+        return;
     };
-    return child;
+
+    // Let hunk register with daemon, then kill TUI process
+    std.time.sleep(2 * std.time.ns_per_s);
+    _ = child.kill() catch {};
+    _ = child.wait() catch {};
 }
 
-fn killTmuxSession(allocator: std.mem.Allocator) void {
-    var argv = [_][]const u8{ "tmux", "kill-session", "-t", "acts-review" };
-    var child = std.process.Child.init(&argv, allocator);
-    child.stdin_behavior = .Ignore;
-    child.stdout_behavior = .Ignore;
-    child.stderr_behavior = .Ignore;
-    _ = child.spawn() catch {};
+fn killHunkDaemon(child: *std.process.Child) void {
+    _ = child.kill() catch {};
     _ = child.wait() catch {};
 }
 
@@ -474,15 +484,17 @@ fn handleTask(allocator: std.mem.Allocator, args: []const []const u8) !void {
                         try stdout.writeAll("\n");
 
                         const is_interactive = std.mem.eql(u8, command.behavior, "interactive_tui");
-                        var child: ?std.process.Child = null;
+                        var daemon_child: ?std.process.Child = null;
+                        var review_child: ?std.process.Child = null;
 
                         if (is_interactive) {
-                            child = try trySpawnTmux(allocator, command);
-                            if (child != null) {
-                                try stdout.writeAll("Opened review tool in tmux session 'acts-review'.\n");
-                                try stdout.writeAll("Attach anytime with: tmux attach -t acts-review\n\n");
+                            daemon_child = try spawnHunkDaemon(allocator);
+                            if (daemon_child != null) {
+                                seedHunkSession(allocator, command);
+                                try stdout.writeAll("Hunk review daemon started.\n");
+                                try stdout.writeAll("Run `hunk diff` in any terminal to review.\n\n");
                             } else {
-                                try stdout.writeAll("Could not open tmux session. Please run the review tool manually:\n\n");
+                                try stdout.writeAll("Could not start hunk daemon. Please run the review tool manually:\n\n");
                                 try stdout.print("  {s}", .{command.cmd});
                                 for (command.args) |arg| {
                                     try stdout.print(" {s}", .{arg});
@@ -491,7 +503,7 @@ fn handleTask(allocator: std.mem.Allocator, args: []const []const u8) !void {
                                 try stdout.print("Then approve with:\n  acts gate add --task {s} --type task-review --status approved --by \"<developer>\"\n\n", .{task_id});
                             }
                         } else {
-                            child = try spawnReviewTool(allocator, command);
+                            review_child = try spawnReviewTool(allocator, command);
                             try stdout.writeAll("Review tool spawned in background.\n");
                             try stdout.writeAll("(The review tool is running. Approve the review to proceed.)\n\n");
                         }
@@ -500,12 +512,11 @@ fn handleTask(allocator: std.mem.Allocator, args: []const []const u8) !void {
 
                         const approved = try waitForReviewApproval(&database, task_id, 3600); // 1 hour timeout
 
-                        if (child) |*c| {
-                            if (is_interactive) {
-                                killTmuxSession(allocator);
-                            } else {
-                                _ = c.kill() catch {};
-                            }
+                        if (daemon_child) |*c| {
+                            killHunkDaemon(c);
+                        }
+                        if (review_child) |*c| {
+                            _ = c.kill() catch {};
                         }
 
                         if (!approved) {
