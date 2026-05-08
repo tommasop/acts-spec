@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS tasks (
     context_priority INTEGER DEFAULT 3 CHECK(context_priority BETWEEN 1 AND 5),
     review_status TEXT DEFAULT 'pending' CHECK(review_status IN ('pending','approved','changes_requested','skipped')),
     reviewed_at TEXT,
-    reviewed_by TEXT
+    reviewed_by TEXT,
+    review_metadata TEXT
 );
 
 -- Task files
@@ -157,4 +158,4 @@ BEGIN
 END;
 
 -- Insert schema version
-INSERT OR REPLACE INTO schema_version (version) VALUES (1);
+INSERT OR REPLACE INTO schema_version (version) VALUES (2);

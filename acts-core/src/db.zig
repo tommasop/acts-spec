@@ -37,8 +37,11 @@ pub const Database = struct {
     }
 
     pub fn migrate(self: *Database) !void {
+        // Get current version before applying schema
+        const current_version = self.getSchemaVersion() catch 0;
+
         const schema_sql = @embedFile("schema.sql");
-        
+
         var err_msg: ?[*:0]u8 = null;
         const rc = c.sqlite3_exec(self.db, schema_sql, null, null, &err_msg);
         if (rc != c.SQLITE_OK) {
@@ -47,6 +50,18 @@ pub const Database = struct {
                 c.sqlite3_free(msg);
             }
             return error.MigrationFailed;
+        }
+
+        // Apply incremental migrations for older databases
+        if (current_version < 2) {
+            var alter_err: ?[*:0]u8 = null;
+            const alter_rc = c.sqlite3_exec(self.db, "ALTER TABLE tasks ADD COLUMN review_metadata TEXT", null, null, &alter_err);
+            if (alter_rc != c.SQLITE_OK) {
+                // Column may already exist (new database) — ignore
+                if (alter_err) |e| {
+                    c.sqlite3_free(e);
+                }
+            }
         }
     }
 
@@ -1004,5 +1019,43 @@ pub const Database = struct {
         }
         
         return output.toOwnedSlice();
+    }
+
+    pub fn updateReviewMetadata(self: *Database, task_id: []const u8, metadata_json: ?[]const u8) !void {
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "UPDATE tasks SET review_metadata = ? WHERE id = ?";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+
+        if (metadata_json) |json| {
+            _ = c.sqlite3_bind_text(stmt, 1, json.ptr, @intCast(json.len), c.SQLITE_STATIC);
+        } else {
+            _ = c.sqlite3_bind_null(stmt, 1);
+        }
+        _ = c.sqlite3_bind_text(stmt, 2, task_id.ptr, @intCast(task_id.len), c.SQLITE_STATIC);
+
+        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
+            return error.UpdateFailed;
+        }
+    }
+
+    pub fn getReviewMetadata(self: *Database, allocator: std.mem.Allocator, task_id: []const u8) !?[]const u8 {
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "SELECT review_metadata FROM tasks WHERE id = ?";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+
+        _ = c.sqlite3_bind_text(stmt, 1, task_id.ptr, @intCast(task_id.len), c.SQLITE_STATIC);
+
+        if (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const text = c.sqlite3_column_text(stmt, 0);
+            if (text != null) {
+                const slice = std.mem.span(text);
+                return try allocator.dupe(u8, slice);
+            }
+        }
+        return null;
     }
 };
