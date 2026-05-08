@@ -26,6 +26,10 @@ pub fn main() !void {
         try handleTask(allocator, cmd_args);
     } else if (std.mem.eql(u8, command, "review")) {
         try handleReview(allocator, cmd_args);
+    } else if (std.mem.eql(u8, command, "approve")) {
+        try handleApprove(allocator, cmd_args);
+    } else if (std.mem.eql(u8, command, "reject")) {
+        try handleReject(allocator, cmd_args);
     } else if (std.mem.eql(u8, command, "gate")) {
         try handleGate(allocator, cmd_args);
     } else if (std.mem.eql(u8, command, "decision")) {
@@ -73,6 +77,8 @@ fn printUsage() !void {
         \\  review <task-id>             Interactive code review with hunk
         \\    --agent-context <file>       JSON sidecar with agent rationale
         \\    --watch                      Auto-reload as working tree changes
+        \\  approve <task-id>            Approve task-review gate (shorthand)
+        \\  reject <task-id>             Request changes on task-review gate (shorthand)
         \\  gate add --task <id>         Add gate checkpoint
         \\    --type <type>                Gate type (approve/task-review/commit-review/architecture-discuss)
         \\    --status <status>            Status (pending/approved/changes_requested)
@@ -599,6 +605,9 @@ fn handleReview(allocator: std.mem.Allocator, args: []const []const u8) !void {
     try stdout.print("\nReviewing task: {s}\n", .{task_id});
     try stdout.writeAll("Code review must be performed by a human developer.\n\n");
 
+    // Detect TTY availability
+    const has_tty = std.c.isatty(0) == 1 and std.c.isatty(1) == 1;
+
     // Start hunk daemon
     var daemon_child = try spawnHunkDaemon(allocator);
     if (daemon_child == null) {
@@ -607,44 +616,29 @@ fn handleReview(allocator: std.mem.Allocator, args: []const []const u8) !void {
     }
     defer killHunkDaemon(&daemon_child.?);
 
-    // Build hunk diff command
-    var hunk_argv = std.ArrayList([]const u8).init(allocator);
+    // Seed a session with the daemon
+    var seed_argv = std.ArrayList([]const u8).init(allocator);
     defer {
-        for (hunk_argv.items) |item| allocator.free(item);
-        hunk_argv.deinit();
+        for (seed_argv.items) |item| allocator.free(item);
+        seed_argv.deinit();
     }
-
-    try hunk_argv.append(try allocator.dupe(u8, "hunk"));
-    try hunk_argv.append(try allocator.dupe(u8, "diff"));
+    try seed_argv.append(try allocator.dupe(u8, "hunk"));
+    try seed_argv.append(try allocator.dupe(u8, "diff"));
     if (watch_mode) {
-        try hunk_argv.append(try allocator.dupe(u8, "--watch"));
+        try seed_argv.append(try allocator.dupe(u8, "--watch"));
     }
     if (agent_context_path) |path| {
-        try hunk_argv.append(try allocator.dupe(u8, "--agent-context"));
-        try hunk_argv.append(try allocator.dupe(u8, path));
+        try seed_argv.append(try allocator.dupe(u8, "--agent-context"));
+        try seed_argv.append(try allocator.dupe(u8, path));
     }
+    seedHunkSession(allocator, .{ .cmd = "hunk", .args = seed_argv.items[1..], .behavior = "interactive_tui" });
 
-    // Run hunk diff in foreground (inherited stdio)
-    try stdout.writeAll("Launching hunk diff...\n");
-    try stdout.writeAll("(Review the changes, then exit hunk to continue)\n\n");
-
-    var child = std.process.Child.init(hunk_argv.items, allocator);
-    child.stdin_behavior = .Inherit;
-    child.stdout_behavior = .Inherit;
-    child.stderr_behavior = .Inherit;
-
-    try child.spawn();
-    _ = try child.wait();
-
-    try stdout.writeAll("\nHunk review completed.\n\n");
-
-    // Export review artifact
+    // Export review artifact (always, in both modes)
     const artifact_path = try exportReviewArtifact(allocator, task_id);
     if (artifact_path) |apath| {
         defer allocator.free(apath);
         try stdout.print("Review artifact saved to: {s}\n", .{apath});
 
-        // Extract session_id from artifact path for metadata
         const session_id = try getHunkSessionIdForRepo(allocator);
         if (session_id) |sid| {
             defer allocator.free(sid);
@@ -654,46 +648,83 @@ fn handleReview(allocator: std.mem.Allocator, args: []const []const u8) !void {
             try mw.print("{{\"session_id\":\"{s}\",\"artifact_path\":\"{s}\"}}", .{ sid, apath });
             try database.updateReviewMetadata(task_id, metadata_buf.items);
         } else {
-            try database.updateReviewMetadata(task_id, try std.fmt.allocPrint(allocator, "{{\"artifact_path\":\"{s}\"}}", .{apath}));
+            const meta_json = try std.fmt.allocPrint(allocator, "{{\"artifact_path\":\"{s}\"}}", .{apath});
+            defer allocator.free(meta_json);
+            try database.updateReviewMetadata(task_id, meta_json);
         }
     }
 
-    // Prompt for approval
-    try stdout.writeAll("\nApprove changes? [y/N/q]: ");
+    if (has_tty) {
+        // Interactive TTY mode: launch hunk in foreground
+        try stdout.writeAll("Launching hunk diff in this terminal...\n");
+        try stdout.writeAll("(Review the changes, then exit hunk to continue)\n\n");
 
-    var buf: [32]u8 = undefined;
-    const stdin = std.io.getStdIn().reader();
-    const input = stdin.readUntilDelimiterOrEof(&buf, '\n') catch null;
+        var child = std.process.Child.init(seed_argv.items, allocator);
+        child.stdin_behavior = .Inherit;
+        child.stdout_behavior = .Inherit;
+        child.stderr_behavior = .Inherit;
 
-    if (input) |line| {
-        const trimmed = std.mem.trim(u8, line, " \t\r\n");
-        if (std.mem.eql(u8, trimmed, "y") or std.mem.eql(u8, trimmed, "Y")) {
-            const user = std.process.getEnvVarOwned(allocator, "USER") catch blk: {
-                break :blk try allocator.dupe(u8, "developer");
-            };
-            defer allocator.free(user);
+        try child.spawn();
+        _ = try child.wait();
 
-            try database.addGate(task_id, "task-review", "approved", user);
-            try stdout.print("\nTask-review gate approved by {s}.\n", .{user});
+        try stdout.writeAll("\nHunk review completed.\n\n");
 
-            // Auto-mark task DONE
-            try stdout.writeAll("Mark task as DONE? [y/N]: ");
-            const done_input = stdin.readUntilDelimiterOrEof(&buf, '\n') catch null;
-            if (done_input) |dline| {
-                const dtrimmed = std.mem.trim(u8, dline, " \t\r\n");
-                if (std.mem.eql(u8, dtrimmed, "y") or std.mem.eql(u8, dtrimmed, "Y")) {
-                    try database.updateTask(task_id, "DONE", null);
-                    try stdout.writeAll("Task marked as DONE.\n");
+        // Prompt for approval
+        try stdout.writeAll("Approve changes? [y/N/q]: ");
+
+        var buf: [32]u8 = undefined;
+        const stdin = std.io.getStdIn().reader();
+        const input = stdin.readUntilDelimiterOrEof(&buf, '\n') catch null;
+
+        if (input) |line| {
+            const trimmed = std.mem.trim(u8, line, " \t\r\n");
+            if (std.mem.eql(u8, trimmed, "y") or std.mem.eql(u8, trimmed, "Y")) {
+                const user = std.process.getEnvVarOwned(allocator, "USER") catch blk: {
+                    break :blk try allocator.dupe(u8, "developer");
+                };
+                defer allocator.free(user);
+
+                try database.addGate(task_id, "task-review", "approved", user);
+                try stdout.print("\nTask-review gate approved by {s}.\n", .{user});
+
+                // Auto-mark task DONE
+                try stdout.writeAll("Mark task as DONE? [y/N]: ");
+                const done_input = stdin.readUntilDelimiterOrEof(&buf, '\n') catch null;
+                if (done_input) |dline| {
+                    const dtrimmed = std.mem.trim(u8, dline, " \t\r\n");
+                    if (std.mem.eql(u8, dtrimmed, "y") or std.mem.eql(u8, dtrimmed, "Y")) {
+                        try database.updateTask(task_id, "DONE", null);
+                        try stdout.writeAll("Task marked as DONE.\n");
+                    }
                 }
+            } else if (std.mem.eql(u8, trimmed, "q") or std.mem.eql(u8, trimmed, "Q")) {
+                try stdout.writeAll("\nReview exited without approval.\n");
+            } else {
+                try database.addGate(task_id, "task-review", "changes_requested", null);
+                try stdout.writeAll("\nChanges requested. Gate marked as 'changes_requested'.\n");
             }
-        } else if (std.mem.eql(u8, trimmed, "q") or std.mem.eql(u8, trimmed, "Q")) {
-            try stdout.writeAll("\nReview exited without approval.\n");
         } else {
-            try database.addGate(task_id, "task-review", "changes_requested", null);
-            try stdout.writeAll("\nChanges requested. Gate marked as 'changes_requested'.\n");
+            try stdout.writeAll("\nNo input received. Review exited without approval.\n");
         }
     } else {
-        try stdout.writeAll("\nNo input received. Review exited without approval.\n");
+        // Non-TTY mode: daemon running, instruct human to review manually
+        try stdout.writeAll("No interactive terminal detected.\n");
+        try stdout.writeAll("A hunk review session has been started.\n\n");
+        try stdout.writeAll("To review, run this command in your terminal:\n");
+        try stdout.writeAll("  hunk diff\n\n");
+        try stdout.writeAll("After reviewing, approve with:\n");
+        try stdout.print("  acts approve {s}\n\n", .{task_id});
+        try stdout.writeAll("Or request changes with:\n");
+        try stdout.print("  acts reject {s}\n\n", .{task_id});
+        try stdout.writeAll("Waiting for human review approval (press Ctrl+C to cancel)...\n");
+
+        const approved = try waitForReviewApproval(&database, task_id, 3600); // 1 hour timeout
+        if (approved) {
+            try stdout.writeAll("\nTask-review gate approved.\n");
+        } else {
+            try stdout.writeAll("\nTimeout: No human review approval received within 1 hour.\n");
+            std.process.exit(1);
+        }
     }
 }
 
@@ -771,6 +802,47 @@ fn getHunkSessionIdForRepo(allocator: std.mem.Allocator) !?[]const u8 {
         }
     }
     return null;
+}
+
+fn handleApprove(allocator: std.mem.Allocator, args: []const []const u8) !void {
+    if (args.len < 1) {
+        std.debug.print("Usage: acts approve <task-id>\n", .{});
+        std.process.exit(1);
+    }
+    const task_id = args[0];
+
+    const db_path = ".acts/acts.db";
+    var database = try db.Database.open(db_path);
+    defer database.close();
+    try database.migrate();
+
+    const user = std.process.getEnvVarOwned(allocator, "USER") catch blk: {
+        break :blk try allocator.dupe(u8, "developer");
+    };
+    defer allocator.free(user);
+
+    try database.addGate(task_id, "task-review", "approved", user);
+
+    const stdout = std.io.getStdOut().writer();
+    try stdout.print("Task-review gate approved for {s} by {s}.\n", .{ task_id, user });
+}
+
+fn handleReject(_: std.mem.Allocator, args: []const []const u8) !void {
+    if (args.len < 1) {
+        std.debug.print("Usage: acts reject <task-id>\n", .{});
+        std.process.exit(1);
+    }
+    const task_id = args[0];
+
+    const db_path = ".acts/acts.db";
+    var database = try db.Database.open(db_path);
+    defer database.close();
+    try database.migrate();
+
+    try database.addGate(task_id, "task-review", "changes_requested", null);
+
+    const stdout = std.io.getStdOut().writer();
+    try stdout.print("Changes requested for {s}. Gate marked as 'changes_requested'.\n", .{task_id});
 }
 
 fn handleGate(allocator: std.mem.Allocator, args: []const []const u8) !void {
