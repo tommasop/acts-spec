@@ -19,6 +19,15 @@ ACTS is a protocol for coordinating AI-assisted software development across mult
 
 ## Installation
 
+### Prerequisites
+
+- **hunk** — Review-first terminal diff viewer (required for `acts review`)
+  ```bash
+  npm install -g hunkdiff
+  # or
+  bun install -g hunkdiff
+  ```
+
 ### Pre-built Binaries
 
 Download from [GitHub Releases](https://github.com/tommasop/acts-spec/releases):
@@ -96,8 +105,15 @@ echo '{"tasks": [{"id": "T1", "title": "Add login endpoint", "status": "TODO"}]}
 acts gate add --task T1 --type approve --status approved --by developer
 acts task update T1 --status IN_PROGRESS --assigned-to alice
 
-# Complete task (requires task-review gate)
-acts gate add --task T1 --type task-review --status approved --by reviewer
+# Interactive code review (launches hunk diff)
+acts review T1
+# After reviewing in hunk, approve:
+acts approve T1
+
+# Or request changes:
+acts reject T1
+
+# Complete task
 acts task update T1 --status DONE
 ```
 
@@ -141,6 +157,9 @@ acts validate
 | `state write` | Write story state from JSON | `echo '{...}' \| acts state write --story PROJ-42` |
 | `task get <id>` | Get task details | `acts task get T1` |
 | `task update <id>` | Update task status | `acts task update T1 --status DONE` |
+| `review <id>` | Interactive code review with hunk | `acts review T1` |
+| `approve <id>` | Approve task-review gate | `acts approve T1` |
+| `reject <id>` | Request changes on task-review gate | `acts reject T1` |
 | `gate add` | Add gate checkpoint | `acts gate add --task T1 --type approve --status approved` |
 | `gate list` | List checkpoints | `acts gate list --task T1` |
 | `decision add` | Record decision | `echo '{...}' \| acts decision add` |
@@ -154,6 +173,47 @@ acts validate
 | `session validate` | Validate session | `acts session validate file.md` |
 | `validate` | Full project validation | `acts validate` |
 | `migrate` | Force schema migration | `acts migrate` |
+
+### Code Review Workflow
+
+```bash
+# Start interactive review (launches hunk TUI)
+acts review T1
+
+# Review with agent rationale (auto-detects .acts/reviews/T1-context.json)
+acts review T1 --agent-context notes.json
+
+# Review with watch mode (auto-reload on file changes)
+acts review T1 --watch
+
+# After reviewing, approve or reject:
+acts approve T1       # Adds approved task-review gate
+acts reject T1        # Adds changes_requested gate
+```
+
+### Agent Context Format
+
+Create `.acts/reviews/<task-id>-context.json` to provide inline agent rationale:
+
+```json
+{
+  "version": 1,
+  "summary": "Overall change rationale",
+  "files": [
+    {
+      "path": "src/main.zig",
+      "summary": "What changed",
+      "annotations": [
+        {
+          "newRange": [15, 35],
+          "summary": "Visible inline note",
+          "rationale": "Longer explanation of why"
+        }
+      ]
+    }
+  ]
+}
+```
 
 ## Architecture
 
