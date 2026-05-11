@@ -578,6 +578,25 @@ fn handleReview(allocator: std.mem.Allocator, args: []const []const u8) !void {
         }
     }
 
+    // Auto-detect agent context file if not explicitly provided
+    var auto_context_buf: ?[]const u8 = null;
+    if (agent_context_path == null) {
+        const context_filename = try std.mem.concat(allocator, u8, &[_][]const u8{ task_id, "-context.json" });
+        defer allocator.free(context_filename);
+        const auto_context_path = try std.fs.path.join(allocator, &[_][]const u8{ ".acts/reviews", context_filename });
+
+        var file_exists = true;
+        std.fs.cwd().access(auto_context_path, .{}) catch |err| {
+            if (err == error.FileNotFound) file_exists = false;
+        };
+        if (file_exists) {
+            agent_context_path = auto_context_path;
+            auto_context_buf = auto_context_path;
+        } else {
+            allocator.free(auto_context_path);
+        }
+    }
+
     const db_path = ".acts/acts.db";
     var database = try db.Database.open(db_path);
     defer database.close();
@@ -615,6 +634,7 @@ fn handleReview(allocator: std.mem.Allocator, args: []const []const u8) !void {
         std.process.exit(1);
     }
     defer killHunkDaemon(&daemon_child.?);
+    defer if (auto_context_buf) |buf| allocator.free(buf);
 
     // Seed a session with the daemon
     var seed_argv = std.ArrayList([]const u8).init(allocator);
@@ -630,6 +650,7 @@ fn handleReview(allocator: std.mem.Allocator, args: []const []const u8) !void {
     if (agent_context_path) |path| {
         try seed_argv.append(try allocator.dupe(u8, "--agent-context"));
         try seed_argv.append(try allocator.dupe(u8, path));
+        try stdout.print("Agent context loaded: {s}\n", .{path});
     }
     seedHunkSession(allocator, .{ .cmd = "hunk", .args = seed_argv.items[1..], .behavior = "interactive_tui" });
 
@@ -716,6 +737,8 @@ fn handleReview(allocator: std.mem.Allocator, args: []const []const u8) !void {
         try stdout.print("  acts approve {s}\n\n", .{task_id});
         try stdout.writeAll("Or request changes with:\n");
         try stdout.print("  acts reject {s}\n\n", .{task_id});
+        try stdout.writeAll("To add agent reasoning notes, create:\n");
+        try stdout.print("  .acts/reviews/{s}-context.json\n\n", .{task_id});
         try stdout.writeAll("Waiting for human review approval (press Ctrl+C to cancel)...\n");
 
         const approved = try waitForReviewApproval(&database, task_id, 3600); // 1 hour timeout

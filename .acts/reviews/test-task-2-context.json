@@ -1,0 +1,17 @@
+{
+  "version": 1,
+  "summary": "Test agent reasoning for code review",
+  "files": [
+    {
+      "path": "acts-core/src/main.zig",
+      "summary": "Added review command with hunk integration",
+      "annotations": [
+        {
+          "newRange": [561, 750],
+          "summary": "New handleReview function",
+          "rationale": "Provides interactive code review workflow with automatic hunk daemon management"
+        }
+      ]
+    }
+  ]
+}
