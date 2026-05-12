@@ -50,6 +50,8 @@ pub fn main() !void {
         try handleValidate(allocator, cmd_args);
     } else if (std.mem.eql(u8, command, "migrate")) {
         try handleMigrate(allocator, cmd_args);
+    } else if (std.mem.eql(u8, command, "version") or std.mem.eql(u8, command, "--version") or std.mem.eql(u8, command, "-v")) {
+        try printVersion();
     } else if (std.mem.eql(u8, command, "help") or std.mem.eql(u8, command, "--help") or std.mem.eql(u8, command, "-h")) {
         try printUsage();
     } else {
@@ -103,6 +105,11 @@ fn printUsage() !void {
         \\  help                         Show this help
         \\
     );
+}
+
+fn printVersion() !void {
+    const stdout = std.io.getStdOut().writer();
+    try stdout.writeAll("ACTS Core v1.0.0\n");
 }
 
 fn handleInit(_allocator: std.mem.Allocator, args: []const []const u8) !void {

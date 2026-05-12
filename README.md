@@ -28,18 +28,38 @@ ACTS is a protocol for coordinating AI-assisted software development across mult
   bun install -g hunkdiff
   ```
 
-### Pre-built Binaries
+### One-Line Installer (Recommended)
+
+```bash
+# System-wide install
+bash <(curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/main/install.sh)
+
+# Project-local install (to ./.acts/bin/)
+bash <(curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/main/install.sh) --local
+
+# Update to latest
+bash <(curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/main/install.sh) --update
+```
+
+Or using Make:
+```bash
+make install        # System-wide
+make install-local  # Project-local
+make update         # Update existing
+```
+
+### Manual Install (Pre-built Binaries)
 
 Download from [GitHub Releases](https://github.com/tommasop/acts-spec/releases):
 
 ```bash
 # Linux x86_64
 curl -L https://github.com/tommasop/acts-spec/releases/download/v1.0.0/acts-linux-x86_64.tar.gz | tar xz
-sudo mv acts-linux-x86_64 /usr/local/bin/acts
+sudo mv acts/bin/acts /usr/local/bin/acts
 
 # macOS Apple Silicon
 curl -L https://github.com/tommasop/acts-spec/releases/download/v1.0.0/acts-macos-aarch64.tar.gz | tar xz
-sudo mv acts-macos-aarch64 /usr/local/bin/acts
+sudo mv acts/bin/acts /usr/local/bin/acts
 ```
 
 ### Build from Source
@@ -54,13 +74,14 @@ zig build release
 
 ### Project Setup
 
-Add the binary to your project:
-
 ```bash
-# Option 1: Copy to project
+# Option 1: Use installer
+make install-local
+
+# Option 2: Manual copy
 cp acts-core/zig-out/bin/acts .acts/bin/acts
 
-# Option 2: Install globally
+# Option 3: Install globally
 zig build release && sudo cp zig-out/bin/acts /usr/local/bin/
 ```
 
@@ -146,6 +167,118 @@ acts session validate .story/sessions/20260105-143022-alice.md
 ```bash
 acts validate
 # Checks schema version, required files, session validity
+```
+
+## Workflow Guide
+
+### Full Developer Workflow
+
+```bash
+# 1. Initialize story
+acts init PROJ-42 --title "Add user authentication"
+
+# 2. Create tasks
+acts state write --story PROJ-42 << 'EOF'
+{"tasks": [
+  {"id": "T1", "title": "Add login endpoint", "status": "TODO"},
+  {"id": "T2", "title": "Add JWT middleware", "status": "TODO"}
+]}
+EOF
+
+# 3. Start work (requires preflight gate)
+acts gate add --task T1 --type approve --status approved --by alice
+acts task update T1 --status IN_PROGRESS --assigned-to alice
+
+# 4. Implement code
+# ... write code ...
+
+# 5. Interactive code review
+acts review T1
+#   → If TTY: opens hunk diff, review interactively, then prompts:
+#      Approve changes? [y/N/q]:
+#      Mark task as DONE? [y/N]:
+#
+#   → If no TTY: starts hunk daemon, exports artifact, then:
+#      Waiting for human review approval...
+#      (human runs: acts approve T1)
+
+# 6. Task is now DONE
+```
+
+### Review in Non-TTY Environments (Agents, CI)
+
+When `acts review` runs without a terminal (e.g., in an AI agent session):
+
+```bash
+$ acts review T1
+
+Reviewing task: T1
+Code review must be performed by a human developer.
+
+Agent context loaded: .acts/reviews/T1-context.json
+Review artifact saved to: .story/reviews/T1.json
+No interactive terminal detected.
+A hunk review session has been started.
+
+To review, run this command in your terminal:
+  hunk diff
+
+After reviewing, approve with:
+  acts approve T1
+
+Or request changes with:
+  acts reject T1
+
+Waiting for human review approval (press Ctrl+C to cancel)...
+```
+
+The agent polls the database for up to 1 hour. When the human runs `acts approve T1` in their terminal, the review completes.
+
+### Adding Agent Rationale
+
+Create `.acts/reviews/<task-id>-context.json` to provide inline agent annotations:
+
+```json
+{
+  "version": 1,
+  "summary": "Replaced tmux with hunk daemon for cleaner UX",
+  "files": [
+    {
+      "path": "src/main.zig",
+      "summary": "Added daemon spawning and session seeding",
+      "annotations": [
+        {
+          "newRange": [354, 397],
+          "summary": "Three new daemon management functions",
+          "rationale": "spawnHunkDaemon starts the broker, seedHunkSession registers a session, killHunkDaemon cleans up"
+        }
+      ]
+    }
+  ]
+}
+```
+
+When `acts review T1` runs, it auto-detects `.acts/reviews/T1-context.json` and passes it to hunk. The human reviewer sees inline annotations beside the relevant code.
+
+### Updating ACTS
+
+```bash
+# Update system-wide installation
+bash <(curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/main/install.sh) --update
+
+# Or using Make
+make update
+
+# Verify version
+acts version
+```
+
+### Uninstalling
+
+```bash
+make uninstall
+# Or manually:
+rm -f /usr/local/bin/acts ~/.local/bin/acts ./.acts/bin/acts
 ```
 
 ## Command Reference
