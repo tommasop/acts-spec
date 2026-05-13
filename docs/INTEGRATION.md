@@ -172,12 +172,60 @@ Agent:
 opencode.json            # Plugin registration
 ```
 
+### ACTS Mode Control
+
+The plugin supports three modes. Use `acts_mode` to control them:
+
+```json
+// Enter ACTS mode (default)
+{ "action": "enter", "level": "on" }
+
+// Enter strict mode (enforced gates)
+{ "action": "enter", "level": "strict" }
+
+// Exit ACTS mode (disable context injection)
+{ "action": "exit" }
+
+// Check current mode
+{ "action": "status" }
+```
+
+**Mode behaviors:**
+
+| Mode | System Context | User Bootstrap | Ownership Map | Enforcement |
+|------|---------------|----------------|---------------|-------------|
+| `off`  | — | — | — | None |
+| `on`   | State + Tasks | Rules + Commands | Locked files | Advisory |
+| `strict` | State + Tasks | Rules + Commands | Locked files | Mandatory language |
+
+Mode state is persisted in `.acts/plugin-state.json`.
+
+### File Override Workflow
+
+When the agent needs to modify a file owned by a DONE task:
+
+```json
+// 1. Agent requests override
+{ "action": "request", "file": "src/locked.ts", "task": "T3", "reason": "bugfix" }
+// → Returns override ID (e.g., ovr-abc123)
+
+// 2. Human developer approves (outside agent)
+{ "action": "approve", "override_id": "ovr-abc123" }
+
+// 3. Agent checks approval
+{ "action": "check", "override_id": "ovr-abc123" }
+// → "APPROVED" or "PENDING"
+```
+
+**Important:** The `approve` action is intended for **human developers only**. AI agents must never approve their own override requests. All approvals are logged in `.acts/override-approvals.json` for audit and expire after 24 hours.
+
 ### Customization
 
 Edit `.opencode/plugins/acts.js` to customize:
 - Bootstrap content (rules, commands)
 - Tool schema (additional parameters)
 - Binary discovery logic
+- Mode and override behavior
 
 ---
 
@@ -291,6 +339,92 @@ Agent:
    → Validation passed
 ```
 
+### ACTS Mode (Manual)
+
+For non-plugin usage, set ACTS mode via environment variable:
+
+```bash
+# Standard mode (default)
+export ACTS_MODE=on
+
+# Strict mode (stronger enforcement language in prompts)
+export ACTS_MODE=strict
+
+# Off (skip ACTS context injection)
+export ACTS_MODE=off
+```
+
+Or add to `.acts/acts.json`:
+```json
+{
+  "plugin": {
+    "mode": "strict",
+    "auto_inject": true
+  }
+}
+```
+
+### File Override (Manual)
+
+For manual CLI workflows, the override protocol uses file-based approvals:
+
+```bash
+# 1. Agent checks scope
+acts scope check --task T3 --file src/locked.ts
+# → { "action": "blocked", "owned_by": "T1", "owner_status": "DONE" }
+
+# 2. Agent creates request (by writing to file)
+cat >> .acts/override-requests.json << 'EOF'
+{
+  "requests": [
+    {
+      "id": "ovr-manual-1",
+      "file": "src/locked.ts",
+      "task": "T3",
+      "reason": "bugfix: null pointer",
+      "requestedAt": "2026-05-13T10:00:00Z",
+      "status": "pending"
+    }
+  ]
+}
+EOF
+
+# 3. Human developer approves (edit file or use decision command)
+acts decision add << 'EOF'
+{
+  "task_id": "T3",
+  "decision": "approve_override",
+  "rationale": "Critical bugfix, safe to modify",
+  "context": { "override_id": "ovr-manual-1", "file": "src/locked.ts" }
+}
+EOF
+
+# Also record in approvals file:
+cat >> .acts/override-approvals.json << 'EOF'
+{
+  "approvals": [
+    {
+      "id": "ovr-manual-1",
+      "file": "src/locked.ts",
+      "task": "T3",
+      "reason": "bugfix: null pointer",
+      "approvedAt": "2026-05-13T10:05:00Z",
+      "approvedBy": "developer",
+      "expiresAt": "2026-05-14T10:05:00Z"
+    }
+  ]
+}
+EOF
+
+# 4. Agent proceeds with modification
+# (should verify approval exists before writing)
+```
+
+**Rules:**
+- AI agents MUST NEVER write to `.acts/override-approvals.json`.
+- Overrides expire after 24 hours.
+- All approvals must be logged for audit.
+
 ### Platform-Specific Notes
 
 **Claude Code:**
@@ -320,11 +454,15 @@ Agent:
 |---------|----------------|------------|
 | **Setup** | Add 2 lines to opencode.json | Update AGENTS.md, install binary |
 | **Agent Awareness** | Automatic injection every session | Depends on agent reading AGENTS.md |
-| **Command Interface** | Native tool (acts) | Bash tool executions |
+| **Command Interface** | Native tools (acts, acts_mode, acts_override) | Bash tool executions |
 | **Error Handling** | Plugin wraps errors in JSON | Raw stderr output |
 | **Customizability** | Edit plugin JS | Edit AGENTS.md |
 | **Cross-Platform** | Same (binary auto-discovered) | Same (binary must be in PATH) |
 | **Editor Support** | OpenCode only | Any editor with Bash tool |
+| **ACTS Mode** | `acts_mode enter/exit/status` | `ACTS_MODE` env var or `.acts/acts.json` |
+| **File Override** | `acts_override request/check/approve` | Manual file editing + `acts decision add` |
+| **Auto State Read** | Yes (on plugin load) | No (agent must run manually) |
+| **System Prompt Injection** | Yes (`experimental.chat.system.transform`) | No (user message only) |
 
 ### When to Use Plugin
 

@@ -45,6 +45,14 @@ This project uses ACTS (Agent Collaborative Tracking Standard) v1.0.0 for multi-
 1. Before starting task: `acts gate add --task <id> --type approve --status approved`
 2. Before completing task: `acts gate add --task <id> --type task-review --status approved`
 
+### File Override Protocol
+Files owned by DONE tasks are locked. To override:
+1. Request: `acts_override request --file <path> --task <id> --reason "..."`
+2. Human approves: `acts_override approve --override_id <id>`
+3. Verify: `acts_override check --override_id <id>`
+- AI agents MUST NEVER approve their own overrides.
+- Approvals expire after 24 hours.
+
 ### Data Storage
 - Structured state: SQLite at `.acts/acts.db`
 - Narratives: Markdown files in `.story/`

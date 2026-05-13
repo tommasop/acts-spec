@@ -37,7 +37,7 @@ This project uses [superpowers](https://github.com/obra/superpowers) for agent w
 - Agent MUST record session summary before ending
 - Agent MUST stay within assigned task boundary
 - Agent MUST get developer approval before committing
-- Agent MUST run code review before task completion (v0.6.1)
+- Agent MUST run code review before task completion (v1.0.0)
 
 ### Review Workflow
 
@@ -108,9 +108,55 @@ acts task update T1 --status DONE
 The ACTS OpenCode plugin is installed at `.opencode/plugins/acts.js`.
 Add `"./.opencode/plugins/acts.js"` to your `opencode.json` plugin array.
 
+### ACTS Mode (Plugin)
+
+The OpenCode plugin supports three modes:
+
+| Mode | Behavior |
+|------|----------|
+| `off` | No ACTS context injection. Use when ACTS is not relevant to the conversation. |
+| `on` | Full context injection: story state, active tasks, file ownership, approved overrides. |
+| `strict` | All of `on` plus enforcement language. Agent MUST follow gate protocol explicitly. |
+
+**Commands:**
+- `acts_mode enter [--level strict]` — Activate ACTS mode
+- `acts_mode exit` — Deactivate ACTS mode
+- `acts_mode status` — Show current mode
+
+**When to use strict mode:**
+- Multi-developer projects with concurrent agents
+- High-risk changes (production code, infrastructure)
+- When gate violations have been observed
+
+### File Override Protocol
+
+Files owned by **DONE** tasks are locked by default. To modify a locked file:
+
+**1. Agent requests override:**
+```
+acts_override request --file src/locked.ts --task T3 --reason "bugfix: null pointer"
+```
+
+**2. Human developer MUST approve:**
+```
+acts_override approve --override_id ovr-abc123
+```
+*Or edit `.acts/override-approvals.json` manually.*
+
+**3. Agent verifies approval:**
+```
+acts_override check --override_id ovr-abc123
+```
+
+**Rules:**
+- AI agents MUST NEVER approve their own override requests.
+- Overrides expire after 24 hours.
+- All approvals are logged in `.acts/override-approvals.json` for audit.
+- Without approval, the agent MUST NOT modify the file.
+
 ### Data Storage
 - Structured state (stories, tasks, gates, decisions): SQLite at `.acts/acts.db`
-- Narratives (plan, spec, sessions, notes): Markdown files
+- Narratives: Markdown files
 - `.story/state.json`: REMOVED (replaced by SQLite)
 
 ### Architecture

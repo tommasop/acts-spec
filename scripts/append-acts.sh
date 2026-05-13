@@ -22,15 +22,61 @@ ACTS_SECTION='---
 
 ## ACTS Integration
 
-This project uses ACTS (Agent Collaborative Tracking Standard) for multi-developer coordination.
+This project uses ACTS (Agent Collaborative Tracking Standard) v1.0.0 for multi-developer coordination.
 
 ### Rules
-- Agent MUST read `.story/state.json` before writing code
-- Agent MUST NOT modify files owned by completed tasks
+- Agent MUST read state before writing code: `acts state read`
+- Agent MUST NOT modify files owned by completed tasks: `acts scope check --task <id> --file <path>`
 - Agent MUST record session summary before ending
 - Agent MUST stay within assigned task boundary
 - Agent MUST get developer approval before committing
-- Agent MUST run code review before task completion (v0.4.0)
+- Agent MUST run code review before task completion (v1.0.0)
+
+### ACTS Commands
+- `acts init <story-id>` — Initialize new ACTS story
+- `acts state read` — Read current story state
+- `acts state write --story <id>` — Update story state (JSON from stdin)
+- `acts task get <task-id>` — Get task details
+- `acts task update <id> --status <status>` — Update task status (enforces gates)
+- `acts gate add --task <id> --type <type> --status <status>` — Add gate checkpoint
+- `acts ownership map` — Show file ownership
+- `acts scope check --task <id> --file <path>` — Check if file is safe to modify
+- `acts validate` — Validate entire ACTS project
+- `acts migrate` — Force schema migration
+
+### Gate Protocol
+1. Before starting task: `acts gate add --task <id> --type approve --status approved`
+2. Before completing task: `acts gate add --task <id> --type task-review --status approved`
+
+### File Override Protocol
+
+Files owned by **DONE** tasks are locked by default. To modify a locked file:
+
+1. **Agent requests override:**
+   ```
+   acts_override request --file src/locked.ts --task T3 --reason "bugfix"
+   ```
+
+2. **Human developer MUST approve:**
+   ```
+   acts_override approve --override_id ovr-abc123
+   ```
+   *Or edit `.acts/override-approvals.json` manually.*
+
+3. **Agent verifies approval:**
+   ```
+   acts_override check --override_id ovr-abc123
+   ```
+
+**Rules:**
+- AI agents MUST NEVER approve their own override requests.
+- Overrides expire after 24 hours.
+- All approvals are logged in `.acts/override-approvals.json` for audit.
+- Without approval, the agent MUST NOT modify the file.
+
+### Data Storage
+- Structured state: SQLite at `.acts/acts.db`
+- Narratives: Markdown files in `.story/`
 
 ### Agent Configuration
 ```json
@@ -78,5 +124,6 @@ echo "✅ ACTS Integration appended to $TARGET"
 echo ""
 echo "Next steps:"
 echo "  1. Edit $TARGET to customize the ACTS section"
-echo "  2. Create .acts/ and .story/ directories"
-echo "  3. Install GitHuman: npm install -g githuman"
+echo "  2. Initialize ACTS in your project: acts init <story-id>"
+echo "  3. Configure the OpenCode plugin in opencode.json"
+echo "  4. Run 'acts validate' to verify setup"

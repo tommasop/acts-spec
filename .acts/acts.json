@@ -58,5 +58,25 @@
       "compaction_auto_trigger": 10,
       "attention_optimization": true
     }
+  },
+  "plugin": {
+    "enabled": true,
+    "description": "OpenCode plugin configuration for ACTS context injection and enforcement.",
+    "mode": "on",
+    "auto_inject": true,
+    "auto_read_state": true,
+    "auto_read_ownership": true,
+    "override": {
+      "enabled": true,
+      "require_human_approval": true,
+      "expiry_hours": 24,
+      "audit_file": ".acts/override-approvals.json"
+    },
+    "system_transform": {
+      "enabled": true,
+      "inject_active_tasks": true,
+      "inject_locked_files": true,
+      "inject_approved_overrides": true
+    }
   }
 }
