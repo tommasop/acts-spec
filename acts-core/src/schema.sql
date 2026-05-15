@@ -186,6 +186,19 @@ CREATE TABLE IF NOT EXISTS file_conflicts (
     resolved INTEGER DEFAULT 0
 );
 
+-- Phase 3: File override requests (human-only approval)
+CREATE TABLE IF NOT EXISTS file_overrides (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    file_path TEXT NOT NULL,
+    requesting_task_id TEXT NOT NULL REFERENCES tasks(id),
+    reason TEXT NOT NULL,
+    status TEXT DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','expired')),
+    approved_by TEXT,
+    approved_at TEXT,
+    expires_at TEXT NOT NULL DEFAULT (datetime('now', '+24 hours')),
+    created_at TEXT DEFAULT (datetime('now'))
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_tasks_story ON tasks(story_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
@@ -260,7 +273,7 @@ BEGIN
     END;
 END;
 
--- Phase 2: Cross-story file ownership enforcement
+-- Phase 2: Cross-story file ownership enforcement (with override support)
 CREATE TRIGGER IF NOT EXISTS enforce_cross_story_ownership
 BEFORE INSERT ON task_files
 BEGIN
@@ -270,7 +283,14 @@ BEGIN
         WHERE tf.file_path = NEW.file_path
         AND t.story_id != (SELECT story_id FROM tasks WHERE id = NEW.task_id)
         AND t.status = 'DONE'
-    ) THEN RAISE(ABORT, 'File already owned by a DONE task in another story')
+        AND NOT EXISTS (
+            SELECT 1 FROM file_overrides fo
+            WHERE fo.file_path = NEW.file_path
+            AND fo.requesting_task_id = NEW.task_id
+            AND fo.status = 'approved'
+            AND fo.expires_at > datetime('now')
+        )
+    ) THEN RAISE(ABORT, 'File already owned by a DONE task in another story. Request override: acts override request --file <path> --task <id> --reason "..."')
     END;
 END;
 
@@ -373,4 +393,4 @@ BEGIN
 END;
 
 -- Insert schema version
-INSERT OR REPLACE INTO schema_version (version) VALUES (5);
+INSERT OR REPLACE INTO schema_version (version) VALUES (6);

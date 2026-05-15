@@ -150,6 +150,10 @@ pub const Database = struct {
             _ = c.sqlite3_exec(self.db, cleanup_stale_presence_sql, null, null, null);
             _ = c.sqlite3_exec(self.db, set_review_sla_sql, null, null, null);
         }
+        if (current_version < 6) {
+            _ = c.sqlite3_exec(self.db, file_overrides_table_sql, null, null, null);
+            _ = c.sqlite3_exec(self.db, enforce_cross_story_ownership_v2_sql, null, null, null);
+        }
     }
 
     // Migration SQL constants
@@ -240,6 +244,40 @@ pub const Database = struct {
         "    AND NOT EXISTS (SELECT 1 FROM gate_checkpoints gc WHERE gc.task_id = t.id " ++
         "      AND gc.gate_type = 'task-review' AND gc.status = 'approved')) " ++
         "  THEN RAISE(ABORT, 'Cannot merge story: tasks without approved review') END; " ++
+        "END;";
+
+    const file_overrides_table_sql =
+        "CREATE TABLE IF NOT EXISTS file_overrides (" ++
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT," ++
+        "  file_path TEXT NOT NULL," ++
+        "  requesting_task_id TEXT NOT NULL REFERENCES tasks(id)," ++
+        "  reason TEXT NOT NULL," ++
+        "  status TEXT DEFAULT 'pending' CHECK(status IN ('pending','approved','rejected','expired'))," ++
+        "  approved_by TEXT," ++
+        "  approved_at TEXT," ++
+        "  expires_at TEXT NOT NULL DEFAULT (datetime('now', '+24 hours'))," ++
+        "  created_at TEXT DEFAULT (datetime('now'))" ++
+        ");";
+
+    const enforce_cross_story_ownership_v2_sql =
+        "DROP TRIGGER IF EXISTS enforce_cross_story_ownership; " ++
+        "CREATE TRIGGER enforce_cross_story_ownership " ++
+        "BEFORE INSERT ON task_files " ++
+        "BEGIN " ++
+        "  SELECT CASE WHEN EXISTS(" ++
+        "    SELECT 1 FROM task_files tf JOIN tasks t ON t.id = tf.task_id " ++
+        "    WHERE tf.file_path = NEW.file_path " ++
+        "    AND t.story_id != (SELECT story_id FROM tasks WHERE id = NEW.task_id) " ++
+        "    AND t.status = 'DONE' " ++
+        "    AND NOT EXISTS (" ++
+        "      SELECT 1 FROM file_overrides fo " ++
+        "      WHERE fo.file_path = NEW.file_path " ++
+        "      AND fo.requesting_task_id = NEW.task_id " ++
+        "      AND fo.status = 'approved' " ++
+        "      AND fo.expires_at > datetime('now')" ++
+        "    )" ++
+        "  ) THEN RAISE(ABORT, 'File already owned by a DONE task in another story. Request override: acts override request --file <path> --task <id> --reason \"...\"') " ++
+        "  END; " ++
         "END;";
 
     const unblock_events_table_sql =
@@ -2184,5 +2222,140 @@ pub const Database = struct {
         }
 
         return output.toOwnedSlice();
+    }
+
+    // ============================================================
+    // File Overrides (human-only approval)
+    // ============================================================
+
+    pub const FileOverride = struct {
+        id: i32,
+        file_path: []const u8,
+        task_id: []const u8,
+        reason: []const u8,
+        status: []const u8,
+        approved_by: ?[]const u8 = null,
+        expires_at: []const u8,
+        created_at: []const u8,
+    };
+
+    pub fn requestOverride(self: *Database, file_path: []const u8, task_id: []const u8, reason: []const u8) !i32 {
+        try self.beginImmediate();
+        errdefer self.rollback();
+
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "INSERT INTO file_overrides (file_path, requesting_task_id, reason) VALUES (?, ?, ?)";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+
+        _ = c.sqlite3_bind_text(stmt, 1, file_path.ptr, @intCast(file_path.len), c.SQLITE_STATIC);
+        _ = c.sqlite3_bind_text(stmt, 2, task_id.ptr, @intCast(task_id.len), c.SQLITE_STATIC);
+        _ = c.sqlite3_bind_text(stmt, 3, reason.ptr, @intCast(reason.len), c.SQLITE_STATIC);
+
+        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return error.InsertFailed;
+
+        const override_id = c.sqlite3_last_insert_rowid(self.db);
+        try self.commit();
+        return @intCast(override_id);
+    }
+
+    pub fn approveOverride(self: *Database, override_id: i32, approved_by: []const u8) !void {
+        try self.beginImmediate();
+        errdefer self.rollback();
+
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "UPDATE file_overrides SET status = 'approved', approved_by = ?, approved_at = datetime('now') WHERE id = ? AND status = 'pending'";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+
+        _ = c.sqlite3_bind_text(stmt, 1, approved_by.ptr, @intCast(approved_by.len), c.SQLITE_STATIC);
+        _ = c.sqlite3_bind_int(stmt, 2, override_id);
+
+        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return error.UpdateFailed;
+        try self.commit();
+    }
+
+    pub fn rejectOverride(self: *Database, override_id: i32) !void {
+        try self.beginImmediate();
+        errdefer self.rollback();
+
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "UPDATE file_overrides SET status = 'rejected' WHERE id = ? AND status = 'pending'";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+
+        _ = c.sqlite3_bind_int(stmt, 1, override_id);
+        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) return error.UpdateFailed;
+        try self.commit();
+    }
+
+    pub fn listOverrides(self: *Database, allocator: std.mem.Allocator, pending_only: bool) ![]FileOverride {
+        var overrides = std.ArrayList(FileOverride).init(allocator);
+
+        const where_clause = if (pending_only) "status = 'pending'" else "1=1";
+
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = try std.fmt.allocPrint(allocator,
+            "SELECT id, file_path, requesting_task_id, reason, status, approved_by, expires_at, created_at FROM file_overrides WHERE {s} ORDER BY created_at DESC",
+            .{where_clause},
+        );
+        defer allocator.free(sql);
+
+        const rc = c.sqlite3_prepare_v2(self.db, sql.ptr, @intCast(sql.len), &stmt, null);
+        if (rc != c.SQLITE_OK) {
+            overrides.deinit();
+            return error.QueryFailed;
+        }
+        defer _ = c.sqlite3_finalize(stmt);
+
+        while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const fp = try allocator.dupe(u8, std.mem.span(c.sqlite3_column_text(stmt, 1)));
+            const tid = try allocator.dupe(u8, std.mem.span(c.sqlite3_column_text(stmt, 2)));
+            const reason = try allocator.dupe(u8, std.mem.span(c.sqlite3_column_text(stmt, 3)));
+            const status = try allocator.dupe(u8, std.mem.span(c.sqlite3_column_text(stmt, 4)));
+            const expires = try allocator.dupe(u8, std.mem.span(c.sqlite3_column_text(stmt, 6)));
+            const created = try allocator.dupe(u8, std.mem.span(c.sqlite3_column_text(stmt, 7)));
+
+            const approved_by_col = c.sqlite3_column_text(stmt, 5);
+            const approved_by: ?[]const u8 = if (approved_by_col != null)
+                try allocator.dupe(u8, std.mem.span(approved_by_col))
+            else
+                null;
+
+            try overrides.append(FileOverride{
+                .id = c.sqlite3_column_int(stmt, 0),
+                .file_path = fp,
+                .task_id = tid,
+                .reason = reason,
+                .status = status,
+                .approved_by = approved_by,
+                .expires_at = expires,
+                .created_at = created,
+            });
+        }
+
+        return overrides.toOwnedSlice();
+    }
+
+    pub fn freeOverrides(allocator: std.mem.Allocator, overrides: []FileOverride) void {
+        for (overrides) |o| {
+            allocator.free(o.file_path);
+            allocator.free(o.task_id);
+            allocator.free(o.reason);
+            allocator.free(o.status);
+            allocator.free(o.expires_at);
+            allocator.free(o.created_at);
+            if (o.approved_by) |ab| allocator.free(ab);
+        }
+        allocator.free(overrides);
+    }
+
+    pub fn expireOverrides(self: *Database) !void {
+        _ = c.sqlite3_exec(self.db,
+            "UPDATE file_overrides SET status = 'expired' WHERE status = 'approved' AND expires_at <= datetime('now')",
+            null, null, null);
     }
 };

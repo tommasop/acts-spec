@@ -69,6 +69,8 @@ pub fn main() !void {
         try handleGateSla(allocator, cmd_args);
     } else if (std.mem.eql(u8, command, "changelog")) {
         try handleChangelog(allocator, cmd_args);
+    } else if (std.mem.eql(u8, command, "override")) {
+        try handleOverride(allocator, cmd_args);
     } else if (std.mem.eql(u8, command, "version") or std.mem.eql(u8, command, "--version") or std.mem.eql(u8, command, "-v")) {
         try printVersion();
     } else if (std.mem.eql(u8, command, "help") or std.mem.eql(u8, command, "--help") or std.mem.eql(u8, command, "-h")) {
@@ -166,6 +168,16 @@ fn printUsage() !void {
         \\Changelog:
         \\  changelog --story <id>       Generate changelog from story data
         \\    --format md|json             Output format (default: md)
+        \\
+        \\Overrides (human-only):
+        \\  override request               Request file override
+        \\    --file <path>                  File to override (required)
+        \\    --task <id>                    Requesting task (required)
+        \\    --reason "..."                 Reason (required)
+        \\  override approve <id>        Approve override (human only)
+        \\    --by <name>                    Human approver name (required)
+        \\  override reject <id>         Reject override
+        \\  override list [--pending]    List overrides
         \\
         \\Database:
         \\  db checkpoint                Run WAL checkpoint
@@ -1553,4 +1565,147 @@ fn handleChangelog(allocator: std.mem.Allocator, args: []const []const u8) !void
     const stdout = std.io.getStdOut().writer();
     try stdout.writeAll(changelog);
     try stdout.writeAll("\n");
+}
+
+// ============================================================
+// Override (human-only file override requests)
+// ============================================================
+
+fn handleOverride(allocator: std.mem.Allocator, args: []const []const u8) !void {
+    if (args.len < 1) {
+        std.debug.print("Usage: acts override <request|approve|reject|list> [options]\n", .{});
+        std.process.exit(1);
+    }
+
+    const subcommand = args[0];
+
+    const db_path = ".acts/acts.db";
+    var database = try db.Database.open(db_path);
+    defer database.close();
+    try database.migrate();
+
+    // Expire stale overrides first
+    database.expireOverrides() catch {};
+
+    const stdout = std.io.getStdOut().writer();
+
+    if (std.mem.eql(u8, subcommand, "request")) {
+        var file_path: ?[]const u8 = null;
+        var task_id: ?[]const u8 = null;
+        var reason: ?[]const u8 = null;
+
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--file") and i + 1 < args.len) { file_path = args[i + 1]; i += 1; }
+            else if (std.mem.eql(u8, args[i], "--task") and i + 1 < args.len) { task_id = args[i + 1]; i += 1; }
+            else if (std.mem.eql(u8, args[i], "--reason") and i + 1 < args.len) { reason = args[i + 1]; i += 1; }
+        }
+
+        if (file_path == null or task_id == null or reason == null) {
+            std.debug.print("Usage: acts override request --file <path> --task <id> --reason \"...\"\n", .{});
+            std.process.exit(1);
+        }
+
+        const override_id = try database.requestOverride(file_path.?, task_id.?, reason.?);
+        try stdout.print("Override request #{d} created for {s} (task {s})\n", .{ override_id, file_path.?, task_id.? });
+        try stdout.writeAll("Waiting for human approval: acts override approve <id> --by \"<human-name>\"\n");
+
+    } else if (std.mem.eql(u8, subcommand, "approve")) {
+        if (args.len < 2) {
+            std.debug.print("Usage: acts override approve <id> --by \"<human-name>\"\n", .{});
+            std.process.exit(1);
+        }
+        const override_id = try std.fmt.parseInt(i32, args[1], 10);
+        var approved_by: ?[]const u8 = null;
+
+        var i: usize = 2;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--by") and i + 1 < args.len) { approved_by = args[i + 1]; i += 1; }
+        }
+
+        if (approved_by == null or approved_by.?.len == 0) {
+            std.debug.print("Error: --by <human-name> is required. Only humans can approve overrides.\n", .{});
+            std.process.exit(1);
+        }
+
+        // Block agent names
+        const blocked_names = [_][]const u8{ "agent", "ai", "claude", "cursor", "copilot", "gpt", "assistant", "opencode", "model" };
+        const lower_name = try std.ascii.allocLowerString(allocator, approved_by.?);
+        defer allocator.free(lower_name);
+
+        for (blocked_names) |blocked| {
+            if (std.mem.indexOf(u8, lower_name, blocked) != null) {
+                std.debug.print("Error: '{s}' appears to be an agent name. Only humans can approve overrides.\n", .{approved_by.?});
+                std.process.exit(1);
+            }
+        }
+
+        database.approveOverride(override_id, approved_by.?) catch |err| {
+            switch (err) {
+                error.UpdateFailed => {
+                    std.debug.print("Error: Override #{d} not found or already processed\n", .{override_id});
+                    std.process.exit(1);
+                },
+                else => {
+                    std.debug.print("Error: {}\n", .{err});
+                    std.process.exit(1);
+                },
+            }
+        };
+
+        try stdout.print("Override #{d} approved by {s}\n", .{ override_id, approved_by.? });
+
+    } else if (std.mem.eql(u8, subcommand, "reject")) {
+        if (args.len < 2) {
+            std.debug.print("Usage: acts override reject <id>\n", .{});
+            std.process.exit(1);
+        }
+        const override_id = try std.fmt.parseInt(i32, args[1], 10);
+
+        database.rejectOverride(override_id) catch |err| {
+            switch (err) {
+                error.UpdateFailed => {
+                    std.debug.print("Error: Override #{d} not found or already processed\n", .{override_id});
+                    std.process.exit(1);
+                },
+                else => {
+                    std.debug.print("Error: {}\n", .{err});
+                    std.process.exit(1);
+                },
+            }
+        };
+
+        try stdout.print("Override #{d} rejected\n", .{override_id});
+
+    } else if (std.mem.eql(u8, subcommand, "list")) {
+        var pending_only = false;
+
+        var i: usize = 1;
+        while (i < args.len) : (i += 1) {
+            if (std.mem.eql(u8, args[i], "--pending")) pending_only = true;
+        }
+
+        const overrides = try database.listOverrides(allocator, pending_only);
+        defer db.Database.freeOverrides(allocator, overrides);
+
+        if (overrides.len == 0) {
+            try stdout.writeAll("No override requests.\n");
+            return;
+        }
+
+        try stdout.print("{s}{s:<6} {s:<30} {s:<10} {s:<12} {s:<12} {s:<24}{s}\n", .{
+            "\x1b[1m", "ID", "File", "Task", "Status", "Approved By", "Expires", "\x1b[0m",
+        });
+        try stdout.writeAll("────────────────────────────────────────────────────────────────────────────────────────────\n");
+
+        for (overrides) |o| {
+            const approved = if (o.approved_by) |ab| ab else "-";
+            try stdout.print("{d:<6} {s:<30} {s:<10} {s:<12} {s:<12} {s:<24}\n", .{
+                o.id, o.file_path, o.task_id, o.status, approved, o.expires_at,
+            });
+        }
+    } else {
+        std.debug.print("Unknown override subcommand: {s}\n", .{subcommand});
+        std.process.exit(1);
+    }
 }
