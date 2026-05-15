@@ -1,4 +1,4 @@
-# ACTS Core v1.1.0
+# ACTS Core v1.1.2
 
 **Agent Collaborative Tracking Standard** — A standalone binary for multi-developer coordination using SQLite-backed state and protocol enforcement.
 
@@ -15,6 +15,8 @@ ACTS is a protocol for coordinating AI-assisted software development across mult
 - **Gate enforcement at database level** — SQLite triggers prevent invalid state transitions
 - **WAL mode** — Concurrent multi-story access with queued writes
 - **Multi-story development** — Git worktrees with cross-story ownership enforcement
+- **Human Review Experience (HRE)** — Vim-navigable terminal review with quality gates, agent rationale, risk assessment, and multi-file diff navigation
+- **File override system** — Human-only approval to modify files owned by DONE tasks in other stories
 - **Maintenance mode** — Quick bug fixes without story ceremony
 - **Standalone binary** — Single Zig executable, no runtime dependencies (except libc)
 - **Cross-platform** — Linux (x86_64, aarch64), macOS (x86_64, aarch64)
@@ -47,11 +49,11 @@ Download from [GitHub Releases](https://github.com/tommasop/acts-spec/releases):
 
 ```bash
 # Linux x86_64
-curl -L https://github.com/tommasop/acts-spec/releases/download/v1.1.0/acts-linux-x86_64.tar.gz | tar xz
+curl -L https://github.com/tommasop/acts-spec/releases/download/v1.1.2/acts-linux-x86_64.tar.gz | tar xz
 sudo mv acts/bin/acts /usr/local/bin/acts
 
 # macOS Apple Silicon
-curl -L https://github.com/tommasop/acts-spec/releases/download/v1.1.0/acts-macos-aarch64.tar.gz | tar xz
+curl -L https://github.com/tommasop/acts-spec/releases/download/v1.1.2/acts-macos-aarch64.tar.gz | tar xz
 sudo mv acts/bin/acts /usr/local/bin/acts
 ```
 
@@ -61,7 +63,7 @@ Requires [Zig 0.13.0](https://ziglang.org/download/):
 
 ```bash
 cd acts-core
-zig build release -Dversion=1.1.0
+zig build release -Dversion=1.1.2
 # Binary: zig-out/bin/acts
 ```
 
@@ -123,11 +125,12 @@ acts task create T1 --title "Add login endpoint" --story PROJ-42
 acts gate add --task T1 --type approve --status approved --by developer
 acts task update T1 --status IN_PROGRESS --assigned-to alice
 
-# Code review (stages files, shows diff, asks for approval)
+# Code review (enhanced HRE with vim navigation)
 acts review T1
-# → Stages task files with git
-# → Shows diff summary and full diff
-# → Prompts: Approve changes? [y/N]
+# → Auto-detects project type and runs quality gates (test, lint, typecheck, build)
+# → Shows agent rationale, risk assessment, previous rejections
+# → Multi-file diff with hunk navigation (]c/[c, ]f/[f, j/k, gg/G)
+# → Approve with 'a', reject with 'r', quit with 'q'
 
 # Approve or request changes:
 acts approve T1
@@ -170,6 +173,21 @@ acts scope check --task T2 --file src/auth.ts
 # }
 ```
 
+### File Overrides (Human-Only)
+
+When a task needs to modify a file owned by a DONE task in another story:
+
+```bash
+# Agent requests override
+acts override request --file src/auth.ts --task T2 --reason "bugfix: null pointer in auth flow"
+
+# Human approves (AI agents CANNOT approve overrides)
+acts override approve 1 --by "alice"
+
+# Override expires after 24 hours automatically
+acts override list --pending
+```
+
 ### Generate Changelog
 
 ```bash
@@ -203,12 +221,18 @@ acts task update T1 --status IN_PROGRESS --assigned-to alice
 # 4. Implement code
 # ... write code ...
 
-# 5. Code review
+# 5. Code review (Human Review Experience)
 acts review T1
-#   → Stages files touched by T1
-#   → Shows diff summary (git diff --cached --stat)
-#   → Shows full diff (git diff --cached)
-#   → Prompts: Approve changes? [y/N]
+#   → Auto-detects project type (npm, cargo, go, make, etc.)
+#   → Runs quality gates: test, lint, typecheck, build
+#   → Shows quality gate results with timing
+#   → Shows agent rationale (why the change was made)
+#   → Shows previous rejections (if any)
+#   → Shows file list with risk assessment (HIGH/MEDIUM/LOW)
+#   → Interactive vim-style navigation:
+#     j/k scroll, ]c/[c next/prev hunk, ]f/[f next/prev file
+#     gg/G go to top/bottom, a approve, r reject, q quit
+#     :qa/:cq ex-mode approve/reject, Ctrl-g show position
 #
 #   If approved:
 #     Task-review gate added by <user>
@@ -292,9 +316,18 @@ rm -f /usr/local/bin/acts ~/.local/bin/acts ./.acts/bin/acts
 
 | Command | Description | Example |
 |---------|-------------|---------|
-| `review <id>` | Review task changes | `acts review T1` |
+| `review <id>` | Enhanced HRE review with vim navigation | `acts review T1` |
 | `approve <id>` | Approve task-review gate | `acts approve T1` |
 | `reject <id>` | Request changes | `acts reject T1` |
+
+### Overrides (Human-Only)
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `override request` | Request file override | `acts override request --file src/x.ts --task T2 --reason "..."` |
+| `override approve <id>` | Approve override (human only) | `acts override approve 1 --by "alice"` |
+| `override reject <id>` | Reject override | `acts override reject 1` |
+| `override list` | List overrides | `acts override list --pending` |
 
 ### Gates
 
@@ -390,6 +423,7 @@ rm -f /usr/local/bin/acts ~/.local/bin/acts ./.acts/bin/acts
 - `agent_presence` — Active agent tracking
 - `gate_sla` — Review deadline tracking
 - `file_conflicts` — Cross-story file conflict detection
+- `file_overrides` — Human-approved file override requests (24h expiry)
 
 **Markdown files** — Human-readable narratives:
 
@@ -580,10 +614,10 @@ zig build
 zig build test
 
 # Release build (optimized)
-zig build release -Dversion=1.1.0
+zig build release -Dversion=1.1.2
 
 # Cross-compile for all platforms
-zig build cross -Dversion=1.1.0
+zig build cross -Dversion=1.1.2
 ```
 
 ### Adding a New Command
@@ -609,6 +643,8 @@ This adds:
 - Proactive signal tables (unblock_events, review_queue, agent_presence, gate_sla)
 - New enforcement triggers (cross-story ownership, story merge)
 - New proactive triggers (unblock notifications, review queue, presence cleanup, SLA)
+- File override system (file_overrides table, human-only approval, 24h expiry)
+- Human Review Experience (quality gate auto-detection, vim navigation, risk assessment)
 
 ## License
 
@@ -624,6 +660,7 @@ MIT License — See [LICENSE](LICENSE)
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
+| 1.1.2 | 2026-05 | Human Review Experience (HRE), file override system, vim navigation, quality gates |
 | 1.1.0 | 2026-05 | Multi-story, WAL mode, maintenance tasks, proactive triggers, changelog, git-based review |
 | 1.0.0 | 2026-01 | SQLite backend, Zig binary, gate triggers |
 | 0.6.2 | 2026-04 | Code review gates, GitHuman integration |
