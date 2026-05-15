@@ -967,6 +967,90 @@ pub const Database = struct {
         return output.toOwnedSlice();
     }
 
+    pub fn getRationale(self: *Database, allocator: std.mem.Allocator, task_id: []const u8) !?[]u8 {
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "SELECT reason FROM decisions WHERE task_id = ? AND topic = 'rationale' ORDER BY created_at DESC LIMIT 1";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+
+        _ = c.sqlite3_bind_text(stmt, 1, task_id.ptr, @intCast(task_id.len), c.SQLITE_STATIC);
+
+        if (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const val = c.sqlite3_column_text(stmt, 0);
+            if (val != null) return try allocator.dupe(u8, std.mem.span(val));
+        }
+        return null;
+    }
+
+    pub const Rejection = struct {
+        approved_by: []const u8,
+        created_at: []const u8,
+        comment: ?[]const u8 = null,
+    };
+
+    pub fn getPreviousRejections(self: *Database, allocator: std.mem.Allocator, task_id: []const u8) ![]Rejection {
+        var rejections = std.ArrayList(Rejection).init(allocator);
+
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "SELECT approved_by, created_at FROM gate_checkpoints WHERE task_id = ? AND gate_type = 'task-review' AND status = 'changes_requested' ORDER BY created_at DESC";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) {
+            rejections.deinit();
+            return error.QueryFailed;
+        }
+        defer _ = c.sqlite3_finalize(stmt);
+
+        _ = c.sqlite3_bind_text(stmt, 1, task_id.ptr, @intCast(task_id.len), c.SQLITE_STATIC);
+
+        while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const by = try allocator.dupe(u8, std.mem.span(c.sqlite3_column_text(stmt, 0)));
+            const at = try allocator.dupe(u8, std.mem.span(c.sqlite3_column_text(stmt, 1)));
+            try rejections.append(Rejection{
+                .approved_by = by,
+                .created_at = at,
+            });
+        }
+
+        return rejections.toOwnedSlice();
+    }
+
+    pub fn freeRejections(allocator: std.mem.Allocator, rejections: []Rejection) void {
+        for (rejections) |r| {
+            allocator.free(r.approved_by);
+            allocator.free(r.created_at);
+            if (r.comment) |cm| allocator.free(cm);
+        }
+        allocator.free(rejections);
+    }
+
+    pub fn getFilesForTask(self: *Database, allocator: std.mem.Allocator, task_id: []const u8) ![][]const u8 {
+        var files = std.ArrayList([]const u8).init(allocator);
+
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "SELECT file_path FROM task_files WHERE task_id = ? ORDER BY file_path";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) {
+            files.deinit();
+            return error.QueryFailed;
+        }
+        defer _ = c.sqlite3_finalize(stmt);
+
+        _ = c.sqlite3_bind_text(stmt, 1, task_id.ptr, @intCast(task_id.len), c.SQLITE_STATIC);
+
+        while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const fp = try allocator.dupe(u8, std.mem.span(c.sqlite3_column_text(stmt, 0)));
+            try files.append(fp);
+        }
+
+        return files.toOwnedSlice();
+    }
+
+    pub fn freeFiles(allocator: std.mem.Allocator, files: [][]const u8) void {
+        for (files) |f| allocator.free(f);
+        allocator.free(files);
+    }
+
     pub fn addRejectedApproach(self: *Database, allocator: std.mem.Allocator, json: []const u8) !void {
         try self.beginImmediate();
         errdefer self.rollback();

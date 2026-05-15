@@ -126,7 +126,7 @@ fn printUsage() !void {
         \\    --to <story-id>              Target story (required)
         \\
         \\Review:
-        \\  review <task-id>             Review task changes (stages files, shows summary)
+        \\  review <task-id>             Review task changes (enhanced HRE with vim navigation)
         \\  approve <task-id>            Approve task-review gate
         \\  reject <task-id>             Request changes on task-review gate
         \\
@@ -503,7 +503,7 @@ fn handleTaskMove(_: std.mem.Allocator, args: []const []const u8) !void {
 }
 
 // ============================================================
-// Review (stages files, shows summary, asks developer)
+// Review (enhanced HRE)
 // ============================================================
 
 fn handleReview(allocator: std.mem.Allocator, args: []const []const u8) !void {
@@ -519,130 +519,20 @@ fn handleReview(allocator: std.mem.Allocator, args: []const []const u8) !void {
     try database.migrate();
 
     // Verify task exists
-    const task_json = database.getTask(allocator, task_id) catch |err| {
+    _ = database.getTask(allocator, task_id) catch |err| {
         if (err == error.TaskNotFound) {
             std.debug.print("Error: Task {s} not found\n", .{task_id});
             std.process.exit(1);
         }
-        return err;
+        std.debug.print("Error: {}\n", .{err});
+        std.process.exit(1);
     };
-    defer allocator.free(task_json);
 
-    // Check if already approved
-    const has_review = try database.hasApprovedReviewGate(task_id);
-    if (has_review) {
-        const stdout = std.io.getStdOut().writer();
-        try stdout.print("Task {s} already has an approved task-review gate.\n", .{task_id});
-        return;
-    }
-
-    // Get files touched by this task
-    var files = std.ArrayList([]const u8).init(allocator);
-    defer { for (files.items) |f| allocator.free(f); files.deinit(); }
-
-    var file_stmt: ?*c.sqlite3_stmt = null;
-    const file_sql = "SELECT file_path FROM task_files WHERE task_id = ?";
-    const rc = c.sqlite3_prepare_v2(database.db, file_sql, -1, &file_stmt, null);
-    if (rc == c.SQLITE_OK) {
-        defer _ = c.sqlite3_finalize(file_stmt);
-        _ = c.sqlite3_bind_text(file_stmt, 1, task_id.ptr, @intCast(task_id.len), c.SQLITE_STATIC);
-        while (c.sqlite3_step(file_stmt) == c.SQLITE_ROW) {
-            const fp = std.mem.span(c.sqlite3_column_text(file_stmt, 0));
-            try files.append(try allocator.dupe(u8, fp));
-        }
-    }
-
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("\nReviewing task: {s}\n", .{task_id});
-    try stdout.writeAll("========================================\n\n");
-
-    if (files.items.len == 0) {
-        try stdout.writeAll("No files recorded for this task.\n");
-        try stdout.writeAll("Review the changes manually, then:\n");
-        try stdout.print("  acts approve {s}   # or: acts reject {s}\n\n", .{ task_id, task_id });
-    } else {
-        try stdout.print("Files changed ({d}):\n", .{files.items.len});
-        for (files.items) |f| {
-            try stdout.print("  {s}\n", .{f});
-        }
-        try stdout.writeAll("\n");
-
-        // Stage the files
-        try stdout.writeAll("Staging files for review...\n");
-        var stage_argv = std.ArrayList([]const u8).init(allocator);
-        defer stage_argv.deinit();
-        try stage_argv.append("git");
-        try stage_argv.append("add");
-        for (files.items) |f| {
-            try stage_argv.append(f);
-        }
-        var stage_child = std.process.Child.init(stage_argv.items, allocator);
-        stage_child.stdin_behavior = .Ignore;
-        stage_child.stdout_behavior = .Pipe;
-        stage_child.stderr_behavior = .Pipe;
-        stage_child.spawn() catch {
-            try stdout.writeAll("Warning: Could not run git add. Files may not be staged.\n\n");
-        };
-        _ = stage_child.wait() catch {};
-
-        // Show diff summary
-        try stdout.writeAll("\nDiff summary:\n");
-        try stdout.writeAll("----------------------------------------\n");
-        var diff_argv = [_][]const u8{ "git", "diff", "--cached", "--stat" };
-        var diff_child = std.process.Child.init(&diff_argv, allocator);
-        diff_child.stdin_behavior = .Ignore;
-        diff_child.stdout_behavior = .Pipe;
-        diff_child.stderr_behavior = .Pipe;
-        diff_child.spawn() catch {};
-        if (diff_child.stdout) |out| {
-            const diff_out = out.reader().readAllAlloc(allocator, 65536) catch "";
-            defer allocator.free(diff_out);
-            if (diff_out.len > 0) {
-                try stdout.writeAll(diff_out);
-            } else {
-                try stdout.writeAll("No staged changes detected.\n");
-            }
-        }
-        try stdout.writeAll("----------------------------------------\n\n");
-
-        // Show full diff
-        try stdout.writeAll("Full diff:\n");
-        try stdout.writeAll("========================================\n");
-        var full_diff_argv = [_][]const u8{ "git", "diff", "--cached" };
-        var full_diff_child = std.process.Child.init(&full_diff_argv, allocator);
-        full_diff_child.stdin_behavior = .Ignore;
-        full_diff_child.stdout_behavior = .Inherit;
-        full_diff_child.stderr_behavior = .Inherit;
-        full_diff_child.spawn() catch {};
-        _ = full_diff_child.wait() catch {};
-        try stdout.writeAll("========================================\n\n");
-    }
-
-    // Ask developer for approval
-    try stdout.writeAll("Approve changes? [y/N]: ");
-
-    var buf: [32]u8 = undefined;
-    const stdin = std.io.getStdIn().reader();
-    const input = stdin.readUntilDelimiterOrEof(&buf, '\n') catch null;
-
-    if (input) |line| {
-        const trimmed = std.mem.trim(u8, line, " \t\r\n");
-        if (std.mem.eql(u8, trimmed, "y") or std.mem.eql(u8, trimmed, "Y")) {
-            const user = std.process.getEnvVarOwned(allocator, "USER") catch blk: {
-                break :blk try allocator.dupe(u8, "developer");
-            };
-            defer allocator.free(user);
-
-            try database.addGate(task_id, "task-review", "approved", user);
-            try stdout.print("\nTask-review gate approved by {s}.\n", .{user});
-        } else {
-            try database.addGate(task_id, "task-review", "changes_requested", null);
-            try stdout.writeAll("\nChanges requested. Gate marked as 'changes_requested'.\n");
-        }
-    } else {
-        try database.addGate(task_id, "task-review", "changes_requested", null);
-        try stdout.writeAll("\nNo input received. Changes requested.\n");
-    }
+    const review = @import("review.zig");
+    review.run(allocator, &database, task_id) catch |err| {
+        std.debug.print("Error during review: {}\n", .{err});
+        std.process.exit(1);
+    };
 }
 
 // ============================================================
