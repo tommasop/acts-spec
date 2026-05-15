@@ -71,8 +71,14 @@ const low_risk_patterns = [_][]const u8{
 };
 
 fn assessRisk(file_path: []const u8, additions: usize, deletions: usize) RiskLevel {
-    const lower = std.ascii.allocLowerString(std.heap.page_allocator, file_path) catch return .medium;
-    defer std.heap.page_allocator.free(lower);
+    var lower_buf: [256]u8 = undefined;
+    const lower = if (file_path.len <= lower_buf.len)
+        blk: {
+            const copied = std.ascii.lowerString(&lower_buf, file_path);
+            break :blk copied;
+        }
+    else
+        file_path;
 
     var level: usize = 0;
 
@@ -128,16 +134,29 @@ pub fn riskColor(risk: RiskLevel) []const u8 {
 
 fn parseDiff(allocator: std.mem.Allocator, diff_output: []const u8) ![]FileDiff {
     var result = std.ArrayList(FileDiff).init(allocator);
+    errdefer {
+        for (result.items) |f| {
+            allocator.free(f.file_path);
+            for (f.hunks) |h| allocator.free(h.lines);
+            allocator.free(f.hunks);
+        }
+        result.deinit();
+    }
 
     var lines = std.mem.split(u8, diff_output, "\n");
     var current_file: ?[]const u8 = null;
     var current_additions: usize = 0;
     var current_deletions: usize = 0;
     var hunk_list = std.ArrayList(DiffHunk).init(allocator);
+    defer {
+        for (hunk_list.items) |h| allocator.free(h.lines);
+        hunk_list.deinit();
+    }
     var hunk_lines = std.ArrayList(u8).init(allocator);
+    defer hunk_lines.deinit();
     var in_hunk = false;
 
-    // Helper to finalize current file
+    // Helper to finalize current file — builds hunks slice WITHOUT toOwnedSlice UB
     const finalizeFile = struct {
         fn inner(
             alloc: std.mem.Allocator,
@@ -151,7 +170,7 @@ fn parseDiff(allocator: std.mem.Allocator, diff_output: []const u8) ![]FileDiff 
         ) !void {
             if (f.len == 0) return;
 
-            var hunks = try hl.toOwnedSlice();
+            // If there's a trailing partial hunk, finalize it first
             if (ih and hlines.items.len > 0) {
                 const last_hunk_lines = try alloc.dupe(u8, hlines.items);
                 try hl.append(DiffHunk{
@@ -162,8 +181,11 @@ fn parseDiff(allocator: std.mem.Allocator, diff_output: []const u8) ![]FileDiff 
                     .new_count = 0,
                     .lines = last_hunk_lines,
                 });
-                hunks = try hl.toOwnedSlice();
+                hlines.clearRetainingCapacity();
             }
+
+            // Now safely take ownership of hunks
+            const hunks = try hl.toOwnedSlice();
 
             try r.append(FileDiff{
                 .file_path = try alloc.dupe(u8, f),
@@ -260,17 +282,21 @@ pub fn gatherContext(allocator: std.mem.Allocator, database: *db.Database, task_
 
     // Get rationale
     const rationale = try database.getRationale(allocator, task_id);
+    errdefer if (rationale) |r| allocator.free(r);
 
     // Get previous rejections
     const rejections = try database.getPreviousRejections(allocator, task_id);
+    errdefer db.Database.freeRejections(allocator, rejections);
 
     // Get files
     const file_paths = try database.getFilesForTask(allocator, task_id);
+    errdefer db.Database.freeFiles(allocator, file_paths);
 
     // Run quality gates
     const quality_results = try quality.runAllQualityGates(allocator);
+    errdefer quality.freeQualityResults(allocator, quality_results);
 
-    // Get diff
+    // Get diff — run git and properly wait to avoid zombies
     var diff_argv = std.ArrayList([]const u8).init(allocator);
     defer diff_argv.deinit();
     try diff_argv.append("git");
@@ -282,13 +308,21 @@ pub fn gatherContext(allocator: std.mem.Allocator, database: *db.Database, task_
     diff_child.stdout_behavior = .Pipe;
     diff_child.stderr_behavior = .Pipe;
     diff_child.spawn() catch {};
+
+    // Read stdout first (before wait to avoid pipe deadlock)
     const diff_output = if (diff_child.stdout) |out|
         out.reader().readAllAlloc(allocator, 262144) catch ""
     else
         "";
+    defer allocator.free(diff_output);
+
+    // Wait for child to finish (prevents zombie)
+    _ = diff_child.wait() catch {};
 
     const file_diffs = try parseDiff(allocator, diff_output);
-    allocator.free(diff_output);
+    errdefer freeFileDiffs(allocator, file_diffs);
+
+    // Free file_paths now that we've parsed the diff
     db.Database.freeFiles(allocator, file_paths);
 
     return ReviewContext{
@@ -400,12 +434,14 @@ fn displayHunk(writer: anytype, hunk: *const DiffHunk, hunk_idx: usize, total_hu
 
     var hunk_lines = std.mem.split(u8, hunk.lines, "\n");
     while (hunk_lines.next()) |line| {
-        if (line.len == 0) continue;
-        switch (line[0]) {
-            '+' => try writer.print("{s}{s}{s}\n", .{ ansi.green, line, ansi.reset }),
-            '-' => try writer.print("{s}{s}{s}\n", .{ ansi.red, line, ansi.reset }),
-            '@' => try writer.print("{s}{s}{s}\n", .{ ansi.cyan, line, ansi.reset }),
-            else => try writer.print("{s}{s}{s}\n", .{ ansi.dim, line, ansi.reset }),
+        switch (line.len) {
+            0 => try writer.writeAll("\n"),
+            else => switch (line[0]) {
+                '+' => try writer.print("{s}{s}{s}\n", .{ ansi.green, line, ansi.reset }),
+                '-' => try writer.print("{s}{s}{s}\n", .{ ansi.red, line, ansi.reset }),
+                '@' => try writer.print("{s}{s}{s}\n", .{ ansi.cyan, line, ansi.reset }),
+                else => try writer.print("{s}{s}{s}\n", .{ ansi.dim, line, ansi.reset }),
+            },
         }
     }
     try writer.writeAll("\n");
@@ -473,6 +509,7 @@ pub fn restoreMode(orig: std.posix.termios) void {
 pub const Key = union(enum) {
     char: u8,
     escape_sequence: []const u8,
+    ctrl_c,
     ctrl_g,
     ctrl_d,
     ctrl_u,
@@ -501,10 +538,10 @@ fn readKey(allocator: std.mem.Allocator) !Key {
         return Key{ .char = 27 };
     }
 
-    if (byte == 3) return Key{ .ctrl_g = {} };
-    if (byte == 7) return Key{ .ctrl_g = {} };
-    if (byte == 4) return Key{ .ctrl_d = {} };
-    if (byte == 21) return Key{ .ctrl_u = {} };
+    if (byte == 3) return Key{ .ctrl_c = {} }; // Ctrl-C
+    if (byte == 7) return Key{ .ctrl_g = {} }; // Ctrl-G
+    if (byte == 4) return Key{ .ctrl_d = {} }; // Ctrl-D
+    if (byte == 21) return Key{ .ctrl_u = {} }; // Ctrl-U
     if (byte == 13 or byte == 10) return Key{ .enter = {} };
 
     return Key{ .char = byte };
@@ -696,6 +733,7 @@ pub fn interactiveReview(allocator: std.mem.Allocator, ctx: *const ReviewContext
                 });
                 _ = readKey(allocator) catch continue;
             },
+            .ctrl_c => return .cancelled,
             .ctrl_d => scroll_offset += 10,
             .ctrl_u => { if (scroll_offset >= 10) scroll_offset -= 10 else scroll_offset = 0; },
             .enter => {},

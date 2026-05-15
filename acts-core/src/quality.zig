@@ -135,22 +135,9 @@ pub fn runStage(allocator: std.mem.Allocator, stage: QualityStage, command: ?[]c
         };
     };
 
-    const wait_result = child.wait() catch |err| {
-        return QualityResult{
-            .stage = stage,
-            .command = try allocator.dupe(u8, cmd),
-            .status = .warn,
-            .exit_code = -1,
-            .output = try std.fmt.allocPrint(allocator, "Wait failed: {}", .{err}),
-            .duration_ms = 0,
-        };
-    };
-
-    const elapsed = start.since(try std.time.Instant.now()) / std.time.ns_per_ms;
-
-    // Capture output
+    // Read stdout/stderr BEFORE wait to avoid pipe deadlock
     var output_buf = std.ArrayList(u8).init(allocator);
-    defer output_buf.deinit();
+    errdefer output_buf.deinit();
 
     if (child.stdout) |out| {
         const stdout_data = out.reader().readAllAlloc(allocator, 32768) catch "";
@@ -162,6 +149,20 @@ pub fn runStage(allocator: std.mem.Allocator, stage: QualityStage, command: ?[]c
         defer allocator.free(stderr_data);
         try output_buf.writer().writeAll(stderr_data);
     }
+
+    const wait_result = child.wait() catch {
+        const output = output_buf.toOwnedSlice() catch "";
+        return QualityResult{
+            .stage = stage,
+            .command = try allocator.dupe(u8, cmd),
+            .status = .warn,
+            .exit_code = -1,
+            .output = output,
+            .duration_ms = 0,
+        };
+    };
+
+    const elapsed = start.since(try std.time.Instant.now()) / std.time.ns_per_ms;
 
     const exit_code: i32 = switch (wait_result) {
         .Exited => |code| @as(i32, @intCast(code)),
