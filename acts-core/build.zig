@@ -4,6 +4,10 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
+    const version = b.option([]const u8, "version", "Build version") orelse "dev";
+    const options = b.addOptions();
+    options.addOption([]const u8, "version", version);
+
     // Main executable
     const exe = b.addExecutable(.{
         .name = "acts",
@@ -22,6 +26,7 @@ pub fn build(b: *std.Build) void {
             "-DSQLITE_ENABLE_JSON1",
         },
     });
+    exe.root_module.addOptions("build_options", options);
 
     b.installArtifact(exe);
 
@@ -50,6 +55,7 @@ pub fn build(b: *std.Build) void {
             "-DSQLITE_ENABLE_JSON1",
         },
     });
+    exe_unit_tests.root_module.addOptions("build_options", options);
 
     const run_exe_unit_tests = b.addRunArtifact(exe_unit_tests);
     const test_step = b.step("test", "Run unit tests");
@@ -73,6 +79,7 @@ pub fn build(b: *std.Build) void {
             "-DSQLITE_ENABLE_JSON1",
         },
     });
+    release_exe.root_module.addOptions("build_options", options);
 
     const install_release = b.addInstallArtifact(release_exe, .{});
     release_step.dependOn(&install_release.step);
@@ -111,6 +118,7 @@ pub fn build(b: *std.Build) void {
                 "-DSQLITE_ENABLE_JSON1",
             },
         });
+        cross_exe.root_module.addOptions("build_options", options);
 
         const install_cross = b.addInstallArtifact(cross_exe, .{});
         cross_step.dependOn(&install_cross.step);

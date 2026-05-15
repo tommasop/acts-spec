@@ -1,18 +1,19 @@
 #!/usr/bin/env bash
 set -e
 
-# ACTS Installer
+# ACTS Installer v1.1.0
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/main/install.sh | bash
 #   curl -fsSL ... | bash -s -- --local        # Install to ./.acts/bin/
-#   curl -fsSL ... | bash -s -- --version 1.0.0 # Install specific version
-#   curl -fsSL ... | bash -s -- --update        # Update existing installation
+#   curl -fsSL ... | bash -s -- --version 1.1.0 # Install specific version
+#   curl -fsSL ... | bash -s -- --update        # Update existing installation (with migration)
 
 REPO="tommasop/acts-spec"
 INSTALL_DIR="/usr/local/bin"
 LOCAL_DIR="./.acts/bin"
 VERSION=""
 FORCE=false
+MIGRATE=true
 
 detect_platform() {
     local os arch
@@ -64,24 +65,74 @@ download() {
     fi
 }
 
+migrate_projects() {
+    echo ""
+    echo "Checking for ACTS projects to migrate..."
+
+    # Find all .acts/acts.db files in current directory and subdirectories
+    local db_files
+    db_files=$(find . -name "acts.db" -path "*/.acts/*" 2>/dev/null || true)
+
+    # Also check parent directories up to home
+    local dir="$PWD"
+    while [ "$dir" != "/" ] && [ "$dir" != "$HOME" ]; do
+        if [ -f "$dir/.acts/acts.db" ]; then
+            db_files="${db_files:+$db_files
+}$dir/.acts/acts.db"
+        fi
+        dir=$(dirname "$dir")
+    done
+
+    if [ -z "$db_files" ]; then
+        echo "No existing ACTS projects found."
+        return 0
+    fi
+
+    local acts_bin="$1"
+    local migrated=0
+
+    while IFS= read -r db_path; do
+        local project_dir
+        project_dir=$(dirname "$(dirname "$db_path")")
+
+        # Check schema version
+        local current_version
+        current_version=$(sqlite3 "$db_path" "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1;" 2>/dev/null || echo "0")
+
+        if [ "$current_version" -lt 5 ] 2>/dev/null; then
+            echo "Migrating project at ${project_dir} (schema v${current_version} -> v5)..."
+            cd "$project_dir" && "$acts_bin" migrate && cd - > /dev/null
+            migrated=$((migrated + 1))
+        else
+            echo "Project at ${project_dir} is already up to date (schema v${current_version})."
+        fi
+    done <<< "$db_files"
+
+    if [ "$migrated" -gt 0 ]; then
+        echo ""
+        echo "Migrated ${migrated} project(s) to schema v5."
+    fi
+}
+
 usage() {
     cat <<EOF
-ACTS Installer
+ACTS Installer v1.1.0
 
 Usage: install.sh [OPTIONS]
 
 Options:
   --local          Install to ./.acts/bin/ instead of /usr/local/bin
   --version V      Install specific version (default: latest)
-  --update         Update existing installation
+  --update         Update existing installation and migrate projects
   --force          Overwrite existing binary
+  --no-migrate     Skip project migration (update only)
   --help           Show this help
 
 Examples:
   install.sh                          # System-wide install
   install.sh --local                  # Project-local install
-  install.sh --version v1.0.0         # Install specific version
-  install.sh --update                 # Update to latest
+  install.sh --version v1.1.0         # Install specific version
+  install.sh --update                 # Update and migrate projects
 EOF
 }
 
@@ -98,10 +149,15 @@ main() {
                 ;;
             --update)
                 FORCE=true
+                MIGRATE=true
                 shift
                 ;;
             --force)
                 FORCE=true
+                shift
+                ;;
+            --no-migrate)
+                MIGRATE=false
                 shift
                 ;;
             --help|-h)
@@ -154,6 +210,11 @@ main() {
 
     # Verify
     "$dest" version 2>/dev/null || "$dest" --version 2>/dev/null || true
+
+    # Migrate existing projects
+    if [ "$MIGRATE" = true ]; then
+        migrate_projects "$dest"
+    fi
 
     # Check if in PATH
     if ! command -v acts &>/dev/null; then
