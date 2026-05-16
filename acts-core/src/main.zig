@@ -107,7 +107,8 @@ fn printUsage() !void {
         \\    --format json|dot            Output format (default: json)
         \\
         \\State:
-        \\  state read [--story <id>]    Read story state as JSON
+        \\  state read [--story <id>]    Read story state
+        \\    --format json|pretty|table   Output format (default: json)
         \\  state write --story <id>     Write story state from stdin JSON
         \\
         \\Tasks:
@@ -301,11 +302,15 @@ fn handleState(allocator: std.mem.Allocator, args: []const []const u8) !void {
 
     const subcommand = args[0];
     var story_id: ?[]const u8 = null;
+    var format: []const u8 = "json";
 
     var i: usize = 1;
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, args[i], "--story") and i + 1 < args.len) {
             story_id = args[i + 1];
+            i += 1;
+        } else if (std.mem.eql(u8, args[i], "--format") and i + 1 < args.len) {
+            format = args[i + 1];
             i += 1;
         }
     }
@@ -319,8 +324,21 @@ fn handleState(allocator: std.mem.Allocator, args: []const []const u8) !void {
         const state = try database.readState(allocator, story_id);
         defer allocator.free(state);
         const stdout = std.io.getStdOut().writer();
-        try stdout.writeAll(state);
-        try stdout.writeAll("\n");
+
+        if (std.mem.eql(u8, format, "json")) {
+            try stdout.writeAll(state);
+            try stdout.writeAll("\n");
+        } else if (std.mem.eql(u8, format, "pretty")) {
+            const pretty = try prettyPrintJson(allocator, state);
+            defer allocator.free(pretty);
+            try stdout.writeAll(pretty);
+            try stdout.writeAll("\n");
+        } else if (std.mem.eql(u8, format, "table")) {
+            try printStateTable(stdout, allocator, state);
+        } else {
+            std.debug.print("Unknown format: {s}. Use json, pretty, or table.\n", .{format});
+            std.process.exit(1);
+        }
     } else if (std.mem.eql(u8, subcommand, "write")) {
         if (story_id == null) {
             std.debug.print("Usage: acts state write --story <id> (reads JSON from stdin)\n", .{});
@@ -333,6 +351,82 @@ fn handleState(allocator: std.mem.Allocator, args: []const []const u8) !void {
     } else {
         std.debug.print("Unknown state subcommand: {s}\n", .{subcommand});
         std.process.exit(1);
+    }
+}
+
+// ============================================================
+// State formatting helpers
+// ============================================================
+
+fn prettyPrintJson(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+    defer parsed.deinit();
+
+    var out = std.ArrayList(u8).init(allocator);
+    errdefer out.deinit();
+
+    try std.json.stringify(parsed.value, .{ .whitespace = .indent_2 }, out.writer());
+
+    return out.toOwnedSlice();
+}
+
+fn printStateTable(writer: anytype, allocator: std.mem.Allocator, json: []const u8) !void {
+    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+    defer parsed.deinit();
+
+    if (parsed.value != .object) return;
+    const obj = parsed.value.object;
+
+    // Story header
+    const title = if (obj.get("title")) |v| if (v == .string) v.string else "?" else "?";
+    const status = if (obj.get("status")) |v| if (v == .string) v.string else "?" else "?";
+    const story_id = if (obj.get("story_id")) |v| if (v == .string) v.string else "?" else "?";
+    const story_type = if (obj.get("type")) |v| if (v == .string) v.string else "?" else "?";
+
+    try writer.print("{s}{s} — {s}{s} ({s}, {s})\n", .{ "\x1b[1m", story_id, title, "\x1b[0m", story_type, status });
+    try writer.writeAll("══════════════════════════════════════════════════════\n\n");
+
+    // Tasks table
+    if (obj.get("tasks")) |tasks| {
+        if (tasks == .array and tasks.array.items.len > 0) {
+            try writer.print("{s}{s:<10} {s:<30} {s:<12} {s:<10} {s:<12}{s}\n", .{
+                "\x1b[1m", "ID", "Title", "Status", "Priority", "Review", "\x1b[0m",
+            });
+            try writer.writeAll("────────────────────────────────────────────────────────────\n");
+
+            for (tasks.array.items) |task| {
+                if (task != .object) continue;
+                const t = task.object;
+
+                const tid = if (t.get("id")) |v| if (v == .string) v.string else "?" else "?";
+                const ttitle = if (t.get("title")) |v| if (v == .string) v.string else "?" else "?";
+                const tstatus = if (t.get("status")) |v| if (v == .string) v.string else "?" else "?";
+                const treview = if (t.get("review_status")) |v| if (v == .string) v.string else "?" else "?";
+                const tpriority = if (t.get("context_priority")) |v| if (v == .integer) std.fmt.allocPrint(allocator, "{d}", .{v.integer}) catch "?" else "?" else "?";
+
+                // Color status
+                const status_color = if (std.mem.eql(u8, tstatus, "DONE")) "\x1b[32m"
+                    else if (std.mem.eql(u8, tstatus, "IN_PROGRESS")) "\x1b[33m"
+                    else if (std.mem.eql(u8, tstatus, "BLOCKED")) "\x1b[31m"
+                    else "\x1b[0m";
+
+                try writer.print("{s:<10} {s:<30} {s}{s:<12}{s} {s:<10} {s:<12}\n", .{
+                    tid, ttitle, status_color, tstatus, "\x1b[0m", tpriority, treview,
+                });
+
+                // Show files if any
+                if (t.get("files_touched")) |files| {
+                    if (files == .array and files.array.items.len > 0) {
+                        for (files.array.items) |f| {
+                            if (f == .string) {
+                                try writer.print("             {s}{s}\n", .{ "\x1b[2m", f.string });
+                            }
+                        }
+                    }
+                }
+            }
+            try writer.writeAll("\n");
+        }
     }
 }
 

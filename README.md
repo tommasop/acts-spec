@@ -1,4 +1,4 @@
-# ACTS Core v1.1.2
+# ACTS Core v1.1.3
 
 **Agent Collaborative Tracking Standard** — A standalone binary for multi-developer coordination using SQLite-backed state and protocol enforcement.
 
@@ -49,11 +49,11 @@ Download from [GitHub Releases](https://github.com/tommasop/acts-spec/releases):
 
 ```bash
 # Linux x86_64
-curl -L https://github.com/tommasop/acts-spec/releases/download/v1.1.2/acts-linux-x86_64.tar.gz | tar xz
+curl -L https://github.com/tommasop/acts-spec/releases/download/v1.1.3/acts-linux-x86_64.tar.gz | tar xz
 sudo mv acts/bin/acts /usr/local/bin/acts
 
 # macOS Apple Silicon
-curl -L https://github.com/tommasop/acts-spec/releases/download/v1.1.2/acts-macos-aarch64.tar.gz | tar xz
+curl -L https://github.com/tommasop/acts-spec/releases/download/v1.1.3/acts-macos-aarch64.tar.gz | tar xz
 sudo mv acts/bin/acts /usr/local/bin/acts
 ```
 
@@ -660,6 +660,7 @@ MIT License — See [LICENSE](LICENSE)
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
+| 1.1.3 | 2026-05 | `acts state read --format` (json/pretty/table), JSON output fix |
 | 1.1.2 | 2026-05 | Human Review Experience (HRE), file override system, vim navigation, quality gates |
 | 1.1.0 | 2026-05 | Multi-story, WAL mode, maintenance tasks, proactive triggers, changelog, git-based review |
 | 1.0.0 | 2026-01 | SQLite backend, Zig binary, gate triggers |

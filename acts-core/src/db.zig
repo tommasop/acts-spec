@@ -448,9 +448,9 @@ pub const Database = struct {
             }
             const semver = ct(story_stmt, 13);
             if (semver.len > 0) {
-                try writer.print("  \"semver\": \"{s}\"\n", .{try Database.escapeJsonString(allocator, semver)});
+                try writer.print("  \"semver\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, semver)});
             } else {
-                try writer.writeAll("  \"semver\": null\n");
+                try writer.writeAll("  \"semver\": null,\n");
             }
 
             // Get tasks

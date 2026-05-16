@@ -242,7 +242,7 @@ Recording session summary:
 Start T2: Implement URL shortening endpoint
 
 ## Agent Compliance
-- Read state.json before writing code: ✅
+- Read state (`acts state read`) before writing code: ✅
 - Did not modify files owned by DONE tasks: ✅ (none yet)
 - Stayed within assigned task boundary: ✅
 - Followed context protocol: ✅
