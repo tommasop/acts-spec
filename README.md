@@ -27,16 +27,17 @@ ACTS is a protocol for coordinating AI-assisted software development across mult
 
 ```bash
 # System-wide install
-bash <(curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/main/install.sh)
+bash <(curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/master/install.sh)
 
 # Project-local install (to ./.acts/bin/)
-bash <(curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/main/install.sh) --local
+bash <(curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/master/install.sh) --local
 
 # Update to latest (auto-migrates existing projects)
-bash <(curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/main/install.sh) --update
+bash <(curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/master/install.sh) --update
 ```
 
 Or using Make:
+
 ```bash
 make install        # System-wide
 make install-local  # Project-local
@@ -636,6 +637,7 @@ acts migrate
 ```
 
 This adds:
+
 - WAL mode for concurrent access
 - Story type and labels columns
 - Maintenance story (`__maintenance__`)
