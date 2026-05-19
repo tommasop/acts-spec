@@ -15,10 +15,6 @@
   },
   "description": "Project-level ACTS configuration \u2014 controls behavior, integration, and protocol settings.",
   "commit_convention": "conventional",
-  "review_provider": "hunk",
-  "review_provider_config": {
-    "mode": "tui"
-  },
   "allow_reopen_completed": false,
   "agent_roles": [
     "coder",
@@ -44,19 +40,6 @@
         "DONE": "Done",
         "BLOCKED": null
       }
-    }
-  },
-  "mcp_context_engine": {
-    "enabled": false,
-    "description": "Layer 7: MCP Context Engine. Optional. Provides operation-aware context delivery, compaction, anchoring, and verification via MCP server.",
-    "server_path": ".acts/mcp-server",
-    "transport": "stdio",
-    "config": {
-      "context_budget_default": 50000,
-      "loop_threshold": 3,
-      "turn_refresh_interval": 15,
-      "compaction_auto_trigger": 10,
-      "attention_optimization": true
     }
   },
   "plugin": {
