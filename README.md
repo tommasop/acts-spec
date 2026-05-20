@@ -662,7 +662,7 @@ MIT License — See [LICENSE](LICENSE)
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| 1.1.3 | 2026-05 | `acts state read --format` (json/pretty/table), JSON output fix |
+| 1.1.3 | 2026-05 | Memory leak fixes, SQL prepare fix, version string consistency, QueryFailed error reporting, `acts state read --format` (json/pretty/table), JSON output fix |
 | 1.1.2 | 2026-05 | Human Review Experience (HRE), file override system, vim navigation, quality gates |
 | 1.1.0 | 2026-05 | Multi-story, WAL mode, maintenance tasks, proactive triggers, changelog, git-based review |
 | 1.0.0 | 2026-01 | SQLite backend, Zig binary, gate triggers |

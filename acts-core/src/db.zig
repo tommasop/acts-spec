@@ -428,27 +428,45 @@ pub const Database = struct {
 
         if (c.sqlite3_step(story_stmt) == c.SQLITE_ROW) {
             try writer.print("{{\n", .{});
-            try writer.print("  \"story_id\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, ct(story_stmt, 0))});
-            try writer.print("  \"acts_version\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, ct(story_stmt, 1))});
-            try writer.print("  \"title\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, ct(story_stmt, 2))});
-            try writer.print("  \"status\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, ct(story_stmt, 3))});
+            const esid = try Database.escapeJsonString(allocator, ct(story_stmt, 0));
+            defer allocator.free(esid);
+            try writer.print("  \"story_id\": \"{s}\",\n", .{esid});
+            const eav = try Database.escapeJsonString(allocator, ct(story_stmt, 1));
+            defer allocator.free(eav);
+            try writer.print("  \"acts_version\": \"{s}\",\n", .{eav});
+            const etitle = try Database.escapeJsonString(allocator, ct(story_stmt, 2));
+            defer allocator.free(etitle);
+            try writer.print("  \"title\": \"{s}\",\n", .{etitle});
+            const estatus = try Database.escapeJsonString(allocator, ct(story_stmt, 3));
+            defer allocator.free(estatus);
+            try writer.print("  \"status\": \"{s}\",\n", .{estatus});
             try writer.print("  \"spec_approved\": {s},\n", .{if (c.sqlite3_column_int(story_stmt, 4) == 1) "true" else "false"});
-            try writer.print("  \"created_at\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, ct(story_stmt, 5))});
-            try writer.print("  \"updated_at\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, ct(story_stmt, 6))});
+            const ecreated = try Database.escapeJsonString(allocator, ct(story_stmt, 5));
+            defer allocator.free(ecreated);
+            try writer.print("  \"created_at\": \"{s}\",\n", .{ecreated});
+            const eupdated = try Database.escapeJsonString(allocator, ct(story_stmt, 6));
+            defer allocator.free(eupdated);
+            try writer.print("  \"updated_at\": \"{s}\",\n", .{eupdated});
             try writer.print("  \"context_budget\": {d},\n", .{c.sqlite3_column_int(story_stmt, 7)});
             try writer.print("  \"session_count\": {d},\n", .{c.sqlite3_column_int(story_stmt, 8)});
             try writer.print("  \"compressed\": {s},\n", .{if (c.sqlite3_column_int(story_stmt, 9) == 1) "true" else "false"});
             try writer.print("  \"strict_mode\": {s},\n", .{if (c.sqlite3_column_int(story_stmt, 10) == 1) "true" else "false"});
-            try writer.print("  \"type\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, ct(story_stmt, 11))});
+            const etype = try Database.escapeJsonString(allocator, ct(story_stmt, 11));
+            defer allocator.free(etype);
+            try writer.print("  \"type\": \"{s}\",\n", .{etype});
             const branch = ct(story_stmt, 12);
             if (branch.len > 0) {
-                try writer.print("  \"branch\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, branch)});
+                const ebranch = try Database.escapeJsonString(allocator, branch);
+                defer allocator.free(ebranch);
+                try writer.print("  \"branch\": \"{s}\",\n", .{ebranch});
             } else {
                 try writer.writeAll("  \"branch\": null,\n");
             }
             const semver = ct(story_stmt, 13);
             if (semver.len > 0) {
-                try writer.print("  \"semver\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, semver)});
+                const esemver = try Database.escapeJsonString(allocator, semver);
+                defer allocator.free(esemver);
+                try writer.print("  \"semver\": \"{s}\",\n", .{esemver});
             } else {
                 try writer.writeAll("  \"semver\": null,\n");
             }
@@ -468,20 +486,32 @@ pub const Database = struct {
                     first_task = false;
 
                     try writer.print("    {{\n", .{});
-                    try writer.print("      \"id\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, ct(task_stmt, 0))});
-                    try writer.print("      \"title\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, ct(task_stmt, 1))});
-                    try writer.print("      \"description\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, ct(task_stmt, 2))});
-                    try writer.print("      \"status\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, ct(task_stmt, 3))});
+                    const etid = try Database.escapeJsonString(allocator, ct(task_stmt, 0));
+                    defer allocator.free(etid);
+                    try writer.print("      \"id\": \"{s}\",\n", .{etid});
+                    const ett = try Database.escapeJsonString(allocator, ct(task_stmt, 1));
+                    defer allocator.free(ett);
+                    try writer.print("      \"title\": \"{s}\",\n", .{ett});
+                    const etdesc = try Database.escapeJsonString(allocator, ct(task_stmt, 2));
+                    defer allocator.free(etdesc);
+                    try writer.print("      \"description\": \"{s}\",\n", .{etdesc});
+                    const etst = try Database.escapeJsonString(allocator, ct(task_stmt, 3));
+                    defer allocator.free(etst);
+                    try writer.print("      \"status\": \"{s}\",\n", .{etst});
 
                     const assigned = c.sqlite3_column_text(task_stmt, 4);
                     if (assigned != null) {
-                        try writer.print("      \"assigned_to\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, std.mem.span(assigned))});
+                        const eassigned = try Database.escapeJsonString(allocator, std.mem.span(assigned));
+                        defer allocator.free(eassigned);
+                        try writer.print("      \"assigned_to\": \"{s}\",\n", .{eassigned});
                     } else {
                         try writer.writeAll("      \"assigned_to\": null,\n");
                     }
 
                     try writer.print("      \"context_priority\": {d},\n", .{c.sqlite3_column_int(task_stmt, 5)});
-                    try writer.print("      \"review_status\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, ct(task_stmt, 6))});
+                    const etrs = try Database.escapeJsonString(allocator, ct(task_stmt, 6));
+                    defer allocator.free(etrs);
+                    try writer.print("      \"review_status\": \"{s}\",\n", .{etrs});
                     const labels = c.sqlite3_column_text(task_stmt, 7);
                     if (labels != null) {
                         try writer.print("      \"labels\": {s}\n", .{std.mem.span(labels)});
@@ -501,7 +531,9 @@ pub const Database = struct {
                         while (c.sqlite3_step(file_stmt) == c.SQLITE_ROW) {
                             if (!first_file) try writer.writeAll(", ");
                             first_file = false;
-                            try writer.print("\"{s}\"", .{try Database.escapeJsonString(allocator, std.mem.span(c.sqlite3_column_text(file_stmt, 0)))});
+                            const efile = try Database.escapeJsonString(allocator, std.mem.span(c.sqlite3_column_text(file_stmt, 0)));
+                            defer allocator.free(efile);
+                            try writer.print("\"{s}\"", .{efile});
                         }
                     }
                     try writer.writeAll("],\n");
@@ -518,7 +550,9 @@ pub const Database = struct {
                         while (c.sqlite3_step(dep_stmt) == c.SQLITE_ROW) {
                             if (!first_dep) try writer.writeAll(", ");
                             first_dep = false;
-                            try writer.print("\"{s}\"", .{try Database.escapeJsonString(allocator, std.mem.span(c.sqlite3_column_text(dep_stmt, 0)))});
+                            const edep = try Database.escapeJsonString(allocator, std.mem.span(c.sqlite3_column_text(dep_stmt, 0)));
+                            defer allocator.free(edep);
+                            try writer.print("\"{s}\"", .{edep});
                         }
                     }
                     try writer.writeAll("]\n");
@@ -745,27 +779,41 @@ pub const Database = struct {
 
         if (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
             try writer.print("{{\n", .{});
-            try writer.print("  \"id\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, ct(stmt, 0))});
-            try writer.print("  \"title\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, ct(stmt, 1))});
-            try writer.print("  \"description\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, ct(stmt, 2))});
-            try writer.print("  \"status\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, ct(stmt, 3))});
+            const egid = try Database.escapeJsonString(allocator, ct(stmt, 0));
+            defer allocator.free(egid);
+            try writer.print("  \"id\": \"{s}\",\n", .{egid});
+            const egt = try Database.escapeJsonString(allocator, ct(stmt, 1));
+            defer allocator.free(egt);
+            try writer.print("  \"title\": \"{s}\",\n", .{egt});
+            const egd = try Database.escapeJsonString(allocator, ct(stmt, 2));
+            defer allocator.free(egd);
+            try writer.print("  \"description\": \"{s}\",\n", .{egd});
+            const egs = try Database.escapeJsonString(allocator, ct(stmt, 3));
+            defer allocator.free(egs);
+            try writer.print("  \"status\": \"{s}\",\n", .{egs});
 
             const assigned = c.sqlite3_column_text(stmt, 4);
             if (assigned != null) {
-                try writer.print("  \"assigned_to\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, std.mem.span(assigned))});
+                const ega = try Database.escapeJsonString(allocator, std.mem.span(assigned));
+                defer allocator.free(ega);
+                try writer.print("  \"assigned_to\": \"{s}\",\n", .{ega});
             } else {
                 try writer.writeAll("  \"assigned_to\": null,\n");
             }
 
             try writer.print("  \"context_priority\": {d},\n", .{c.sqlite3_column_int(stmt, 5)});
-            try writer.print("  \"review_status\": \"{s}\",\n", .{try Database.escapeJsonString(allocator, ct(stmt, 6))});
+            const egr = try Database.escapeJsonString(allocator, ct(stmt, 6));
+            defer allocator.free(egr);
+            try writer.print("  \"review_status\": \"{s}\",\n", .{egr});
             const labels = c.sqlite3_column_text(stmt, 7);
             if (labels != null) {
                 try writer.print("  \"labels\": {s},\n", .{std.mem.span(labels)});
             } else {
                 try writer.writeAll("  \"labels\": null,\n");
             }
-            try writer.print("  \"story_id\": \"{s}\"\n", .{try Database.escapeJsonString(allocator, ct(stmt, 8))});
+            const egsi = try Database.escapeJsonString(allocator, ct(stmt, 8));
+            defer allocator.free(egsi);
+            try writer.print("  \"story_id\": \"{s}\"\n", .{egsi});
             try writer.writeAll("}");
         } else {
             return error.TaskNotFound;
@@ -1571,15 +1619,20 @@ pub const Database = struct {
         try w.writeAll("[\n");
 
         var stmt: ?*c.sqlite3_stmt = null;
-        const rc = c.sqlite3_prepare_v2(self.db, sql_buf.items.ptr, -1, &stmt, null);
-        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        const rc = c.sqlite3_prepare_v2(self.db, sql_buf.items.ptr, @intCast(sql_buf.items.len), &stmt, null);
+        if (rc != c.SQLITE_OK) {
+            const errmsg = c.sqlite3_errmsg(self.db);
+            std.debug.print("QueryFailed: {s}\n", .{std.mem.span(errmsg)});
+            return error.QueryFailed;
+        }
         defer _ = c.sqlite3_finalize(stmt);
 
         var param_idx: c_int = 1;
-        if (!maintenance_only and story_id != null) {
-            const sid = story_id.?;
-            _ = c.sqlite3_bind_text(stmt, param_idx, sid.ptr, @intCast(sid.len), c.SQLITE_STATIC);
-            param_idx += 1;
+        if (!maintenance_only) {
+            if (story_id) |sid| {
+                _ = c.sqlite3_bind_text(stmt, param_idx, sid.ptr, @intCast(sid.len), c.SQLITE_STATIC);
+                param_idx += 1;
+            }
         }
         if (status_filter) |sf| {
             _ = c.sqlite3_bind_text(stmt, param_idx, sf.ptr, @intCast(sf.len), c.SQLITE_STATIC);
@@ -1591,20 +1644,28 @@ pub const Database = struct {
             if (!first) try w.writeAll(",\n");
             first = false;
 
+            const eid = try Database.escapeJsonString(allocator, ct(stmt, 0));
+            defer allocator.free(eid);
+            const etitle = try Database.escapeJsonString(allocator, ct(stmt, 1));
+            defer allocator.free(etitle);
+            const estatus = try Database.escapeJsonString(allocator, ct(stmt, 3));
+            defer allocator.free(estatus);
             try w.print("  {{\"id\":\"{s}\",\"title\":\"{s}\",\"status\":\"{s}\",\"assigned_to\":", .{
-                try Database.escapeJsonString(allocator, ct(stmt, 0)),
-                try Database.escapeJsonString(allocator, ct(stmt, 1)),
-                try Database.escapeJsonString(allocator, ct(stmt, 3)),
+                eid, etitle, estatus,
             });
 
             const assigned = c.sqlite3_column_text(stmt, 4);
             if (assigned != null) {
-                try w.print("\"{s}\"", .{try Database.escapeJsonString(allocator, std.mem.span(assigned))});
+                const eassigned = try Database.escapeJsonString(allocator, std.mem.span(assigned));
+                defer allocator.free(eassigned);
+                try w.print("\"{s}\"", .{eassigned});
             } else {
                 try w.writeAll("null");
             }
 
-            try w.print(",\"story_id\":\"{s}\"", .{try Database.escapeJsonString(allocator, ct(stmt, 7))});
+            const estory = try Database.escapeJsonString(allocator, ct(stmt, 7));
+            defer allocator.free(estory);
+            try w.print(",\"story_id\":\"{s}\"", .{estory});
 
             const labels = c.sqlite3_column_text(stmt, 8);
             if (labels != null) {
@@ -1670,8 +1731,12 @@ pub const Database = struct {
         try sw.writeAll(" ORDER BY id");
 
         var stmt: ?*c.sqlite3_stmt = null;
-        const rc = c.sqlite3_prepare_v2(self.db, sql_buf.items.ptr, -1, &stmt, null);
-        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        const rc = c.sqlite3_prepare_v2(self.db, sql_buf.items.ptr, @intCast(sql_buf.items.len), &stmt, null);
+        if (rc != c.SQLITE_OK) {
+            const errmsg = c.sqlite3_errmsg(self.db);
+            std.debug.print("QueryFailed: {s}\n", .{std.mem.span(errmsg)});
+            return error.QueryFailed;
+        }
         defer _ = c.sqlite3_finalize(stmt);
 
         try w.writeAll("[\n");
@@ -1679,20 +1744,37 @@ pub const Database = struct {
         while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
             if (!first) try w.writeAll(",\n");
             first = false;
+            const eid = try Database.escapeJsonString(allocator, ct(stmt, 0));
+            defer allocator.free(eid);
+            const etitle = try Database.escapeJsonString(allocator, ct(stmt, 1));
+            defer allocator.free(etitle);
+            const estatus = try Database.escapeJsonString(allocator, ct(stmt, 2));
+            defer allocator.free(estatus);
+            const etype = try Database.escapeJsonString(allocator, ct(stmt, 3));
+            defer allocator.free(etype);
             try w.print("  {{\"id\":\"{s}\",\"title\":\"{s}\",\"status\":\"{s}\",\"type\":\"{s}\",\"branch\":", .{
-                try Database.escapeJsonString(allocator, ct(stmt, 0)),
-                try Database.escapeJsonString(allocator, ct(stmt, 1)),
-                try Database.escapeJsonString(allocator, ct(stmt, 2)),
-                try Database.escapeJsonString(allocator, ct(stmt, 3)),
+                eid, etitle, estatus, etype,
             });
             const branch = ct(stmt, 4);
-            if (branch.len > 0) try w.print("\"{s}\"", .{try Database.escapeJsonString(allocator, branch)}) else try w.writeAll("null");
+            if (branch.len > 0) {
+                const ebranch = try Database.escapeJsonString(allocator, branch);
+                defer allocator.free(ebranch);
+                try w.print("\"{s}\"", .{ebranch});
+            } else try w.writeAll("null");
             const semver = ct(stmt, 5);
             try w.writeAll(",\"semver\":");
-            if (semver.len > 0) try w.print("\"{s}\"", .{try Database.escapeJsonString(allocator, semver)}) else try w.writeAll("null");
+            if (semver.len > 0) {
+                const esemver = try Database.escapeJsonString(allocator, semver);
+                defer allocator.free(esemver);
+                try w.print("\"{s}\"", .{esemver});
+            } else try w.writeAll("null");
             const parent = ct(stmt, 6);
             try w.writeAll(",\"parent\":");
-            if (parent.len > 0) try w.print("\"{s}\"", .{try Database.escapeJsonString(allocator, parent)}) else try w.writeAll("null");
+            if (parent.len > 0) {
+                const eparent = try Database.escapeJsonString(allocator, parent);
+                defer allocator.free(eparent);
+                try w.print("\"{s}\"", .{eparent});
+            } else try w.writeAll("null");
             try w.writeAll("}");
         }
         try w.writeAll("\n]");

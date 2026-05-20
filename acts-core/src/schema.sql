@@ -1,4 +1,4 @@
--- ACTS Core v1.1.0 Schema
+-- ACTS Core v1.1.3 Schema
 -- All tables, indexes, and triggers for multi-story development
 
 -- Migration tracking

@@ -84,8 +84,8 @@ pub fn main() !void {
 
 fn printUsage() !void {
     const stdout = std.io.getStdOut().writer();
+    try stdout.print("ACTS Core {s} - Agent Collaborative Tracking Standard\n", .{build_options.version});
     try stdout.writeAll(
-        \\ACTS Core v1.1.0 - Agent Collaborative Tracking Standard
         \\
         \\Usage: acts <command> [options]
         \\
@@ -435,7 +435,7 @@ fn printStateTable(writer: anytype, allocator: std.mem.Allocator, json: []const 
 // ============================================================
 
 fn handleTask(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 2) {
+    if (args.len < 1) {
         std.debug.print("Usage: acts task <get|update|create|list|move> ...\n", .{});
         std.process.exit(1);
     }
@@ -450,6 +450,10 @@ fn handleTask(allocator: std.mem.Allocator, args: []const []const u8) !void {
         try handleTaskMove(allocator, args[1..]);
     } else {
         // get / update (existing behavior)
+        if (args.len < 2) {
+            std.debug.print("Usage: acts task <get|update> <task-id> [--status <s>] [--assigned-to <n>]\n", .{});
+            std.process.exit(1);
+        }
         const task_id = args[1];
 
         var status: ?[]const u8 = null;

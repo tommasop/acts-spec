@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-# ACTS Installer v1.1.0
+# ACTS Installer v1.1.3
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/main/install.sh | bash
 #   curl -fsSL ... | bash -s -- --local        # Install to ./.acts/bin/
@@ -116,7 +116,7 @@ migrate_projects() {
 
 usage() {
     cat <<EOF
-ACTS Installer v1.1.0
+ACTS Installer v1.1.3
 
 Usage: install.sh [OPTIONS]
 
