@@ -629,7 +629,7 @@ fn handleReview(allocator: std.mem.Allocator, args: []const []const u8) !void {
     try database.migrate();
 
     // Verify task exists
-    _ = database.getTask(allocator, task_id) catch |err| {
+    const task_json = database.getTask(allocator, task_id) catch |err| {
         if (err == error.TaskNotFound) {
             std.debug.print("Error: Task {s} not found\n", .{task_id});
             std.process.exit(1);
@@ -637,6 +637,7 @@ fn handleReview(allocator: std.mem.Allocator, args: []const []const u8) !void {
         std.debug.print("Error: {}\n", .{err});
         std.process.exit(1);
     };
+    defer allocator.free(task_json);
 
     const review = @import("review.zig");
     review.run(allocator, &database, task_id) catch |err| {
