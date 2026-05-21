@@ -201,8 +201,8 @@ fn parseDiff(allocator: std.mem.Allocator, diff_output: []const u8) ![]FileDiff 
         if (std.mem.startsWith(u8, line, "diff --git")) {
             if (current_file) |cf| {
                 try finalizeFile(allocator, &result, cf, current_additions, current_deletions, &hunk_list, &hunk_lines, in_hunk);
-                hunk_list = std.ArrayList(DiffHunk).init(allocator);
-                hunk_lines = std.ArrayList(u8).init(allocator);
+                hunk_list.clearRetainingCapacity();
+                hunk_lines.clearRetainingCapacity();
                 in_hunk = false;
             }
             current_additions = 0;
