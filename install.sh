@@ -6,7 +6,7 @@ set -e
 #   curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/main/install.sh | bash
 #   curl -fsSL ... | bash -s -- --local        # Install to ./.acts/bin/
 #   curl -fsSL ... | bash -s -- --version 1.1.0 # Install specific version
-#   curl -fsSL ... | bash -s -- --update        # Update existing installation (with migration)
+#   curl -fsSL ... | sudo bash -s -- --update   # Update (use pipe, NOT process substitution)
 
 REPO="tommasop/acts-spec"
 INSTALL_DIR="/usr/local/bin"
@@ -44,7 +44,7 @@ download() {
     local platform="$1"
     local version="$2"
     local dest="$3"
-    local url="https://github.com/${REPO}/releases/download/${version}/${platform}.tar.gz"
+    local url="https://github.com/${REPO}/releases/download/${version}/acts-${version}-${platform#acts-}.tar.gz"
 
     echo "Downloading ${platform} ${version}..."
     local tmpdir
@@ -54,13 +54,19 @@ download() {
     curl -fsSL "$url" -o "${tmpdir}/acts.tar.gz"
     tar xzf "${tmpdir}/acts.tar.gz" -C "$tmpdir"
 
-    # The archive contains acts/bin/acts
+    # The archive contains acts/bin/acts (release archives)
+    # or the raw binary at root level (dev builds)
     if [ -f "${tmpdir}/acts/bin/acts" ]; then
         mkdir -p "$(dirname "$dest")"
         cp "${tmpdir}/acts/bin/acts" "$dest"
         chmod +x "$dest"
+    elif [ -f "${tmpdir}/${platform}" ]; then
+        mkdir -p "$(dirname "$dest")"
+        cp "${tmpdir}/${platform}" "$dest"
+        chmod +x "$dest"
     else
         echo "Error: Downloaded archive has unexpected structure"
+        echo "Contents: $(ls "$tmpdir")"
         exit 1
     fi
 }
