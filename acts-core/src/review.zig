@@ -184,8 +184,9 @@ fn parseDiff(allocator: std.mem.Allocator, diff_output: []const u8) ![]FileDiff 
                 hlines.clearRetainingCapacity();
             }
 
-            // Now safely take ownership of hunks
-            const hunks = try hl.toOwnedSlice();
+            const hunks = try alloc.alloc(DiffHunk, hl.items.len);
+            for (hl.items, 0..) |h, i| hunks[i] = h;
+            hl.clearRetainingCapacity();
 
             try r.append(FileDiff{
                 .file_path = try alloc.dupe(u8, f),
@@ -241,7 +242,10 @@ fn parseDiff(allocator: std.mem.Allocator, diff_output: []const u8) ![]FileDiff 
         try finalizeFile(allocator, &result, cf, current_additions, current_deletions, &hunk_list, &hunk_lines, in_hunk);
     }
 
-    return result.toOwnedSlice();
+    const diffs = try allocator.alloc(FileDiff, result.items.len);
+    for (result.items, 0..) |f, i| diffs[i] = f;
+    result.deinit();
+    return diffs;
 }
 
 fn freeFileDiffs(allocator: std.mem.Allocator, diffs: []FileDiff) void {
@@ -249,7 +253,7 @@ fn freeFileDiffs(allocator: std.mem.Allocator, diffs: []FileDiff) void {
         allocator.free(d.file_path);
         if (d.annotation) |a| allocator.free(a);
         for (d.hunks) |h| {
-            allocator.free(h.header);
+            if (h.header.len > 0) allocator.free(h.header);
             allocator.free(h.lines);
         }
         allocator.free(d.hunks);
