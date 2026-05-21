@@ -162,7 +162,7 @@ pub fn runStage(allocator: std.mem.Allocator, stage: QualityStage, command: ?[]c
         };
     };
 
-    const elapsed = start.since(try std.time.Instant.now()) / std.time.ns_per_ms;
+    const elapsed = (try std.time.Instant.now()).since(start) / std.time.ns_per_ms;
 
     const exit_code: i32 = switch (wait_result) {
         .Exited => |code| @as(i32, @intCast(code)),
@@ -184,6 +184,7 @@ pub fn runStage(allocator: std.mem.Allocator, stage: QualityStage, command: ?[]c
 pub fn runAllQualityGates(allocator: std.mem.Allocator) ![]QualityResult {
     // Try to load config from acts.json first, fall back to auto-detect
     const config = try loadQualityConfig(allocator) orelse try detectQualityGate(allocator);
+    defer freeQualityConfig(allocator, config);
 
     var results = std.ArrayList(QualityResult).init(allocator);
 
@@ -203,6 +204,13 @@ pub fn runAllQualityGates(allocator: std.mem.Allocator) ![]QualityResult {
     }
 
     return results.toOwnedSlice();
+}
+
+pub fn freeQualityConfig(allocator: std.mem.Allocator, config: QualityConfig) void {
+    if (config.test_cmd) |v| allocator.free(v);
+    if (config.lint) |v| allocator.free(v);
+    if (config.typecheck) |v| allocator.free(v);
+    if (config.build) |v| allocator.free(v);
 }
 
 /// Free all quality results

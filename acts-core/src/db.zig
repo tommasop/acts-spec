@@ -1067,7 +1067,7 @@ pub const Database = struct {
 
     pub fn getRationale(self: *Database, allocator: std.mem.Allocator, task_id: []const u8) !?[]u8 {
         var stmt: ?*c.sqlite3_stmt = null;
-        const sql = "SELECT reason FROM decisions WHERE task_id = ? AND topic = 'rationale' ORDER BY created_at DESC LIMIT 1";
+        const sql = "SELECT reason FROM decisions WHERE task_id = ? AND topic = 'rationale' ORDER BY timestamp DESC LIMIT 1";
         const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
         if (rc != c.SQLITE_OK) return error.QueryFailed;
         defer _ = c.sqlite3_finalize(stmt);
