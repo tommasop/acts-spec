@@ -1276,7 +1276,7 @@ fn handleStoryCreate(allocator: std.mem.Allocator, database: *db.Database, args:
 
     // Create .acts/current symlink
     std.fs.cwd().deleteFile(".acts/current") catch {};
-    try std.fs.symLinkAbsolute(worktree_path, ".acts/current", .{});
+    try std.posix.symlink(worktree_path, ".acts/current");
 
     // Insert into DB
     try database.createStory(story_id, title.?, branch, worktree_path, parent_story);
@@ -1336,7 +1336,7 @@ fn handleStorySwitch(allocator: std.mem.Allocator, database: *db.Database, args:
     const worktree_path = try std.fs.path.join(allocator, &[_][]const u8{ ".acts", "worktrees", story_id });
     defer allocator.free(worktree_path);
     std.fs.cwd().deleteFile(".acts/current") catch {};
-    std.fs.symLinkAbsolute(worktree_path, ".acts/current", .{}) catch {};
+    std.posix.symlink(worktree_path, ".acts/current") catch {};
 
     const stdout = std.io.getStdOut().writer();
     try stdout.print("Switched to story {s}\n", .{story_id});
