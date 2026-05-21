@@ -170,12 +170,16 @@ pub fn runStage(allocator: std.mem.Allocator, stage: QualityStage, command: ?[]c
     };
     const status: QualityStatus = if (exit_code == 0) .pass else if (exit_code >= 100) .warn else .fail;
 
+    const out_str = try allocator.alloc(u8, output_buf.items.len);
+    @memcpy(out_str, output_buf.items);
+    allocator.free(output_buf.items.ptr[0..output_buf.capacity]);
+    output_buf = std.ArrayList(u8).init(allocator);
     return QualityResult{
         .stage = stage,
         .command = try allocator.dupe(u8, cmd),
         .status = status,
         .exit_code = exit_code,
-        .output = try output_buf.toOwnedSlice(),
+        .output = out_str,
         .duration_ms = elapsed,
     };
 }
@@ -203,7 +207,10 @@ pub fn runAllQualityGates(allocator: std.mem.Allocator) ![]QualityResult {
         try results.append(result);
     }
 
-    return results.toOwnedSlice();
+    const result_slice = try allocator.alloc(QualityResult, results.items.len);
+    @memcpy(result_slice, results.items);
+    results.deinit();
+    return result_slice;
 }
 
 pub fn freeQualityConfig(allocator: std.mem.Allocator, config: QualityConfig) void {

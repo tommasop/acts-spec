@@ -815,7 +815,9 @@ pub const Database = struct {
             return error.TaskNotFound;
         }
 
-        return output.toOwnedSlice();
+        const task_json = try allocator.alloc(u8, output.items.len);
+        @memcpy(task_json, output.items);
+        return task_json;
     }
 
     pub fn updateTask(self: *Database, task_id: []const u8, status: ?[]const u8, assigned_to: ?[]const u8) !void {
@@ -1110,7 +1112,10 @@ pub const Database = struct {
             });
         }
 
-        return rejections.toOwnedSlice();
+        const rejection_list = try allocator.alloc(Rejection, rejections.items.len);
+        @memcpy(rejection_list, rejections.items);
+        rejections.deinit();
+        return rejection_list;
     }
 
     pub fn freeRejections(allocator: std.mem.Allocator, rejections: []Rejection) void {
@@ -1141,7 +1146,10 @@ pub const Database = struct {
             try files.append(fp);
         }
 
-        return files.toOwnedSlice();
+        const file_list = try allocator.alloc([]const u8, files.items.len);
+        @memcpy(file_list, files.items);
+        files.deinit();
+        return file_list;
     }
 
     pub fn freeFiles(allocator: std.mem.Allocator, files: [][]const u8) void {
