@@ -31,6 +31,8 @@ pub fn main() !void {
         try handleTask(allocator, cmd_args);
     } else if (std.mem.eql(u8, command, "review")) {
         try handleReview(allocator, cmd_args);
+    } else if (std.mem.eql(u8, command, "gather-review")) {
+        try handleGatherReview(allocator, cmd_args);
     } else if (std.mem.eql(u8, command, "approve")) {
         try handleApprove(allocator, cmd_args);
     } else if (std.mem.eql(u8, command, "reject")) {
@@ -644,6 +646,26 @@ fn handleReview(allocator: std.mem.Allocator, args: []const []const u8) !void {
         std.debug.print("Error during review: {}\n", .{err});
         std.process.exit(1);
     };
+}
+
+// ============================================================
+// Gather Review (JSON output for agent-driven review)
+// ============================================================
+
+fn handleGatherReview(allocator: std.mem.Allocator, args: []const []const u8) !void {
+    if (args.len < 1) {
+        std.debug.print("Usage: acts gather-review <task-id>\n", .{});
+        std.process.exit(1);
+    }
+    const task_id = args[0];
+
+    const db_path = ".acts/acts.db";
+    var database = try db.Database.open(db_path);
+    defer database.close();
+    try database.migrate();
+
+    const review = @import("review.zig");
+    try review.gatherReview(allocator, &database, task_id);
 }
 
 // ============================================================

@@ -751,6 +751,105 @@ pub fn interactiveReview(allocator: std.mem.Allocator, ctx: *const ReviewContext
 }
 
 // ============================================================
+// JSON Gather Review (for agent-driven conversational review)
+// ============================================================
+
+fn jsonWriteValue(writer: anytype, value: []const u8) !void {
+    try writer.writeByte('"');
+    try db.Database.escapeJsonString(writer, value);
+    try writer.writeByte('"');
+}
+
+pub fn gatherReview(allocator: std.mem.Allocator, database: *db.Database, task_id: []const u8) !void {
+    const stdout = std.io.getStdOut().writer();
+    const ctx = try gatherContext(allocator, database, task_id);
+    defer freeContext(allocator, ctx);
+
+    const w = stdout;
+    try w.writeAll("{\n");
+
+    try w.writeAll("\"task_id\": ");
+    try jsonWriteValue(w, ctx.task_id);
+    try w.writeAll(",\n\"task_title\": ");
+    try jsonWriteValue(w, ctx.task_title);
+    try w.writeAll(",\n");
+
+    if (ctx.rationale) |r| {
+        try w.writeAll("\"rationale\": ");
+        try jsonWriteValue(w, r);
+    } else {
+        try w.writeAll("\"rationale\": null");
+    }
+    try w.writeAll(",\n");
+
+    // Rejections
+    try w.writeAll("\"rejections\": [\n");
+    for (ctx.rejections, 0..) |rej, i| {
+        if (i > 0) try w.writeAll(",\n");
+        try w.writeAll("    {\n");
+        try w.writeAll("      \"approved_by\": ");
+        try jsonWriteValue(w, rej.approved_by);
+        try w.writeAll(",\n      \"created_at\": ");
+        try jsonWriteValue(w, rej.created_at);
+        if (rej.comment) |cmt| {
+            try w.writeAll(",\n      \"comment\": ");
+            try jsonWriteValue(w, cmt);
+        }
+        try w.writeAll("\n    }");
+    }
+    try w.writeAll("\n  ],\n");
+
+    // Quality results
+    try w.writeAll("  \"quality_results\": [\n");
+    for (ctx.quality_results, 0..) |qr, i| {
+        if (i > 0) try w.writeAll(",\n");
+        try w.writeAll("    {\n");
+        try w.print("      \"stage\": \"{s}\",\n", .{@tagName(qr.stage)});
+        try w.print("      \"status\": \"{s}\",\n", .{@tagName(qr.status)});
+        try w.print("      \"exit_code\": {d},\n", .{qr.exit_code});
+        try w.writeAll("      \"command\": ");
+        try jsonWriteValue(w, qr.command);
+        try w.print(",\n      \"duration_ms\": {d}\n", .{qr.duration_ms});
+        try w.writeAll("    }");
+    }
+    try w.writeAll("\n  ],\n");
+
+    // Files
+    try w.writeAll("  \"files\": [\n");
+    for (ctx.files, 0..) |file, i| {
+        if (i > 0) try w.writeAll(",\n");
+        try w.writeAll("    {\n");
+        try w.writeAll("      \"file_path\": ");
+        try jsonWriteValue(w, file.file_path);
+        try w.print(",\n      \"additions\": {d},\n", .{file.additions});
+        try w.print("      \"deletions\": {d},\n", .{file.deletions});
+        try w.print("      \"risk\": \"{s}\",\n", .{@tagName(file.risk)});
+        if (file.annotation) |a| {
+            try w.writeAll("      \"annotation\": ");
+            try jsonWriteValue(w, a);
+        } else {
+            try w.writeAll("      \"annotation\": null");
+        }
+        try w.writeAll(",\n      \"hunks\": [\n");
+        for (file.hunks, 0..) |hunk, j| {
+            if (j > 0) try w.writeAll(",\n");
+            try w.writeAll("        {\n");
+            try w.writeAll("          \"header\": ");
+            try jsonWriteValue(w, hunk.header);
+            try w.print(",\n          \"old_start\": {d},\n", .{hunk.old_start});
+            try w.print("          \"new_start\": {d},\n", .{hunk.new_start});
+            try w.print("          \"old_count\": {d},\n", .{hunk.old_count});
+            try w.print("          \"new_count\": {d},\n", .{hunk.new_count});
+            try w.writeAll("          \"lines\": ");
+            try jsonWriteValue(w, hunk.lines);
+            try w.writeAll("\n        }");
+        }
+        try w.writeAll("\n      ]\n    }");
+    }
+    try w.writeAll("\n  ]\n}\n");
+}
+
+// ============================================================
 // Main Entry Point
 // ============================================================
 

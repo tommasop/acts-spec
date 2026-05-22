@@ -413,7 +413,7 @@ pub const Database = struct {
         if (story_id != null) {
             rc = c.sqlite3_prepare_v2(self.db, "SELECT id, acts_version, title, status, spec_approved, created_at, updated_at, context_budget, session_count, compressed, strict_mode, type, branch, semver FROM stories WHERE id = ?", -1, &story_stmt, null);
         } else {
-            rc = c.sqlite3_prepare_v2(self.db, "SELECT id, acts_version, title, status, spec_approved, created_at, updated_at, context_budget, session_count, compressed, strict_mode, type, branch, semver FROM stories", -1, &story_stmt, null);
+            rc = c.sqlite3_prepare_v2(self.db, "SELECT s.id, s.acts_version, s.title, s.status, s.spec_approved, s.created_at, s.updated_at, s.context_budget, s.session_count, s.compressed, s.strict_mode, s.type, s.branch, s.semver FROM stories s JOIN active_story a ON a.story_id = s.id", -1, &story_stmt, null);
         }
         if (rc != c.SQLITE_OK) return error.QueryFailed;
         defer _ = c.sqlite3_finalize(story_stmt);

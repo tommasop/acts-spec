@@ -78,6 +78,28 @@ acts approve T1
 acts task update T1 --status DONE
 ```
 
+### Conversational Review (non-TTY)
+
+When running in an agent context without a TTY (e.g. OpenCode subagent):
+
+```bash
+# Same context file setup as above (optional)
+
+# Agent gathers review data as JSON:
+acts gather-review T1
+
+# Agent parses JSON and drives per-file review via chat:
+#   - Presents each file with hunk lines
+#   - Uses question tool to ask "Approve this file?"
+#   - Collects per-file decisions from human
+
+# On full approval:
+acts approve T1
+
+# On changes requested:
+acts reject T1 --reason "add missing test for login handler"
+```
+
 ### ACTS Binary Commands
 - `acts init <story-id>` — Initialize new ACTS story
 - `acts state read` — Read current story state
@@ -85,6 +107,7 @@ acts task update T1 --status DONE
 - `acts task get <task-id>` — Get task details
 - `acts task update <id> --status <status>` — Update task status (enforces gates)
 - `acts review <task-id>` — Interactive code review with hunk
+- `acts gather-review <task-id>` — Emit structured JSON for conversational review (no TUI)
 - `acts approve <task-id>` — Approve task-review gate (shorthand)
 - `acts reject <task-id>` — Request changes on task-review gate (shorthand)
 - `acts gate add --task <id> --type <type> --status <status>` — Add gate checkpoint
