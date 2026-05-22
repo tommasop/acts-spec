@@ -150,6 +150,9 @@ ACTS Commands:
 - acts task get <task-id>           Get task details
 - acts task update <id> --status <s> Update task status (enforces gates)
 - acts gate add --task <id> --type <t> --status <s>  Add gate checkpoint
+- acts approve <task-id>           Approve task-review gate (shorthand)
+- acts reject <task-id> --reason   Reject task-review gate with reason (shorthand)
+- acts gather-review <task-id>     Emit JSON review data for conversational review
 - acts ownership map                Show file ownership
 - acts scope check --task <id> --file <path> Check if file is safe to modify
 - acts validate                     Validate entire ACTS project
@@ -626,6 +629,123 @@ Status Values:
                 }]
               };
             }
+          }
+        },
+
+        // ─── Review Tool (Conversational) ──────
+        acts_review: {
+          description: 'Gather review data for a task for conversational human review. ' +
+            'Runs gather-review, formats each file with properly diffed hunk lines. ' +
+            'Returns structured data per file: file_path, additions, deletions, risk, annotation, and full diff. ' +
+            'The agent should then present each file to the human via the question tool.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              task_id: {
+                type: 'string',
+                description: 'Task ID to review (e.g., T1)'
+              }
+            },
+            required: ['task_id']
+          },
+          handler: async ({ task_id }) => {
+            if (!task_id) {
+              return {
+                content: [{ type: 'text', text: 'Error: task_id is required.' }],
+                isError: true
+              };
+            }
+
+            // Run gather-review to get structured data
+            let raw;
+            try {
+              raw = runActs(['gather-review', task_id]);
+            } catch (error) {
+              return {
+                content: [{ type: 'text', text: `Error running gather-review: ${error.stderr || error.message}` }],
+                isError: true
+              };
+            }
+
+            let data;
+            try {
+              data = JSON.parse(raw);
+            } catch {
+              return {
+                content: [{ type: 'text', text: 'Error: gather-review output is not valid JSON.' }],
+                isError: true
+              };
+            }
+
+            // Build structured output for the agent
+            const parts = [];
+
+            // Summary header
+            let summary = `# Review: ${data.task_id}\n\n`;
+            summary += `**Title:** ${data.task_title}\n`;
+            if (data.rationale) {
+              summary += `**Rationale:** ${data.rationale}\n`;
+            }
+            if (data.rejections && data.rejections.length > 0) {
+              summary += `**Previous rejections:** ${data.rejections.length}\n`;
+              for (const r of data.rejections) {
+                summary += `- ${r.approved_by} (${r.created_at}): ${r.comment || 'no comment'}\n`;
+              }
+            }
+            parts.push({ type: 'text', text: summary });
+
+            // Quality results summary
+            if (data.quality_results && data.quality_results.length > 0) {
+              let qText = '## Quality Gates\n\n';
+              qText += '| Stage | Status | Exit Code | Command |\n';
+              qText += '|-------|--------|-----------|--------|\n';
+              for (const qr of data.quality_results) {
+                const statusIcon = qr.status === 'pass' ? '✅' : qr.status === 'fail' ? '❌' : '⏭️';
+                qText += `| ${qr.stage} | ${statusIcon} ${qr.status} | ${qr.exit_code} | \`${qr.command}\` |\n`;
+              }
+              parts.push({ type: 'text', text: qText });
+            }
+
+            // Per-file review with diffs
+            if (data.files && data.files.length > 0) {
+              for (const file of data.files) {
+                let fileText = `## File: ${file.file_path}\n\n`;
+                fileText += `**Changes:** +${file.additions} / -${file.deletions}\n`;
+                fileText += `**Risk:** ${file.risk}\n`;
+                if (file.annotation) {
+                  fileText += `**Annotation:** ${file.annotation}\n`;
+                }
+                fileText += '\n';
+
+                // Format hunks as proper diff
+                if (file.hunks && file.hunks.length > 0) {
+                  for (const hunk of file.hunks) {
+                    fileText += '```diff\n';
+                    fileText += `${hunk.header}\n`;
+                    fileText += `${hunk.lines}`;
+                    if (!hunk.lines.endsWith('\n')) fileText += '\n';
+                    fileText += '```\n\n';
+                  }
+                }
+
+                parts.push({ type: 'text', text: fileText });
+              }
+            } else {
+              parts.push({ type: 'text', text: 'No files changed in this task.\n' });
+            }
+
+            // Instructions for agent
+            parts.push({
+              type: 'text',
+              text: '## Review Instructions\n\n' +
+                'Present each file above to the human using the question tool. ' +
+                'For each file, ask "Approve this file?" ' +
+                'Collect per-file decisions. ' +
+                'When all files are approved, run: `acts gate add --task TASK_ID --type task-review --status approved`\n' +
+                'To reject with changes: `acts reject TASK_ID --reason "..."`\n'
+            });
+
+            return { content: parts };
           }
         }
       };
