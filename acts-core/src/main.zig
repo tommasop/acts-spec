@@ -2,6 +2,7 @@ const std = @import("std");
 const cli = @import("cli.zig");
 const db = @import("db.zig");
 const build_options = @import("build_options");
+const compress = @import("compress.zig");
 
 const c = @cImport({
     @cInclude("sqlite3.h");
@@ -107,6 +108,15 @@ fn printUsage() !void {
         \\    --semver <version>           Override computed semver
         \\  story graph                  Show story dependency graph
         \\    --format json|dot            Output format (default: json)
+        \\  story rules <subcommand>     Manage story rules
+        \\    import <file.md>             Import rules from markdown file
+        \\    show                         Show parsed rule sections
+        \\    toggle <id>                  Toggle rule section enabled/disabled
+        \\    add-section --heading "..."   Add rule section manually
+        \\      --content "..."             Rule content (required)
+        \\    update <id>                  Update rule section
+        \\      --heading "..."             New heading (optional)
+        \\      --content "..."             New content (optional)
         \\
         \\State:
         \\  state read [--story <id>]    Read story state
@@ -215,17 +225,18 @@ fn printVersion() !void {
 
 fn resolveStoryId(allocator: std.mem.Allocator, database: *db.Database, explicit: ?[]const u8) ![]const u8 {
     if (explicit) |id| return try allocator.dupe(u8, id);
-    if (std.process.getEnvVarOwned(allocator, "ACTS_STORY")) |env| return env;
+    const env_story = std.process.getEnvVarOwned(allocator, "ACTS_STORY") catch null;
+    if (env_story) |env| return env;
 
     // Try .acts/current symlink
-    const link = std.fs.cwd().readLink(".acts/current") catch |err| {
+    var link_buf: [4096]u8 = undefined;
+    const link = std.fs.cwd().readLink(".acts/current", &link_buf) catch |err| {
         if (err == error.FileNotFound or err == error.SymLinkInvalid) {
             // Check if single story in DB
             return try getSingleStoryId(allocator, database);
         }
         return err;
     };
-    defer allocator.free(link);
     const basename = std.fs.path.basename(link);
     return try allocator.dupe(u8, basename);
 }
@@ -1219,6 +1230,8 @@ fn handleStory(allocator: std.mem.Allocator, args: []const []const u8) !void {
         try handleStoryMerge(allocator, &database, args[1..]);
     } else if (std.mem.eql(u8, subcommand, "graph")) {
         try handleStoryGraph(allocator, &database, args[1..]);
+    } else if (std.mem.eql(u8, subcommand, "rules")) {
+        try handleStoryRules(allocator, &database, args[1..]);
     } else {
         std.debug.print("Unknown story subcommand: {s}\n", .{subcommand});
         std.process.exit(1);
@@ -1474,6 +1487,311 @@ fn handleStoryGraph(allocator: std.mem.Allocator, database: *db.Database, args: 
     const stdout = std.io.getStdOut().writer();
     try stdout.writeAll(graph);
     try stdout.writeAll("\n");
+}
+
+// ============================================================
+// Story Rules
+// ============================================================
+
+fn handleStoryRules(allocator: std.mem.Allocator, database: *db.Database, args: []const []const u8) !void {
+    if (args.len < 1) {
+        std.debug.print("Usage: acts story rules <import|show|toggle|add-section|update> ...\n", .{});
+        std.process.exit(1);
+    }
+
+    const subcommand = args[0];
+
+    // Get active story
+    const story_id = resolveStoryId(allocator, database, null) catch |err| {
+        std.debug.print("Error: No active story: {}\n", .{err});
+        std.process.exit(1);
+    };
+    defer allocator.free(story_id);
+
+    if (std.mem.eql(u8, subcommand, "import")) {
+        try handleStoryRulesImport(allocator, database, story_id, args[1..]);
+    } else if (std.mem.eql(u8, subcommand, "show")) {
+        try handleStoryRulesShow(allocator, database, story_id);
+    } else if (std.mem.eql(u8, subcommand, "toggle")) {
+        try handleStoryRulesToggle(allocator, database, args[1..]);
+    } else if (std.mem.eql(u8, subcommand, "add-section")) {
+        try handleStoryRulesAddSection(allocator, database, story_id, args[1..]);
+    } else if (std.mem.eql(u8, subcommand, "update")) {
+        try handleStoryRulesUpdate(allocator, database, args[1..]);
+    } else {
+        std.debug.print("Unknown rules subcommand: {s}\n", .{subcommand});
+        std.process.exit(1);
+    }
+}
+
+fn handleStoryRulesImport(allocator: std.mem.Allocator, database: *db.Database, story_id: []const u8, args: []const []const u8) !void {
+    if (args.len < 1) {
+        std.debug.print("Usage: acts story rules import <file.md>\n", .{});
+        std.process.exit(1);
+    }
+
+    const file_path = args[0];
+
+    // Read the file
+    const file = std.fs.cwd().openFile(file_path, .{}) catch |err| {
+        std.debug.print("Error: Could not open file {s}: {}\n", .{ file_path, err });
+        std.process.exit(1);
+    };
+    defer file.close();
+
+    const content = try file.readToEndAlloc(allocator, 1024 * 1024);
+    defer allocator.free(content);
+
+    // Compute hash
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    hasher.update(content);
+    var hash_bytes: [32]u8 = undefined;
+    hasher.final(&hash_bytes);
+    const hash_hex = try std.fmt.allocPrint(allocator, "{s}", .{std.fmt.fmtSliceHexLower(&hash_bytes)});
+    defer allocator.free(hash_hex);
+
+    // Store rules in story
+    try database.setStoryRules(story_id, content, file_path, hash_hex);
+
+    // Parse and store sections
+    try parseAndStoreSections(allocator, database, story_id, content);
+
+    const stdout = std.io.getStdOut().writer();
+    try stdout.print("Imported rules from {s}\n", .{file_path});
+    try stdout.print("Hash: {s}\n", .{hash_hex});
+}
+
+fn handleStoryRulesShow(allocator: std.mem.Allocator, database: *db.Database, story_id: []const u8) !void {
+    const sections = try database.listRuleSections(allocator, story_id);
+    defer allocator.free(sections);
+    const stdout = std.io.getStdOut().writer();
+    try stdout.writeAll(sections);
+    try stdout.writeAll("\n");
+}
+
+fn handleStoryRulesToggle(_: std.mem.Allocator, database: *db.Database, args: []const []const u8) !void {
+    if (args.len < 1) {
+        std.debug.print("Usage: acts story rules toggle <section-id>\n", .{});
+        std.process.exit(1);
+    }
+
+    const section_id = try std.fmt.parseInt(i32, args[0], 10);
+
+    // Get current state and toggle
+    var stmt: ?*c.sqlite3_stmt = null;
+    const sql = "SELECT enabled FROM story_rule_sections WHERE id = ?";
+    const rc = c.sqlite3_prepare_v2(database.db, sql, -1, &stmt, null);
+    if (rc != c.SQLITE_OK) {
+        std.debug.print("Error: Could not query section\n", .{});
+        std.process.exit(1);
+    }
+    defer _ = c.sqlite3_finalize(stmt);
+
+    _ = c.sqlite3_bind_int(stmt, 1, section_id);
+    if (c.sqlite3_step(stmt) != c.SQLITE_ROW) {
+        std.debug.print("Error: Section {d} not found\n", .{section_id});
+        std.process.exit(1);
+    }
+
+    const current_enabled = c.sqlite3_column_int(stmt, 0) != 0;
+    try database.toggleRuleSection(section_id, !current_enabled);
+
+    const stdout = std.io.getStdOut().writer();
+    try stdout.print("Section {d} {s}\n", .{ section_id, if (!current_enabled) "enabled" else "disabled" });
+}
+
+fn handleStoryRulesAddSection(allocator: std.mem.Allocator, database: *db.Database, story_id: []const u8, args: []const []const u8) !void {
+    var heading: ?[]const u8 = null;
+    var content: ?[]const u8 = null;
+
+    var i: usize = 0;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "--heading") and i + 1 < args.len) {
+            heading = args[i + 1];
+            i += 1;
+        } else if (std.mem.eql(u8, args[i], "--content") and i + 1 < args.len) {
+            content = args[i + 1];
+            i += 1;
+        }
+    }
+
+    if (heading == null or content == null) {
+        std.debug.print("Error: --heading and --content are required\n", .{});
+        std.process.exit(1);
+    }
+
+    const tags = deriveTagsFromHeading(allocator, heading.?);
+    defer if (tags) |t| allocator.free(t);
+    const patterns = derivePatternsFromHeading(allocator, heading.?);
+    defer if (patterns) |p| allocator.free(p);
+
+    try database.insertRuleSection(story_id, heading.?, content.?, tags, patterns);
+
+    const stdout = std.io.getStdOut().writer();
+    try stdout.print("Rule section added: {s}\n", .{heading.?});
+}
+
+fn handleStoryRulesUpdate(_: std.mem.Allocator, database: *db.Database, args: []const []const u8) !void {
+    if (args.len < 1) {
+        std.debug.print("Usage: acts story rules update <section-id> [--heading \"...\"] [--content \"...\"]\n", .{});
+        std.process.exit(1);
+    }
+
+    const section_id = try std.fmt.parseInt(i32, args[0], 10);
+    var heading: ?[]const u8 = null;
+    var content: ?[]const u8 = null;
+
+    var i: usize = 1;
+    while (i < args.len) : (i += 1) {
+        if (std.mem.eql(u8, args[i], "--heading") and i + 1 < args.len) {
+            heading = args[i + 1];
+            i += 1;
+        } else if (std.mem.eql(u8, args[i], "--content") and i + 1 < args.len) {
+            content = args[i + 1];
+            i += 1;
+        }
+    }
+
+    if (heading == null and content == null) {
+        std.debug.print("Error: At least one of --heading or --content is required\n", .{});
+        std.process.exit(1);
+    }
+
+    try database.beginImmediate();
+    errdefer database.rollback();
+
+    var stmt: ?*c.sqlite3_stmt = null;
+    const sql = "UPDATE story_rule_sections SET heading = COALESCE(?, heading), content = COALESCE(?, content), updated_at = datetime('now') WHERE id = ?";
+    const rc = c.sqlite3_prepare_v2(database.db, sql, -1, &stmt, null);
+    if (rc != c.SQLITE_OK) {
+        std.debug.print("Error: Could not prepare update\n", .{});
+        std.process.exit(1);
+    }
+    defer _ = c.sqlite3_finalize(stmt);
+
+    if (heading) |h| {
+        _ = c.sqlite3_bind_text(stmt, 1, h.ptr, @intCast(h.len), c.SQLITE_STATIC);
+    } else {
+        _ = c.sqlite3_bind_null(stmt, 1);
+    }
+    if (content) |c_content| {
+        _ = c.sqlite3_bind_text(stmt, 2, c_content.ptr, @intCast(c_content.len), c.SQLITE_STATIC);
+    } else {
+        _ = c.sqlite3_bind_null(stmt, 2);
+    }
+    _ = c.sqlite3_bind_int(stmt, 3, section_id);
+
+    if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
+        std.debug.print("Error: Update failed\n", .{});
+        std.process.exit(1);
+    }
+
+    try database.commit();
+
+    const stdout = std.io.getStdOut().writer();
+    try stdout.print("Section {d} updated\n", .{section_id});
+}
+
+fn parseAndStoreSections(allocator: std.mem.Allocator, database: *db.Database, story_id: []const u8, content: []const u8) !void {
+    // Clear existing sections
+    try database.clearRuleSections(story_id);
+
+    // Parse markdown sections (## headings)
+    var lines = std.mem.splitScalar(u8, content, '\n');
+    var current_heading: ?[]const u8 = null;
+    var current_content = std.ArrayList(u8).init(allocator);
+    defer current_content.deinit();
+
+    while (lines.next()) |line| {
+        // Check for ## heading
+        if (std.mem.startsWith(u8, line, "## ")) {
+            // Store previous section if any
+            if (current_heading) |heading| {
+                const content_str = try current_content.toOwnedSlice();
+                defer allocator.free(content_str);
+                const tags = deriveTagsFromHeading(allocator, heading);
+                defer if (tags) |t| allocator.free(t);
+                const patterns = derivePatternsFromHeading(allocator, heading);
+                defer if (patterns) |p| allocator.free(p);
+
+                try database.insertRuleSection(story_id, heading, content_str, tags, patterns);
+                allocator.free(heading);
+            }
+
+            // Start new section
+            current_heading = try allocator.dupe(u8, line[3..]);
+            current_content.clearRetainingCapacity();
+        } else if (current_heading != null) {
+            try current_content.appendSlice(line);
+            try current_content.append('\n');
+        }
+    }
+
+    // Store last section
+    if (current_heading) |heading| {
+        const content_str = try current_content.toOwnedSlice();
+        defer allocator.free(content_str);
+        const tags = deriveTagsFromHeading(allocator, heading);
+        defer if (tags) |t| allocator.free(t);
+        const patterns = derivePatternsFromHeading(allocator, heading);
+        defer if (patterns) |p| allocator.free(p);
+
+        try database.insertRuleSection(story_id, heading, content_str, tags, patterns);
+        allocator.free(heading);
+    }
+}
+
+fn deriveTagsFromHeading(allocator: std.mem.Allocator, heading: []const u8) ?[]const u8 {
+    const lower = std.ascii.allocLowerString(allocator, heading) catch return null;
+    defer allocator.free(lower);
+
+    var tags = std.ArrayList(u8).init(allocator);
+    defer tags.deinit();
+
+    if (std.mem.indexOf(u8, lower, "security") != null) {
+        tags.appendSlice("security,") catch return null;
+    }
+    if (std.mem.indexOf(u8, lower, "testing") != null or std.mem.indexOf(u8, lower, "test") != null) {
+        tags.appendSlice("testing,") catch return null;
+    }
+    if (std.mem.indexOf(u8, lower, "style") != null or std.mem.indexOf(u8, lower, "format") != null) {
+        tags.appendSlice("style,") catch return null;
+    }
+    if (std.mem.indexOf(u8, lower, "performance") != null or std.mem.indexOf(u8, lower, "perf") != null) {
+        tags.appendSlice("performance,") catch return null;
+    }
+    if (std.mem.indexOf(u8, lower, "api") != null) {
+        tags.appendSlice("api,") catch return null;
+    }
+
+    const result = tags.toOwnedSlice() catch return null;
+    if (result.len > 0 and result[result.len - 1] == ',') {
+        return result[0 .. result.len - 1];
+    }
+    return result;
+}
+
+fn derivePatternsFromHeading(allocator: std.mem.Allocator, heading: []const u8) ?[]const u8 {
+    const lower = std.ascii.allocLowerString(allocator, heading) catch return null;
+    defer allocator.free(lower);
+
+    if (std.mem.indexOf(u8, lower, "zig") != null) {
+        return allocator.dupe(u8, ".zig") catch return null;
+    }
+    if (std.mem.indexOf(u8, lower, "javascript") != null or std.mem.indexOf(u8, lower, "js") != null) {
+        return allocator.dupe(u8, ".js,.ts") catch return null;
+    }
+    if (std.mem.indexOf(u8, lower, "python") != null or std.mem.indexOf(u8, lower, "py") != null) {
+        return allocator.dupe(u8, ".py") catch return null;
+    }
+    if (std.mem.indexOf(u8, lower, "sql") != null) {
+        return allocator.dupe(u8, ".sql") catch return null;
+    }
+    if (std.mem.indexOf(u8, lower, "markdown") != null or std.mem.indexOf(u8, lower, "md") != null) {
+        return allocator.dupe(u8, ".md") catch return null;
+    }
+
+    return allocator.dupe(u8, "") catch return null;
 }
 
 // ============================================================

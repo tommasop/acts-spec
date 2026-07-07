@@ -33,11 +33,13 @@ release:
 	cd acts-core && zig build release
 
 cross:
-	cd acts-core && zig build cross
+	cd acts-core && zig build cross -Dversion=$(VERSION)
 
 # Clean build artifacts
 clean:
 	cd acts-core && rm -rf zig-out .zig-cache
+
+VERSION ?= dev
 
 # Generate release archives
 package: cross
@@ -47,9 +49,9 @@ package: cross
 		mkdir -p "$$tmpdir/acts/bin" "$$tmpdir/acts/.acts/review-providers"; \
 		cp "acts-core/zig-out/bin/$$bin" "$$tmpdir/acts/bin/acts"; \
 		cp .acts/acts.json "$$tmpdir/acts/.acts/"; \
-		cp .acts/review-providers/hunk.json "$$tmpdir/acts/.acts/review-providers/"; \
+		cp .acts/review-providers/hunk.json "$$tmpdir/acts/.acts/review-providers/" 2>/dev/null || true; \
 		cp README.md LICENSE "$$tmpdir/acts/" 2>/dev/null || true; \
-		tar czf "dist/$${bin}.tar.gz" -C "$$tmpdir" acts; \
+		tar czf "dist/acts-$(VERSION)-$${bin#acts-}.tar.gz" -C "$$tmpdir" acts; \
 		rm -rf "$$tmpdir"; \
-		echo "Created dist/$${bin}.tar.gz"; \
+		echo "Created dist/acts-$(VERSION)-$${bin#acts-}.tar.gz"; \
 	done

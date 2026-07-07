@@ -154,6 +154,13 @@ pub const Database = struct {
             _ = c.sqlite3_exec(self.db, file_overrides_table_sql, null, null, null);
             _ = c.sqlite3_exec(self.db, enforce_cross_story_ownership_v2_sql, null, null, null);
         }
+        if (current_version < 7) {
+            _ = c.sqlite3_exec(self.db, "ALTER TABLE stories ADD COLUMN story_rules TEXT", null, null, null);
+            _ = c.sqlite3_exec(self.db, "ALTER TABLE stories ADD COLUMN story_rules_file TEXT", null, null, null);
+            _ = c.sqlite3_exec(self.db, "ALTER TABLE stories ADD COLUMN story_rules_hash TEXT", null, null, null);
+            _ = c.sqlite3_exec(self.db, story_rule_sections_table_sql, null, null, null);
+            _ = c.sqlite3_exec(self.db, "CREATE INDEX IF NOT EXISTS idx_rule_sections_story ON story_rule_sections(story_id)", null, null, null);
+        }
     }
 
     // Migration SQL constants
@@ -279,6 +286,19 @@ pub const Database = struct {
         "  ) THEN RAISE(ABORT, 'File already owned by a DONE task in another story. Request override: acts override request --file <path> --task <id> --reason \"...\"') " ++
         "  END; " ++
         "END;";
+
+    const story_rule_sections_table_sql =
+        "CREATE TABLE IF NOT EXISTS story_rule_sections (" ++
+        "  id INTEGER PRIMARY KEY AUTOINCREMENT," ++
+        "  story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE," ++
+        "  heading TEXT NOT NULL," ++
+        "  content TEXT NOT NULL," ++
+        "  tags TEXT," ++
+        "  patterns TEXT," ++
+        "  enabled INTEGER DEFAULT 1," ++
+        "  created_at TEXT DEFAULT (datetime('now'))," ++
+        "  updated_at TEXT DEFAULT (datetime('now'))" ++
+        ");";
 
     const unblock_events_table_sql =
         "CREATE TABLE IF NOT EXISTS unblock_events (" ++
@@ -411,9 +431,9 @@ pub const Database = struct {
         var story_stmt: ?*c.sqlite3_stmt = null;
         var rc: c_int = 0;
         if (story_id != null) {
-            rc = c.sqlite3_prepare_v2(self.db, "SELECT id, acts_version, title, status, spec_approved, created_at, updated_at, context_budget, session_count, compressed, strict_mode, type, branch, semver FROM stories WHERE id = ?", -1, &story_stmt, null);
+            rc = c.sqlite3_prepare_v2(self.db, "SELECT id, acts_version, title, status, spec_approved, created_at, updated_at, context_budget, session_count, compressed, strict_mode, type, branch, semver, story_rules, story_rules_file, story_rules_hash FROM stories WHERE id = ?", -1, &story_stmt, null);
         } else {
-            rc = c.sqlite3_prepare_v2(self.db, "SELECT s.id, s.acts_version, s.title, s.status, s.spec_approved, s.created_at, s.updated_at, s.context_budget, s.session_count, s.compressed, s.strict_mode, s.type, s.branch, s.semver FROM stories s JOIN active_story a ON a.story_id = s.id", -1, &story_stmt, null);
+            rc = c.sqlite3_prepare_v2(self.db, "SELECT s.id, s.acts_version, s.title, s.status, s.spec_approved, s.created_at, s.updated_at, s.context_budget, s.session_count, s.compressed, s.strict_mode, s.type, s.branch, s.semver, s.story_rules, s.story_rules_file, s.story_rules_hash FROM stories s JOIN active_story a ON a.story_id = s.id", -1, &story_stmt, null);
         }
         if (rc != c.SQLITE_OK) return error.QueryFailed;
         defer _ = c.sqlite3_finalize(story_stmt);
@@ -465,6 +485,33 @@ pub const Database = struct {
                 try writer.writeAll("\",\n");
             } else {
                 try writer.writeAll("  \"semver\": null,\n");
+            }
+
+            const story_rules = ct(story_stmt, 14);
+            if (story_rules.len > 0) {
+                try writer.writeAll("  \"story_rules\": \"");
+                try Database.escapeJsonString(writer, story_rules);
+                try writer.writeAll("\",\n");
+            } else {
+                try writer.writeAll("  \"story_rules\": null,\n");
+            }
+
+            const story_rules_file = ct(story_stmt, 15);
+            if (story_rules_file.len > 0) {
+                try writer.writeAll("  \"story_rules_file\": \"");
+                try Database.escapeJsonString(writer, story_rules_file);
+                try writer.writeAll("\",\n");
+            } else {
+                try writer.writeAll("  \"story_rules_file\": null,\n");
+            }
+
+            const story_rules_hash = ct(story_stmt, 16);
+            if (story_rules_hash.len > 0) {
+                try writer.writeAll("  \"story_rules_hash\": \"");
+                try Database.escapeJsonString(writer, story_rules_hash);
+                try writer.writeAll("\",\n");
+            } else {
+                try writer.writeAll("  \"story_rules_hash\": null,\n");
             }
 
             // Get tasks
@@ -2513,5 +2560,300 @@ pub const Database = struct {
         _ = c.sqlite3_exec(self.db,
             "UPDATE file_overrides SET status = 'expired' WHERE status = 'approved' AND expires_at <= datetime('now')",
             null, null, null);
+    }
+
+    // ============================================================
+    // Story Rules
+    // ============================================================
+
+    pub fn setStoryRules(self: *Database, story_id: []const u8, rules: ?[]const u8, rules_file: ?[]const u8, rules_hash: ?[]const u8) !void {
+        try self.beginImmediate();
+        errdefer self.rollback();
+
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "UPDATE stories SET story_rules = ?, story_rules_file = ?, story_rules_hash = ? WHERE id = ?";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+
+        if (rules) |r| {
+            _ = c.sqlite3_bind_text(stmt, 1, r.ptr, @intCast(r.len), c.SQLITE_STATIC);
+        } else {
+            _ = c.sqlite3_bind_null(stmt, 1);
+        }
+        if (rules_file) |rf| {
+            _ = c.sqlite3_bind_text(stmt, 2, rf.ptr, @intCast(rf.len), c.SQLITE_STATIC);
+        } else {
+            _ = c.sqlite3_bind_null(stmt, 2);
+        }
+        if (rules_hash) |rh| {
+            _ = c.sqlite3_bind_text(stmt, 3, rh.ptr, @intCast(rh.len), c.SQLITE_STATIC);
+        } else {
+            _ = c.sqlite3_bind_null(stmt, 3);
+        }
+        _ = c.sqlite3_bind_text(stmt, 4, story_id.ptr, @intCast(story_id.len), c.SQLITE_STATIC);
+
+        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
+            return error.UpdateFailed;
+        }
+
+        try self.commit();
+    }
+
+    pub fn getStoryRulesFile(self: *Database, allocator: std.mem.Allocator, story_id: []const u8) !?[]const u8 {
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "SELECT story_rules_file FROM stories WHERE id = ?";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+
+        _ = c.sqlite3_bind_text(stmt, 1, story_id.ptr, @intCast(story_id.len), c.SQLITE_STATIC);
+
+        if (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const val = c.sqlite3_column_text(stmt, 0);
+            if (val != null) return try allocator.dupe(u8, std.mem.span(val));
+        }
+        return null;
+    }
+
+    pub fn getStoryRulesHash(self: *Database, allocator: std.mem.Allocator, story_id: []const u8) !?[]const u8 {
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "SELECT story_rules_hash FROM stories WHERE id = ?";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+
+        _ = c.sqlite3_bind_text(stmt, 1, story_id.ptr, @intCast(story_id.len), c.SQLITE_STATIC);
+
+        if (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const val = c.sqlite3_column_text(stmt, 0);
+            if (val != null) return try allocator.dupe(u8, std.mem.span(val));
+        }
+        return null;
+    }
+
+    pub fn getParentStory(self: *Database, allocator: std.mem.Allocator, story_id: []const u8) !?[]const u8 {
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "SELECT parent_story FROM stories WHERE id = ?";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+
+        _ = c.sqlite3_bind_text(stmt, 1, story_id.ptr, @intCast(story_id.len), c.SQLITE_STATIC);
+
+        if (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            const val = c.sqlite3_column_text(stmt, 0);
+            if (val != null) return try allocator.dupe(u8, std.mem.span(val));
+        }
+        return null;
+    }
+
+    pub fn clearRuleSections(self: *Database, story_id: []const u8) !void {
+        try self.beginImmediate();
+        errdefer self.rollback();
+
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "DELETE FROM story_rule_sections WHERE story_id = ?";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+
+        _ = c.sqlite3_bind_text(stmt, 1, story_id.ptr, @intCast(story_id.len), c.SQLITE_STATIC);
+
+        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
+            return error.DeleteFailed;
+        }
+
+        try self.commit();
+    }
+
+    pub fn insertRuleSection(self: *Database, story_id: []const u8, heading: []const u8, content: []const u8, tags: ?[]const u8, patterns: ?[]const u8) !void {
+        try self.beginImmediate();
+        errdefer self.rollback();
+
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "INSERT INTO story_rule_sections (story_id, heading, content, tags, patterns) VALUES (?, ?, ?, ?, ?)";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+
+        _ = c.sqlite3_bind_text(stmt, 1, story_id.ptr, @intCast(story_id.len), c.SQLITE_STATIC);
+        _ = c.sqlite3_bind_text(stmt, 2, heading.ptr, @intCast(heading.len), c.SQLITE_STATIC);
+        _ = c.sqlite3_bind_text(stmt, 3, content.ptr, @intCast(content.len), c.SQLITE_STATIC);
+        if (tags) |t| {
+            _ = c.sqlite3_bind_text(stmt, 4, t.ptr, @intCast(t.len), c.SQLITE_STATIC);
+        } else {
+            _ = c.sqlite3_bind_null(stmt, 4);
+        }
+        if (patterns) |p| {
+            _ = c.sqlite3_bind_text(stmt, 5, p.ptr, @intCast(p.len), c.SQLITE_STATIC);
+        } else {
+            _ = c.sqlite3_bind_null(stmt, 5);
+        }
+
+        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
+            return error.InsertFailed;
+        }
+
+        try self.commit();
+    }
+
+    pub fn toggleRuleSection(self: *Database, section_id: i32, enabled: bool) !void {
+        try self.beginImmediate();
+        errdefer self.rollback();
+
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "UPDATE story_rule_sections SET enabled = ?, updated_at = datetime('now') WHERE id = ?";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+
+        _ = c.sqlite3_bind_int(stmt, 1, if (enabled) 1 else 0);
+        _ = c.sqlite3_bind_int(stmt, 2, section_id);
+
+        if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
+            return error.UpdateFailed;
+        }
+
+        try self.commit();
+    }
+
+    pub fn listRuleSections(self: *Database, allocator: std.mem.Allocator, story_id: []const u8) ![]u8 {
+        var output = std.ArrayList(u8).init(allocator);
+        defer output.deinit();
+        const w = output.writer();
+
+        var stmt: ?*c.sqlite3_stmt = null;
+        const sql = "SELECT id, heading, content, tags, patterns, enabled FROM story_rule_sections WHERE story_id = ? ORDER BY id";
+        const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+        if (rc != c.SQLITE_OK) return error.QueryFailed;
+        defer _ = c.sqlite3_finalize(stmt);
+
+        _ = c.sqlite3_bind_text(stmt, 1, story_id.ptr, @intCast(story_id.len), c.SQLITE_STATIC);
+
+        try w.writeAll("[\n");
+        var first = true;
+        while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+            if (!first) try w.writeAll(",\n");
+            first = false;
+
+            try w.writeAll("  {\"id\":");
+            try w.print("{d}", .{c.sqlite3_column_int(stmt, 0)});
+            try w.writeAll(",\"heading\":\"");
+            try Database.escapeJsonString(w, ct(stmt, 1));
+            try w.writeAll("\",\"content\":\"");
+            try Database.escapeJsonString(w, ct(stmt, 2));
+            try w.writeAll("\",\"tags\":");
+            const tags = ct(stmt, 3);
+            if (tags.len > 0) {
+                try w.writeAll("\"");
+                try Database.escapeJsonString(w, tags);
+                try w.writeAll("\"");
+            } else try w.writeAll("null");
+            try w.writeAll(",\"patterns\":");
+            const patterns = ct(stmt, 4);
+            if (patterns.len > 0) {
+                try w.writeAll("\"");
+                try Database.escapeJsonString(w, patterns);
+                try w.writeAll("\"");
+            } else try w.writeAll("null");
+            try w.print(",\"enabled\":{s}}}", .{if (c.sqlite3_column_int(stmt, 5) != 0) "true" else "false"});
+        }
+        try w.writeAll("\n]");
+        return output.toOwnedSlice();
+    }
+
+    pub fn getApplicableRules(self: *Database, allocator: std.mem.Allocator, story_id: []const u8, file_path: []const u8) ![]u8 {
+        var output = std.ArrayList(u8).init(allocator);
+        defer output.deinit();
+        const w = output.writer();
+
+        // Get rule sections for this story and its parent chain
+        var all_sections = std.ArrayList(struct { heading: []const u8, content: []const u8, tags: []const u8, patterns: []const u8 }).init(allocator);
+        defer all_sections.deinit();
+
+        var current_story: ?[]const u8 = try allocator.dupe(u8, story_id);
+        defer {
+            if (current_story) |cs| allocator.free(cs);
+        }
+
+        while (current_story) |sid| {
+            var stmt: ?*c.sqlite3_stmt = null;
+            const sql = "SELECT heading, content, tags, patterns FROM story_rule_sections WHERE story_id = ? AND enabled = 1";
+            const rc = c.sqlite3_prepare_v2(self.db, sql, -1, &stmt, null);
+            if (rc == c.SQLITE_OK) {
+                defer _ = c.sqlite3_finalize(stmt);
+                _ = c.sqlite3_bind_text(stmt, 1, sid.ptr, @intCast(sid.len), c.SQLITE_STATIC);
+
+                while (c.sqlite3_step(stmt) == c.SQLITE_ROW) {
+                    const heading = try allocator.dupe(u8, ct(stmt, 0));
+                    const content = try allocator.dupe(u8, ct(stmt, 1));
+                    const tags = try allocator.dupe(u8, ct(stmt, 2));
+                    const patterns = try allocator.dupe(u8, ct(stmt, 3));
+                    try all_sections.append(.{ .heading = heading, .content = content, .tags = tags, .patterns = patterns });
+                }
+            }
+
+            // Get parent story
+            var parent_stmt: ?*c.sqlite3_stmt = null;
+            const parent_sql = "SELECT parent_story FROM stories WHERE id = ?";
+            const parent_rc = c.sqlite3_prepare_v2(self.db, parent_sql, -1, &parent_stmt, null);
+            if (parent_rc == c.SQLITE_OK) {
+                defer _ = c.sqlite3_finalize(parent_stmt);
+                _ = c.sqlite3_bind_text(parent_stmt, 1, sid.ptr, @intCast(sid.len), c.SQLITE_STATIC);
+                if (c.sqlite3_step(parent_stmt) == c.SQLITE_ROW) {
+                    const parent_val = c.sqlite3_column_text(parent_stmt, 0);
+                    if (parent_val != null) {
+                        const parent_id = try allocator.dupe(u8, std.mem.span(parent_val));
+                        allocator.free(sid);
+                        current_story = parent_id;
+                        continue;
+                    }
+                }
+            }
+            break;
+        }
+
+        // Score and filter sections
+        try w.writeAll("[\n");
+        var first = true;
+        for (all_sections.items) |section| {
+            defer allocator.free(section.heading);
+            defer allocator.free(section.content);
+            defer allocator.free(section.tags);
+            defer allocator.free(section.patterns);
+
+            // Simple scoring: check if file path matches patterns
+            var applicable = false;
+            if (section.patterns.len == 0) {
+                applicable = true; // No patterns = applies to all
+            } else {
+                // Split patterns by comma and check
+                var patterns_iter = std.mem.splitScalar(u8, section.patterns, ',');
+                while (patterns_iter.next()) |pattern| {
+                    const trimmed = std.mem.trim(u8, pattern, " \t");
+                    if (trimmed.len > 0) {
+                        // Simple glob match
+                        if (std.mem.indexOf(u8, file_path, trimmed) != null) {
+                            applicable = true;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if (applicable) {
+                if (!first) try w.writeAll(",\n");
+                first = false;
+
+                try w.writeAll("  {\"heading\":\"");
+                try Database.escapeJsonString(w, section.heading);
+                try w.writeAll("\",\"content\":\"");
+                try Database.escapeJsonString(w, section.content);
+                try w.writeAll("\"}");
+            }
+        }
+        try w.writeAll("\n]");
+        return output.toOwnedSlice();
     }
 };

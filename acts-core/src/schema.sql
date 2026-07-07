@@ -29,7 +29,10 @@ CREATE TABLE IF NOT EXISTS stories (
     parent_story TEXT REFERENCES stories(id),
     archived_at INTEGER,
     semver TEXT,
-    released_at INTEGER
+    released_at INTEGER,
+    story_rules TEXT,
+    story_rules_file TEXT,
+    story_rules_hash TEXT
 );
 
 -- Tasks
@@ -199,8 +202,22 @@ CREATE TABLE IF NOT EXISTS file_overrides (
     created_at TEXT DEFAULT (datetime('now'))
 );
 
+-- Story rule sections (parsed from story rules markdown)
+CREATE TABLE IF NOT EXISTS story_rule_sections (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    story_id TEXT NOT NULL REFERENCES stories(id) ON DELETE CASCADE,
+    heading TEXT NOT NULL,
+    content TEXT NOT NULL,
+    tags TEXT,
+    patterns TEXT,
+    enabled INTEGER DEFAULT 1,
+    created_at TEXT DEFAULT (datetime('now')),
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_tasks_story ON tasks(story_id);
+CREATE INDEX IF NOT EXISTS idx_rule_sections_story ON story_rule_sections(story_id);
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);
 CREATE INDEX IF NOT EXISTS idx_gate_task ON gate_checkpoints(task_id);
 CREATE INDEX IF NOT EXISTS idx_decisions_task ON decisions(task_id);
@@ -393,4 +410,4 @@ BEGIN
 END;
 
 -- Insert schema version
-INSERT OR REPLACE INTO schema_version (version) VALUES (6);
+INSERT OR REPLACE INTO schema_version (version) VALUES (7);
