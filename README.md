@@ -1,4 +1,4 @@
-# ACTS Core v1.1.3
+# ACTS Core v1.2.0
 
 **Agent Collaborative Tracking Standard** — A standalone binary for multi-developer coordination using SQLite-backed state and protocol enforcement.
 
@@ -50,11 +50,11 @@ Download from [GitHub Releases](https://github.com/tommasop/acts-spec/releases):
 
 ```bash
 # Linux x86_64
-curl -L https://github.com/tommasop/acts-spec/releases/download/v1.1.3/acts-linux-x86_64.tar.gz | tar xz
+curl -L https://github.com/tommasop/acts-spec/releases/download/v1.2.0/acts-1.2.0-linux-x86_64.tar.gz | tar xz
 sudo mv acts/bin/acts /usr/local/bin/acts
 
 # macOS Apple Silicon
-curl -L https://github.com/tommasop/acts-spec/releases/download/v1.1.3/acts-macos-aarch64.tar.gz | tar xz
+curl -L https://github.com/tommasop/acts-spec/releases/download/v1.2.0/acts-1.2.0-macos-aarch64.tar.gz | tar xz
 sudo mv acts/bin/acts /usr/local/bin/acts
 ```
 
@@ -64,7 +64,7 @@ Requires [Zig 0.13.0](https://ziglang.org/download/):
 
 ```bash
 cd acts-core
-zig build release -Dversion=1.1.2
+zig build release -Dversion=1.2.0
 # Binary: zig-out/bin/acts
 ```
 
@@ -615,10 +615,10 @@ zig build
 zig build test
 
 # Release build (optimized)
-zig build release -Dversion=1.1.2
+zig build release -Dversion=1.2.0
 
 # Cross-compile for all platforms
-zig build cross -Dversion=1.1.2
+zig build cross -Dversion=1.2.0
 ```
 
 ### Adding a New Command
@@ -662,6 +662,7 @@ MIT License — See [LICENSE](LICENSE)
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
+| 1.2.0 | 2026-07 | Story coding rules, markdown compression pipeline, per-story rule sections with tag/glob applicability scoring, token budget enforcement, parent story inheritance |
 | 1.1.3 | 2026-05 | Memory leak fixes, SQL prepare fix, version string consistency, QueryFailed error reporting, `acts state read --format` (json/pretty/table), JSON output fix |
 | 1.1.2 | 2026-05 | Human Review Experience (HRE), file override system, vim navigation, quality gates |
 | 1.1.0 | 2026-05 | Multi-story, WAL mode, maintenance tasks, proactive triggers, changelog, git-based review |

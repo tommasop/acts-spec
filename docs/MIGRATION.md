@@ -27,19 +27,19 @@ cp -r .story/ .story.backup/
 
 ```bash
 # Linux
-curl -L https://github.com/tommasop/acts-spec/releases/download/v1.1.3/acts-linux-x86_64.tar.gz | tar xz
-sudo mv acts /usr/local/bin/
+curl -L https://github.com/tommasop/acts-spec/releases/download/v1.2.0/acts-1.2.0-linux-x86_64.tar.gz | tar xz
+sudo mv acts/bin/acts /usr/local/bin/
 
 # macOS (aarch64)
-curl -L https://github.com/tommasop/acts-spec/releases/download/v1.1.3/acts-macos-aarch64.tar.gz | tar xz
-sudo mv acts /usr/local/bin/
+curl -L https://github.com/tommasop/acts-spec/releases/download/v1.2.0/acts-1.2.0-macos-aarch64.tar.gz | tar xz
+sudo mv acts/bin/acts /usr/local/bin/
 ```
 
 Or build from source:
 
 ```bash
 cd acts-core
-zig build -Doptimize=ReleaseSafe -Dversion=1.1.3
+zig build -Doptimize=ReleaseSafe -Dversion=1.2.0
 sudo cp zig-out/bin/acts /usr/local/bin/
 ```
 
@@ -82,7 +82,7 @@ Update the `manifest_version` to reflect the current version:
 
 ```json
 {
-  "manifest_version": "1.1.3",
+  "manifest_version": "1.2.0",
   ...
 }
 ```
@@ -95,7 +95,7 @@ acts validate
 
 Expected output:
 ```
-Schema version: 6
+Schema version: 7
 Found: .story/plan.md
 Found: .story/spec.md
 Found: .story/sessions/
@@ -159,5 +159,5 @@ Check schema version:
 
 ```bash
 acts validate | head -1
-# Schema version: 6
+# Schema version: 7
 ```

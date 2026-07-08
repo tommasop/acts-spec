@@ -5,7 +5,7 @@ set -e
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/main/install.sh | bash
 #   curl -fsSL ... | bash -s -- --local        # Install to ./.acts/bin/
-#   curl -fsSL ... | bash -s -- --version 1.1.0 # Install specific version
+#   curl -fsSL ... | bash -s -- --version 1.2.0 # Install specific version
 #   curl -fsSL ... | sudo bash -s -- --update   # Update (use pipe, NOT process substitution)
 
 REPO="tommasop/acts-spec"
