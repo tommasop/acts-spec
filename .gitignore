@@ -4,6 +4,7 @@ dist/
 # ACTS Protocol
 .story/
 .acts/bin/acts
+.acts/cbm/
 .acts/mcp-server/node_modules/
 .acts/mcp-server/dist/
 __pycache__/

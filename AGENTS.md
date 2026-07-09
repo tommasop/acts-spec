@@ -182,6 +182,51 @@ acts_override check --override_id ovr-abc123
 - Narratives: Markdown files
 - `.story/state.json`: REMOVED (replaced by SQLite)
 
+---
+
+## Codebase Memory (cross-repo)
+
+ACTS integrates [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) for multi-repository orchestration. Multiple repos are declared as OpenCode `references`; the plugin indexes them into a single per-project knowledge graph (`.acts/cbm/`, gitignored) where `CROSS_*` edges link symbols across repos.
+
+### Setup (in `opencode.json`)
+```jsonc
+{
+  "references": {
+    "ui-payments":   { "path": "../ui-payments",         "description": "Payments UI repo" },
+    "magic":         { "path": "../ex_magic_library",    "description": "Magic core library" }
+  },
+  "mcp": {
+    "codebase-memory-mcp": {
+      "type": "local",
+      "command": ["codebase-memory-mcp"],
+      "enabled": true,
+      "environment": { "CBM_CACHE_DIR": ".acts/cbm" }
+    }
+  }
+}
+```
+Install the backend once: `curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash`
+
+### `acts_memory` Tool (Plugin)
+Bridges ACTS state to the knowledge graph. Subcommands:
+- `repos` — list configured references + resolved paths
+- `index <alias>` / `index-all` — index one or all referenced repos into the graph
+- `status` — list indexed projects (node/edge counts)
+- `scope <task_id>` — map an ACTS task's `files_touched` to the repos it spans
+- `trace <function>` — trace call path inbound/outbound across repos (`CROSS_*` edges)
+- `query <cypher>` — read-only Cypher-like graph query across the fleet
+- `architecture` — cross-repo architecture summary
+- `search <pattern>` — structural search by name/label
+- `changes` — map uncommitted diffs to affected symbols + repos (blast radius)
+
+### Cross-Repo Workflow
+1. Declare the fleet as `references` in `opencode.json`.
+2. `acts mode enter`, then `acts_memory index-all` to build the shared graph.
+3. `acts init <story>` and create per-repo tasks (their `files_touched` map to repos automatically).
+4. Use `acts_memory scope <task>`, `trace`, `query`, `changes` for cross-repo impact analysis.
+
+
+
 ### Architecture
 [Reference to project architecture docs]
 

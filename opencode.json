@@ -3,5 +3,23 @@
   "plugin": [
     "superpowers@git+https://github.com/obra/superpowers.git",
     "./.opencode/plugins/acts.js"
-  ]
+  ],
+  "references": {
+    "ui-payments":   { "path": "../ui-payments",         "description": "Payments UI repo" },
+    "magic":         { "path": "../ex_magic_library",    "description": "Magic core library" },
+    "ixi":           { "path": "../ixi_center",          "description": "Ixi center service" },
+    "proteus":       { "path": "../user-profile-proteus","description": "User profile service" },
+    "hydra":         { "path": "../magic-hydra",         "description": "Hydra orchestration service" },
+    "authorization": { "path": "../auth-global-policies","description": "Global auth policies" }
+  },
+  "mcp": {
+    "codebase-memory-mcp": {
+      "type": "local",
+      "command": ["codebase-memory-mcp"],
+      "enabled": true,
+      "environment": {
+        "CBM_CACHE_DIR": ".acts/cbm"
+      }
+    }
+  }
 }
