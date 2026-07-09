@@ -8,7 +8,7 @@ This guide covers integrating ACTS into different AI-assisted development workfl
 |----------|----------|------------------|-----------------|
 | **OpenCode Plugin** | OpenCode.ai users | Low (auto-injected) | Automatic |
 | **Manual CLI** | Claude, Cursor, VS Code, other editors | Medium (AGENTS.md) | Manual commands |
-| **MCP Server** | Future — any MCP-enabled client | TBD | Tool-based |
+| **MCP Server** | codebase-memory-mcp — any MCP-enabled client | Low (references + mcp config) | Tool-based (`acts_memory`) |
 
 ---
 

@@ -1,4 +1,4 @@
-# ACTS Core v1.2.0
+# ACTS Core v1.3.0
 
 **Agent Collaborative Tracking Standard** — A standalone binary for multi-developer coordination using SQLite-backed state and protocol enforcement.
 
@@ -20,6 +20,7 @@ ACTS is a protocol for coordinating AI-assisted software development across mult
 - **Maintenance mode** — Quick bug fixes without story ceremony
 - **Standalone binary** — Single Zig executable, no runtime dependencies (except libc)
 - **Cross-platform** — Linux (x86_64, aarch64), macOS (x86_64, aarch64)
+- **Cross-repo orchestration** — Integrates [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) to index OpenCode `references` into a shared knowledge graph; the `acts_memory` tool traces calls and maps impact across repos (`CROSS_*` edges)
 
 ## Installation
 
@@ -50,11 +51,11 @@ Download from [GitHub Releases](https://github.com/tommasop/acts-spec/releases):
 
 ```bash
 # Linux x86_64
-curl -L https://github.com/tommasop/acts-spec/releases/download/v1.2.0/acts-1.2.0-linux-x86_64.tar.gz | tar xz
+curl -L https://github.com/tommasop/acts-spec/releases/download/v1.3.0/acts-1.3.0-linux-x86_64.tar.gz | tar xz
 sudo mv acts/bin/acts /usr/local/bin/acts
 
 # macOS Apple Silicon
-curl -L https://github.com/tommasop/acts-spec/releases/download/v1.2.0/acts-1.2.0-macos-aarch64.tar.gz | tar xz
+curl -L https://github.com/tommasop/acts-spec/releases/download/v1.3.0/acts-1.3.0-macos-aarch64.tar.gz | tar xz
 sudo mv acts/bin/acts /usr/local/bin/acts
 ```
 
@@ -64,7 +65,7 @@ Requires [Zig 0.13.0](https://ziglang.org/download/):
 
 ```bash
 cd acts-core
-zig build release -Dversion=1.2.0
+zig build release -Dversion=1.3.0
 # Binary: zig-out/bin/acts
 ```
 
@@ -615,10 +616,10 @@ zig build
 zig build test
 
 # Release build (optimized)
-zig build release -Dversion=1.2.0
+zig build release -Dversion=1.3.0
 
 # Cross-compile for all platforms
-zig build cross -Dversion=1.2.0
+zig build cross -Dversion=1.3.0
 ```
 
 ### Adding a New Command
@@ -662,6 +663,7 @@ MIT License — See [LICENSE](LICENSE)
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
+| 1.3.0 | 2026-07 | Cross-repo orchestration via codebase-memory-mcp: OpenCode `references` indexed into a shared knowledge graph, `acts_memory` plugin tool (index, scope, trace, query, changes), cross-repo system context |
 | 1.2.0 | 2026-07 | Story coding rules, markdown compression pipeline, per-story rule sections with tag/glob applicability scoring, token budget enforcement, parent story inheritance |
 | 1.1.3 | 2026-05 | Memory leak fixes, SQL prepare fix, version string consistency, QueryFailed error reporting, `acts state read --format` (json/pretty/table), JSON output fix |
 | 1.1.2 | 2026-05 | Human Review Experience (HRE), file override system, vim navigation, quality gates |
