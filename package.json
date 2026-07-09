@@ -17,5 +17,8 @@
     "plugin"
   ],
   "author": "Tommaso Patrizi",
-  "license": "MIT"
+  "license": "MIT",
+  "scripts": {
+    "test": "node tests/cbm-plugin.test.mjs"
+  }
 }
