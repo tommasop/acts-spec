@@ -29,80 +29,6 @@ export const ActsPlugin = async ({ client, directory }) => {
 
   const actsBinary = findActsBinary();
 
-  // ─── codebase-memory-mcp Discovery ──────────
-  // Optional cross-repo code-intelligence backend. When present and OpenCode
-  // `references` are configured, the plugin bridges ACTS state to a shared
-  // knowledge graph spanning all referenced repos.
-  const findCbmBinary = () => {
-    const localPath = path.join(directory, '.acts', 'bin', 'codebase-memory-mcp');
-    if (fs.existsSync(localPath)) return localPath;
-    try {
-      const which = execSync('which codebase-memory-mcp', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
-      return which.trim();
-    } catch {
-      return null;
-    }
-  };
-
-  const cbmBinary = findCbmBinary();
-  const cbmCacheDir = path.join(directory, '.acts', 'cbm');
-
-  // OpenCode `references` config (the cross-repo fleet)
-  const loadReferences = () => {
-    try {
-      const cfgPath = path.join(directory, 'opencode.json');
-      if (!fs.existsSync(cfgPath)) return {};
-      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
-      return cfg.references || {};
-    } catch {
-      return {};
-    }
-  };
-
-  const references = loadReferences();
-
-  // Resolve a reference alias to an absolute path (local `path` only; git
-  // `repository` references are materialized by OpenCode and not indexed here).
-  const resolveRefPath = (alias) => {
-    const ref = references[alias];
-    if (!ref) return null;
-    const p = ref.path;
-    if (!p) return null;
-    return path.resolve(directory, p);
-  };
-
-  // Spawn `codebase-memory-mcp cli <args>` against the per-project store.
-  const runCbm = (cliArgs, opts = {}) => {
-    if (!cbmBinary) {
-      throw new Error(
-        'codebase-memory-mcp not found. Install: ' +
-        'curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash'
-      );
-    }
-    const safeArgs = ['cli', ...cliArgs.map(a => String(a))];
-    return execFileSync(cbmBinary, safeArgs, {
-      encoding: 'utf8',
-      cwd: directory,
-      timeout: opts.timeout || 120000,
-      stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, CBM_CACHE_DIR: cbmCacheDir },
-      ...opts
-    });
-  };
-
-  // Map an absolute file path to the reference alias it belongs to (longest
-  // prefix match). Used to bridge ACTS task files → repos.
-  const repoForFile = (absFile) => {
-    let best = null;
-    for (const alias of Object.keys(references)) {
-      const rp = resolveRefPath(alias);
-      if (rp && absFile.startsWith(rp + path.sep)) {
-        if (!best || rp.length > best.length) best = alias;
-      }
-    }
-    return best;
-  };
-
   // ─── Safe Command Runner ────────────────────
   const runActs = (args, options = {}) => {
     if (!actsBinary) {
@@ -330,25 +256,6 @@ Status Values:
       }
     }
 
-    // Cross-repo memory context (codebase-memory-mcp + OpenCode references)
-    if (cbmBinary && Object.keys(references).length > 0) {
-      lines.push(`## Cross-Repo Memory (codebase-memory-mcp)`);
-      lines.push(`- Fleet repos (OpenCode references): ${Object.keys(references).join(', ')}`);
-      lines.push(`- Use \`acts_memory\` tools for cross-repo tracing/impact (index-all, scope, trace, query, changes)`);
-      const spanned = [];
-      for (const task of inProgressTasks) {
-        const files = task.files_touched || [];
-        const repos = new Set();
-        for (const f of files) {
-          const abs = path.resolve(directory, f);
-          const r = repoForFile(abs);
-          if (r) repos.add(r);
-        }
-        if (repos.size) spanned.push(`  - ${task.id} spans: ${[...repos].join(', ')}`);
-      }
-      if (spanned.length) lines.push(...spanned);
-    }
-
     if (pluginState.mode === 'strict') {
       lines.push(`## STRICT MODE ACTIVE`);
       lines.push(`- You MUST NOT write any code without a preflight gate approval.`);
@@ -448,167 +355,6 @@ Status Values:
           }
         },
 
-        // ─── Cross-Repo Memory Tool (codebase-memory-mcp) ──
-        acts_memory: {
-          description: 'Cross-repo code intelligence via codebase-memory-mcp. ' +
-            'Bridges ACTS state to a shared knowledge graph of all OpenCode `references` repos. ' +
-            'Subcommands: repos, index <alias>, index-all, status, query <cypher>, ' +
-            'architecture, trace <function>, search <pattern>, changes, scope <task_id>.',
-          inputSchema: {
-            type: 'object',
-            properties: {
-              command: {
-                type: 'string',
-                description: 'acts_memory subcommand, e.g. "index-all" or "scope T3" or "trace ProcessOrder"'
-              }
-            },
-            required: ['command']
-          },
-          handler: async ({ command }) => {
-            const args = (command || '').trim().split(/\s+/).filter(Boolean);
-            const sub = args[0];
-
-            const err = (msg) => ({ content: [{ type: 'text', text: msg }], isError: true });
-
-            try {
-              switch (sub) {
-                case 'repos': {
-                  const aliases = Object.keys(references);
-                  if (aliases.length === 0) {
-                    return { content: [{ type: 'text', text:
-                      'No `references` configured in opencode.json.\n' +
-                      'Add a `references` block to enable cross-repo indexing, e.g.:\n' +
-                      '  "references": { "ui-payments": { "path": "../ui-payments" } }' }] };
-                  }
-                  const lines = ['# Configured Repositories (OpenCode references)'];
-                  for (const a of aliases) {
-                    const ref = references[a];
-                    const rp = resolveRefPath(a);
-                    lines.push(`- ${a}: ${ref.path || ref.repository}${ref.description ? ' — ' + ref.description : ''}`);
-                    if (rp) lines.push(`  resolved: ${rp}`);
-                  }
-                  lines.push(`\nKnowledge graph store: ${cbmCacheDir}`);
-                  lines.push('Index with: acts_memory index-all');
-                  return { content: [{ type: 'text', text: lines.join('\n') }] };
-                }
-
-                case 'index': {
-                  const alias = args[1];
-                  if (!alias) return err('Usage: acts_memory index <alias>');
-                  const rp = resolveRefPath(alias);
-                  if (!rp) return err(`Unknown reference alias "${alias}". Run: acts_memory repos`);
-                  const out = runCbm(['index_repository', JSON.stringify({ repo_path: rp })]);
-                  return { content: [{ type: 'text', text: `Indexed ${alias} (${rp}):\n${out}` }] };
-                }
-
-                case 'index-all': {
-                  const aliases = Object.keys(references);
-                  if (aliases.length === 0) return err('No `references` configured in opencode.json.');
-                  const results = [];
-                  for (const a of aliases) {
-                    const rp = resolveRefPath(a);
-                    if (!rp) { results.push(`⚠️ ${a}: git repository reference (not indexed locally)`); continue; }
-                    try {
-                      const out = runCbm(['index_repository', JSON.stringify({ repo_path: rp })]);
-                      results.push(`✅ ${a} (${rp})\n${out}`);
-                    } catch (e) {
-                      results.push(`❌ ${a}: ${e.stderr || e.message}`);
-                    }
-                  }
-                  return { content: [{ type: 'text', text: results.join('\n\n') }] };
-                }
-
-                case 'status': {
-                  const out = runCbm(['list_projects']);
-                  return { content: [{ type: 'text', text: out }] };
-                }
-
-                case 'query': {
-                  const cypher = args.slice(1).join(' ');
-                  if (!cypher) return err('Usage: acts_memory query "MATCH (f:Function) RETURN f.name LIMIT 5"');
-                  const out = runCbm(['query_graph', JSON.stringify({ query: cypher })]);
-                  return { content: [{ type: 'text', text: out }] };
-                }
-
-                case 'architecture': {
-                  const out = runCbm(['get_architecture', JSON.stringify({})]);
-                  return { content: [{ type: 'text', text: out }] };
-                }
-
-                case 'trace': {
-                  const rest = args.slice(1).join(' ');
-                  if (!rest) return err('Usage: acts_memory trace <function_name|qualified_name>');
-                  // Allow raw JSON payload or a plain function name.
-                  let payload;
-                  if (rest.trim().startsWith('{')) {
-                    payload = rest;
-                  } else {
-                    payload = JSON.stringify({ function_name: rest, direction: 'both' });
-                  }
-                  const out = runCbm(['trace_path', payload]);
-                  return { content: [{ type: 'text', text: out }] };
-                }
-
-                case 'search': {
-                  const pat = args.slice(1).join(' ');
-                  if (!pat) return err('Usage: acts_memory search "<name_pattern>"');
-                  const out = runCbm(['search_graph', JSON.stringify({ name_pattern: pat })]);
-                  return { content: [{ type: 'text', text: out }] };
-                }
-
-                case 'changes': {
-                  const aliases = Object.keys(references);
-                  if (aliases.length === 0) return err('No `references` configured in opencode.json.');
-                  const results = [];
-                  for (const a of aliases) {
-                    const rp = resolveRefPath(a);
-                    if (!rp) continue;
-                    try {
-                      const out = runCbm(['detect_changes', JSON.stringify({ repo_path: rp })]);
-                      results.push(`## ${a}\n${out}`);
-                    } catch (e) {
-                      results.push(`## ${a}\n${e.stderr || e.message}`);
-                    }
-                  }
-                  return { content: [{ type: 'text', text: results.join('\n\n') }] };
-                }
-
-                case 'scope': {
-                  const taskId = args[1];
-                  if (!taskId) return err('Usage: acts_memory scope <task_id>');
-                  const taskRaw = runActs(['task', 'get', taskId]);
-                  const task = JSON.parse(taskRaw);
-                  const files = task.files_touched || [];
-                  const mapping = files.map(f => {
-                    const abs = path.resolve(directory, f);
-                    return { file: f, repo: repoForFile(abs) || 'unknown' };
-                  });
-                  const repos = [...new Set(mapping.map(m => m.repo))];
-                  let text = `# Task ${taskId} — cross-repo span\n`;
-                  text += `Repos touched: ${repos.join(', ') || 'none'}\n\n`;
-                  if (mapping.length) {
-                    for (const m of mapping) text += `- ${m.file} → ${m.repo}\n`;
-                  } else {
-                    text += 'No files_touched recorded for this task yet.\n';
-                  }
-                  return { content: [{ type: 'text', text }] };
-                }
-
-                default:
-                  return err(
-                    'Unknown subcommand. Available: repos, index <alias>, index-all, status, ' +
-                    'query <cypher>, architecture, trace <function>, search <pattern>, changes, scope <task_id>'
-                  );
-              }
-            } catch (error) {
-              return {
-                content: [{ type: 'text', text: `acts_memory error: ${error.stderr || error.message}` }],
-                isError: true
-              };
-            }
-          }
-        },
-
         // ─── ACTS Mode Tool ─────────────────────
         acts_mode: {
           description: 'Control ACTS plugin mode. Modes: off (disable ACTS context), ' +
@@ -656,22 +402,13 @@ Status Values:
               savePluginState(pluginState);
               refreshState();
               refreshOwnership();
-              let enterText = `ACTS mode entered: ${newMode}\n\n` +
-                (newMode === 'strict'
-                  ? 'Strict mode active. You MUST follow all gate protocols and scope checks.'
-                  : 'ACTS context will now be injected into conversations.');
-
-              // Cross-repo memory hint
-              if (cbmBinary && Object.keys(references).length > 0) {
-                enterText += `\n\nCross-repo memory available (codebase-memory-mcp).\n` +
-                  `Index the fleet with: acts_memory index-all\n` +
-                  `Then use: acts_memory scope <task_id>, trace <fn>, query <cypher>, changes`;
-              }
-
               return {
                 content: [{
                   type: 'text',
-                  text: enterText
+                  text: `ACTS mode entered: ${newMode}\n\n` +
+                        (newMode === 'strict'
+                          ? 'Strict mode active. You MUST follow all gate protocols and scope checks.'
+                          : 'ACTS context will now be injected into conversations.')
                 }]
               };
             }

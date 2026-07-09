@@ -3,7 +3,7 @@ dist/
 
 # ACTS Protocol
 .story/
-.acts/bin/acts
+.acts/bin/
 .acts/cbm/
 .acts/mcp-server/node_modules/
 .acts/mcp-server/dist/

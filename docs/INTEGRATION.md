@@ -8,7 +8,7 @@ This guide covers integrating ACTS into different AI-assisted development workfl
 |----------|----------|------------------|-----------------|
 | **OpenCode Plugin** | OpenCode.ai users | Low (auto-injected) | Automatic |
 | **Manual CLI** | Claude, Cursor, VS Code, other editors | Medium (AGENTS.md) | Manual commands |
-| **MCP Server** | codebase-memory-mcp — any MCP-enabled client | Low (references + mcp config) | Tool-based (`acts_memory`) |
+| **MCP Server** | `cbm` OpenCode plugin (wraps codebase-memory-mcp) | Low (plugin + references) | Tool-based (native + `acts_memory`) |
 
 ---
 
@@ -689,60 +689,61 @@ acts init <id> --title "..."
 
 ---
 
-## MCP Server (codebase-memory-mcp)
+## Cross-Repo Memory (codebase-memory-mcp plugin)
 
-ACTS integrates [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) as its MCP backend for cross-repository code intelligence. It is a single static binary (zero dependencies) that indexes repos into a persistent knowledge graph and exposes 14 MCP tools (search, trace, architecture, impact analysis, Cypher queries, cross-service linking, ADR management).
+ACTS integrates [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) as a **dedicated OpenCode plugin** (`.opencode/plugins/cbm.js`) for cross-repository code intelligence — no separate MCP server entry is needed. It is a single static binary (zero dependencies) that indexes repos into a persistent knowledge graph and exposes 14 tools (search, trace, architecture, impact analysis, Cypher queries, cross-service linking, ADR management).
 
 Unlike a hand-rolled ACTS MCP server, codebase-memory-mcp gives ACTS:
 
 - **Cross-repo intelligence** — repos indexed into one shared store are linked by `CROSS_*` edges, so a call from `ui-payments` into `magic` is traversable.
 - **Token efficiency** — structural graph queries replace thousands of grep/read cycles.
 - **158-language parsing** + Hybrid LSP semantic type resolution.
+- **Self-contained delivery** — the `cbm` plugin auto-installs the binary into `.acts/bin/` and registers the tools itself.
 
 ### Configuration
 
-Add the backend and the fleet to `opencode.json`:
+Register the plugin and declare the fleet in `opencode.json`:
 
 ```jsonc
 {
+  "plugin": [
+    "./.opencode/plugins/acts.js",
+    "./.opencode/plugins/cbm.js"
+  ],
   "references": {
     "ui-payments":   { "path": "../ui-payments",         "description": "Payments UI repo" },
     "magic":         { "path": "../ex_magic_library",    "description": "Magic core library" }
-  },
-  "mcp": {
-    "codebase-memory-mcp": {
-      "type": "local",
-      "command": ["codebase-memory-mcp"],
-      "enabled": true,
-      "environment": { "CBM_CACHE_DIR": ".acts/cbm" }
-    }
   }
 }
 ```
 
+- `plugin` registers both ACTS coordination (`acts.js`) and code intelligence (`cbm.js`).
 - `references` declares the cross-repo fleet (exposed to the agent via `@alias` and system context).
-- `CBM_CACHE_DIR` points the MCP server **and** the plugin's CLI calls at the same per-project store (`.acts/cbm/`, gitignored), so every referenced repo lands in one graph.
-- Set `CBM_ALLOWED_ROOT` to the fleet parent dir for untrusted-caller safety.
+- The `cbm` plugin sets `CBM_CACHE_DIR=.acts/cbm` (gitignored) when it spawns the binary, so every referenced repo lands in one shared graph. Set `CBM_ALLOWED_ROOT` to the fleet parent dir for untrusted-caller safety.
 
-### Plugin bridge
+### Plugin tools
 
-The ACTS OpenCode plugin (`.opencode/plugins/acts.js`) adds the `acts_memory` tool, which bridges ACTS state to the knowledge graph:
+The `cbm` plugin exposes CBM's 14 native tools directly (each takes a JSON `args` string): `index_repository`, `list_projects`, `delete_project`, `index_status`, `search_graph`, `trace_path`, `detect_changes`, `query_graph`, `get_graph_schema`, `get_code_snippet`, `get_architecture`, `search_code`, `manage_adr`, `ingest_traces`.
 
-| Subcommand | Purpose |
-|------------|---------|
-| `acts_memory repos` | List configured `references` |
-| `acts_memory index-all` | Index every referenced repo into the shared graph |
-| `acts_memory scope <task_id>` | Map an ACTS task's files to the repos it spans |
-| `acts_memory trace <fn>` | Trace calls across repos (CROSS_* edges) |
-| `acts_memory query <cypher>` | Cross-repo graph query |
-| `acts_memory changes` | Map uncommitted diffs to symbols + repos (blast radius) |
-| `acts_memory architecture` / `search <pat>` | Fleet overview / structural search |
+Plus fleet helpers and the ACTS bridge:
+
+| Tool | Purpose |
+|------|---------|
+| `cbm_repos` | List configured `references` |
+| `cbm_index_all` | Index every referenced repo into the shared graph |
+| `cbm_changes` | Map uncommitted diffs to symbols + repos across the fleet (blast radius) |
+| `cbm_install` | (Re)download the CBM binary into `.acts/bin/` |
+| `acts_memory scope <task_id>` | Map an ACTS task's `files_touched` to the repos it spans |
 
 The plugin also injects a `## Cross-Repo Memory` block into the system context (fleet repos + per-task repo spans) so the agent sees cross-repo scope at a glance.
 
 ### Install
 
 ```bash
+# Automatic on first use, or force it:
+cbm_install
+
+# Manual:
 curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash
 ```
 

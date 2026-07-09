@@ -20,7 +20,7 @@ ACTS is a protocol for coordinating AI-assisted software development across mult
 - **Maintenance mode** — Quick bug fixes without story ceremony
 - **Standalone binary** — Single Zig executable, no runtime dependencies (except libc)
 - **Cross-platform** — Linux (x86_64, aarch64), macOS (x86_64, aarch64)
-- **Cross-repo orchestration** — Integrates [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) to index OpenCode `references` into a shared knowledge graph; the `acts_memory` tool traces calls and maps impact across repos (`CROSS_*` edges)
+- **Cross-repo orchestration** — The `cbm` OpenCode plugin wraps [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) to index OpenCode `references` into a shared knowledge graph; native tools (`trace_path`, `query_graph`, …) and `acts_memory scope` trace calls and map impact across repos (`CROSS_*` edges)
 
 ## Installation
 

@@ -186,44 +186,46 @@ acts_override check --override_id ovr-abc123
 
 ## Codebase Memory (cross-repo)
 
-ACTS integrates [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) for multi-repository orchestration. Multiple repos are declared as OpenCode `references`; the plugin indexes them into a single per-project knowledge graph (`.acts/cbm/`, gitignored) where `CROSS_*` edges link symbols across repos.
+ACTS integrates [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) for multi-repository orchestration via the **`cbm` OpenCode plugin** (`.opencode/plugins/cbm.js`) — no separate MCP server required. Multiple repos are declared as OpenCode `references`; the plugin auto-installs the CBM binary into `.acts/bin/` and indexes the fleet into a single per-project knowledge graph (`.acts/cbm/`, gitignored) where `CROSS_*` edges link symbols across repos.
 
 ### Setup (in `opencode.json`)
 ```jsonc
 {
+  "plugin": [
+    "./.opencode/plugins/acts.js",
+    "./.opencode/plugins/cbm.js"
+  ],
   "references": {
     "ui-payments":   { "path": "../ui-payments",         "description": "Payments UI repo" },
     "magic":         { "path": "../ex_magic_library",    "description": "Magic core library" }
-  },
-  "mcp": {
-    "codebase-memory-mcp": {
-      "type": "local",
-      "command": ["codebase-memory-mcp"],
-      "enabled": true,
-      "environment": { "CBM_CACHE_DIR": ".acts/cbm" }
-    }
   }
 }
 ```
-Install the backend once: `curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash`
+The CBM binary is installed automatically on first use (or run `cbm_install`). Manual install: `curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash`
 
-### `acts_memory` Tool (Plugin)
-Bridges ACTS state to the knowledge graph. Subcommands:
-- `repos` — list configured references + resolved paths
-- `index <alias>` / `index-all` — index one or all referenced repos into the graph
-- `status` — list indexed projects (node/edge counts)
-- `scope <task_id>` — map an ACTS task's `files_touched` to the repos it spans
-- `trace <function>` — trace call path inbound/outbound across repos (`CROSS_*` edges)
-- `query <cypher>` — read-only Cypher-like graph query across the fleet
-- `architecture` — cross-repo architecture summary
-- `search <pattern>` — structural search by name/label
-- `changes` — map uncommitted diffs to affected symbols + repos (blast radius)
+### cbm plugin tools (native)
+The plugin exposes CBM's 14 tools directly, each taking a JSON `args` string:
+- `index_repository` — index a repo into the graph
+- `list_projects` — indexed projects + node/edge counts
+- `search_graph` — structural search by label/name/file/degree
+- `trace_path` — BFS call tracing inbound/outbound across repos (`CROSS_*` edges)
+- `query_graph` — read-only Cypher-like graph query across the fleet
+- `get_architecture` — cross-repo architecture summary
+- `detect_changes` — map uncommitted diffs to symbols + repos (blast radius)
+- `get_code_snippet`, `get_graph_schema`, `search_code`, `manage_adr`, `ingest_traces`, `delete_project`, `index_status`
+
+### Fleet helpers + ACTS bridge
+- `cbm_repos` — list configured `references`
+- `cbm_index_all` — index every referenced repo into the shared graph
+- `cbm_changes` — detect changes across the fleet (blast radius)
+- `cbm_install` — (re)download the CBM binary
+- `acts_memory scope <task_id>` — map an ACTS task's `files_touched` to the repos it spans
 
 ### Cross-Repo Workflow
-1. Declare the fleet as `references` in `opencode.json`.
-2. `acts mode enter`, then `acts_memory index-all` to build the shared graph.
+1. Declare the fleet as `references` in `opencode.json` (plugin already registered).
+2. `acts mode enter`, then `cbm_index_all` (or `cbm_install` first) to build the shared graph.
 3. `acts init <story>` and create per-repo tasks (their `files_touched` map to repos automatically).
-4. Use `acts_memory scope <task>`, `trace`, `query`, `changes` for cross-repo impact analysis.
+4. Use `acts_memory scope <task>`, `trace_path`, `query_graph`, `cbm_changes` for cross-repo impact analysis.
 
 
 
