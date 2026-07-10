@@ -749,4 +749,9 @@ curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/i
 
 
 
+### Testing
+
+The `cbm` plugin ships an offline test: `npm test` (runs `tests/cbm-plugin.test.mjs`, which spins a temp project with dummy `acts` + `codebase-memory-mcp` binaries and asserts tool registration, reference resolution, `cbm_index_all` wiring, and the `acts_memory scope` bridge).
+
+
 Track progress: [GitHub Issues](https://github.com/tommasop/acts-spec/issues)

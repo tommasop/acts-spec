@@ -658,11 +658,13 @@ MIT License — See [LICENSE](LICENSE)
 1. Run `acts validate` before committing
 2. Follow the ACTS protocol for your own contributions
 3. Ensure cross-compilation passes: `zig build cross`
+4. Run plugin tests: `npm test` (offline test for the `cbm` OpenCode plugin)
 
 ## Version History
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
+| 1.3.1 | 2026-07 | Cross-repo memory delivered as a dedicated `cbm` OpenCode plugin: auto-installs the codebase-memory-mcp binary, exposes its 14 native tools + fleet helpers (`cbm_repos`/`cbm_index_all`/`cbm_changes`/`cbm_install`), `acts_memory scope` ACTS bridge; removed the separate `mcp` server entry; offline `npm test` added |
 | 1.3.0 | 2026-07 | Cross-repo orchestration via codebase-memory-mcp: OpenCode `references` indexed into a shared knowledge graph, `acts_memory` plugin tool (index, scope, trace, query, changes), cross-repo system context |
 | 1.2.0 | 2026-07 | Story coding rules, markdown compression pipeline, per-story rule sections with tag/glob applicability scoring, token budget enforcement, parent story inheritance |
 | 1.1.3 | 2026-05 | Memory leak fixes, SQL prepare fix, version string consistency, QueryFailed error reporting, `acts state read --format` (json/pretty/table), JSON output fix |

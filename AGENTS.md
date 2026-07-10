@@ -220,12 +220,112 @@ The plugin exposes CBM's 14 tools directly, each taking a JSON `args` string:
 - `cbm_changes` — detect changes across the fleet (blast radius)
 - `cbm_install` — (re)download the CBM binary
 - `acts_memory scope <task_id>` — map an ACTS task's `files_touched` to the repos it spans
+- `acts_tech_lead_analysis --task_id <id> [--depth 3] [--risk_threshold MEDIUM]` — pre-flight risk report combining ACTS task context with CBM graph intelligence
+
+### Tech Lead Pre-Flight Analysis (`acts_tech_lead_analysis`)
+
+A standalone tool that produces a structured risk report before coding begins. It reads an ACTS task, resolves affected symbols via CBM graph queries, traces call chains with risk classification, and returns a markdown report for LLM interpretation.
+
+**When to use:**
+- Before starting implementation on a task with `files_touched`
+- During tech lead review to assess cross-repo impact
+- When onboarding to unfamiliar code to understand blast radius
+
+**Usage:**
+```
+acts_tech_lead_analysis --task_id T1
+acts_tech_lead_analysis --task_id T1 --depth 2
+acts_tech_lead_analysis --task_id T1 --risk_threshold HIGH
+```
+
+**Parameters:**
+
+| Parameter | Required | Default | Description |
+|-----------|----------|---------|-------------|
+| `task_id` | Yes | — | ACTS task to analyze |
+| `depth` | No | `3` | Call chain trace depth (how many hops to follow) |
+| `risk_threshold` | No | `MEDIUM` | Minimum risk level to include: CRITICAL, HIGH, MEDIUM, LOW |
+
+**Processing pipeline:**
+1. Read ACTS task → extract `files_touched`
+2. Map each file → repo (via `opencode.json` references) → CBM project
+3. For each file, search for functions: `search_graph --file_path <file> --label Function`
+4. For each function, trace call chains: `trace_path --direction both --risk-labels true --mode cross_service`
+5. Classify risk per symbol:
+   - **CRITICAL**: Cross-repo HTTP/GRPC edge, OR callers ≥ 2 in other repos
+   - **HIGH**: ≥ 5 callers/callees, OR complexity > 15
+   - **MEDIUM**: ≥ 3 callers/callees, OR complexity > 8
+   - **LOW**: Everything else
+6. Detect blast radius via `detect_changes`
+7. Return structured markdown report
+
+**Output sections:**
+- **Risk Summary** — counts per risk level
+- **Cross-Repo Impact** — symbols calling/called by other repos (if any)
+- **Per-File Analysis** — table of symbols with risk, caller/callee counts, complexity
+- **Blast Radius** — changed files and impacted symbols from git diff
+- **Warnings** — indexing or query errors
+
+**Example output:**
+```markdown
+# Tech Lead Pre-Flight Report: T1
+
+**Task:** Add payment retry logic
+**Status:** IN_PROGRESS
+**Files:** 3 | **Symbols:** 15 | **Depth:** 3
+
+## Risk Summary
+| Level | Count |
+|-------|-------|
+| CRITICAL | 1 |
+| HIGH | 4 |
+| MEDIUM | 6 |
+| LOW | 4 |
+
+## Cross-Repo Impact
+🔴 **CRITICAL** `magic.PaymentService.create` → `retry_payment`
+   Edge: OUTBOUND
+
+## Per-File Analysis
+
+### lib/payment/retry.ex (magic)
+| Symbol | Risk | Callers | Callees | Cross-Repo | Complexity |
+|--------|------|---------|---------|------------|------------|
+| retry_payment | HIGH | 3 | 2 | 1 outgoing | 12 |
+| handle_timeout | MEDIUM | 1 | 1 | — | 6 |
+```
+
+**Interpreting the report:**
+- Cross-repo impacts require deployment coordination
+- HIGH-risk symbols with many callers need backward compatibility checks
+- HIGH-complexity functions may warrant code review
+- Use the data to prioritize review and testing
+
+### Slash Commands
+
+Custom OpenCode commands for quick access:
+
+| Command | Description |
+|---------|-------------|
+| `/tech-lead <task_id>` | Run pre-flight risk analysis on a task |
+| `/risk <task_id>` | Short alias for `/tech-lead` |
+
+**Usage:**
+```
+/tech-lead T1
+/risk T1
+```
+
+If no task ID is provided, the command will list active tasks and ask which to analyze.
 
 ### Cross-Repo Workflow
 1. Declare the fleet as `references` in `opencode.json` (plugin already registered).
 2. `acts mode enter`, then `cbm_index_all` (or `cbm_install` first) to build the shared graph.
 3. `acts init <story>` and create per-repo tasks (their `files_touched` map to repos automatically).
 4. Use `acts_memory scope <task>`, `trace_path`, `query_graph`, `cbm_changes` for cross-repo impact analysis.
+
+### Testing
+The `cbm` plugin is covered by an offline test: `npm test` (runs `tests/cbm-plugin.test.mjs`, which spins a temp project with dummy `acts` + `codebase-memory-mcp` binaries and asserts tool registration, reference resolution, `cbm_index_all` wiring, and the `acts_memory scope` bridge).
 
 
 

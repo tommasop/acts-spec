@@ -50,7 +50,10 @@ export const CbmPlugin = async ({ client, directory }) => {
     }
   };
 
-  const cbmCacheDir = path.join(directory, '.acts', 'cbm');
+  // CBM cache directory: prefer .acts/cbm if indexed there, else fall back to default
+  const defaultCacheDir = path.join(process.env.HOME || '~', '.cache', 'codebase-memory-mcp');
+  const localCacheDir = path.join(directory, '.acts', 'cbm');
+  const cbmCacheDir = fs.existsSync(localCacheDir) ? localCacheDir : defaultCacheDir;
 
   // ─── Auto-install ───────────────────────────
   // Downloads the CBM binary into .acts/bin on first use. Best-effort and
@@ -95,15 +98,64 @@ export const CbmPlugin = async ({ client, directory }) => {
   };
 
   // Longest-prefix match of an absolute file path to a reference alias.
+  // Also checks CBM project root_paths as fallback for path mismatches.
   const repoForFile = (absFile) => {
     let best = null;
+    // First pass: match against OpenCode references
     for (const alias of Object.keys(references)) {
       const rp = resolveRefPath(alias);
       if (rp && absFile.startsWith(rp + path.sep)) {
         if (!best || rp.length > best.length) best = alias;
       }
     }
+    if (best) return best;
+
+    // Second pass: match against CBM indexed project root_paths
+    try {
+      const projects = listProjects();
+      for (const p of projects) {
+        const projRoot = p.root_path || p.canonical_root || '';
+        if (projRoot && absFile.startsWith(projRoot + path.sep)) {
+          // Find matching alias by path or name
+          for (const alias of Object.keys(references)) {
+            const rp = resolveRefPath(alias);
+            if (rp && projRoot.includes(path.basename(rp))) {
+              return alias;
+            }
+          }
+          // Fallback: use project name as alias
+          return p.name;
+        }
+      }
+    } catch { /* ignore */ }
+
     return best;
+  };
+
+  // ─── Repo Alias → CBM Project Name Mapping ──
+  const listProjects = () => {
+    try {
+      const raw = runCbm(['list_projects', '{}']);
+      const data = JSON.parse(raw);
+      return data.projects || [];
+    } catch {
+      return [];
+    }
+  };
+
+  const projectForRepo = (repoAlias) => {
+    const rp = resolveRefPath(repoAlias);
+    if (!rp) return null;
+    const projects = listProjects();
+    const basename = path.basename(rp);
+    // Match by root_path (canonical, resolved, or basename)
+    const match = projects.find(p => {
+      const projRoot = p.root_path || p.canonical_root || '';
+      return projRoot === rp ||
+             projRoot === path.resolve(directory, rp) ||
+             projRoot.includes(basename);
+    });
+    return match ? match.name : null;
   };
 
   // ─── Safe CBM Runner ────────────────────────
@@ -346,6 +398,312 @@ export const CbmPlugin = async ({ client, directory }) => {
         } catch (error) {
           return { content: [{ type: 'text', text: `acts_memory error: ${error.stderr || error.message}` }], isError: true };
         }
+      }
+    },
+
+    // ─── Tech Lead Pre-Flight Analysis ────────
+    acts_tech_lead_analysis: {
+      description: 'Pre-flight risk report: combines ACTS task context with CBM graph intelligence. ' +
+        'Traces call chains with risk classification, identifies cross-repo impact, and produces ' +
+        'a structured report for tech lead review before coding begins.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          task_id: { type: 'string', description: 'ACTS task ID to analyze (e.g., T1)' },
+          depth: { type: 'number', description: 'Call chain trace depth (default: 3)' },
+          risk_threshold: {
+            type: 'string',
+            enum: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'],
+            description: 'Minimum risk level to include in report (default: MEDIUM)'
+          }
+        },
+        required: ['task_id']
+      },
+      handler: async ({ task_id, depth = 3, risk_threshold = 'MEDIUM' }) => {
+        const err = (m) => ({ content: [{ type: 'text', text: m }], isError: true });
+
+        const RISK_ORDER = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
+        const threshold = RISK_ORDER[risk_threshold] || 2;
+
+        if (!actsBinary) return err('ACTS binary not found. Cannot read task context.');
+        if (!cbmBinary && !ensureCbm().ok) {
+          return err('codebase-memory-mcp not available. Run `cbm_install` first.');
+        }
+
+        // ─── Step 1: Read ACTS task context ──────
+        // Note: `acts task get` doesn't return files_touched, so we read from state
+        let task;
+        try {
+          const state = JSON.parse(runActs(['state', 'read']));
+          task = (state.tasks || []).find(t => t.id === task_id);
+          if (!task) {
+            return err(`Task ${task_id} not found in story ${state.story_id}`);
+          }
+        } catch (e) {
+          return err(`Failed to read ACTS state: ${e.stderr || e.message}`);
+        }
+
+        const files = task.files_touched || [];
+        if (files.length === 0) {
+          return {
+            content: [{
+              type: 'text',
+              text: `# Tech Lead Pre-Flight Report: ${task_id}\n\n` +
+                `**Task:** ${task.title}\n` +
+                `**Status:** ${task.status}\n\n` +
+                `No files_touched recorded for this task yet. ` +
+                `Add files to the task before running analysis.`
+            }]
+          };
+        }
+
+        // ─── Step 2: Map files → repos → CBM projects ──
+        const fileMapping = files.map(f => {
+          const absPath = path.resolve(directory, f);
+          const repo = repoForFile(absPath);
+          const project = repo ? projectForRepo(repo) : null;
+          return { file: f, absPath, repo: repo || 'unknown', project };
+        });
+
+        // ─── Step 3: Search for symbols per file ──────
+        const allSymbols = [];
+        const crossRepoImpact = [];
+        const errors = [];
+
+        for (const fm of fileMapping) {
+          if (!fm.project) {
+            errors.push(`${fm.file}: repo "${fm.repo}" not indexed in CBM`);
+            continue;
+          }
+
+          // Search for functions in this file
+          let searchResult;
+          try {
+            const raw = runCbm(['search_graph', JSON.stringify({
+              project: fm.project,
+              file_path: fm.file,
+              label: 'Function',
+              limit: 50
+            })]);
+            searchResult = JSON.parse(raw);
+          } catch (e) {
+            errors.push(`${fm.file}: search_graph failed — ${e.message}`);
+            continue;
+          }
+
+          const symbols = searchResult.results || [];
+          if (symbols.length === 0) continue;
+
+          // ─── Step 4: Trace call paths per symbol ──
+          for (const sym of symbols) {
+            let trace;
+            try {
+              const raw = runCbm(['trace_path', JSON.stringify({
+                project: fm.project,
+                function_name: sym.name,
+                direction: 'both',
+                depth,
+                risk_labels: true,
+                mode: 'cross_service'
+              })]);
+              trace = JSON.parse(raw);
+            } catch (e) {
+              errors.push(`${sym.qualified_name}: trace_path failed — ${e.message}`);
+              continue;
+            }
+
+            // Classify risk from trace data
+            const callerCount = (trace.callers || []).length;
+            const calleeCount = (trace.callees || []).length;
+            const totalConnections = callerCount + calleeCount;
+
+            // Check for cross-repo edges by matching qualified_name prefix against known projects
+            const allProjects = listProjects();
+            const projectNames = allProjects.map(p => p.name);
+            const isCrossRepo = (sym) => {
+              const qn = sym.qualified_name || '';
+              // A symbol is cross-repo if its qualified_name starts with a DIFFERENT project name
+              return projectNames.some(pn => qn.startsWith(pn + '.') && pn !== fm.project);
+            };
+            const crossCallers = (trace.callers || []).filter(isCrossRepo);
+            const crossCallees = (trace.callees || []).filter(isCrossRepo);
+
+            // Determine risk level
+            let risk = 'LOW';
+            if (crossCallers.length > 0 || crossCallees.length > 0) {
+              if (crossCallers.length >= 2 || crossCallees.length >= 2) {
+                risk = 'CRITICAL';
+              } else {
+                risk = 'HIGH';
+              }
+            } else if (totalConnections >= 5 || (sym.complexity || 0) > 15) {
+              risk = 'HIGH';
+            } else if (totalConnections >= 3 || (sym.complexity || 0) > 8) {
+              risk = 'MEDIUM';
+            }
+
+            const riskScore = RISK_ORDER[risk];
+            if (riskScore < threshold) continue;
+
+            // Collect cross-repo impact entries
+            const findRepoForSymbol = (sym) => {
+              const qn = sym.qualified_name || '';
+              for (const p of allProjects) {
+                if (qn.startsWith(p.name + '.')) {
+                  // Find matching alias
+                  for (const alias of Object.keys(references)) {
+                    const rp = resolveRefPath(alias);
+                    if (rp && (p.root_path || '').includes(path.basename(rp || ''))) {
+                      return alias;
+                    }
+                  }
+                  return p.name;
+                }
+              }
+              return 'unknown';
+            };
+
+            for (const cc of crossCallers) {
+              crossRepoImpact.push({
+                source_repo: fm.repo,
+                source_symbol: sym.name,
+                target_repo: findRepoForSymbol(cc),
+                target_symbol: cc.name,
+                edge_type: 'INBOUND',
+                risk
+              });
+            }
+            for (const cc of crossCallees) {
+              crossRepoImpact.push({
+                source_repo: fm.repo,
+                source_symbol: sym.name,
+                target_repo: findRepoForSymbol(cc),
+                target_symbol: cc.name,
+                edge_type: 'OUTBOUND',
+                risk
+              });
+            }
+
+            allSymbols.push({
+              file: fm.file,
+              repo: fm.repo,
+              name: sym.name,
+              qualified_name: sym.qualified_name,
+              risk,
+              callers: (trace.callers || []).map(c => c.name),
+              callees: (trace.callees || []).map(c => c.name),
+              cross_repo_callers: crossCallers.map(c => c.name),
+              cross_repo_callees: crossCallees.map(c => c.name),
+              complexity: sym.complexity || 0,
+              lines: sym.lines || 0,
+              in_degree: sym.in_degree || 0,
+              out_degree: sym.out_degree || 0
+            });
+          }
+        }
+
+        // ─── Step 5: Blast radius (detect_changes) ──
+        let blastRadius = { changed_files: 0, impacted_symbols: 0 };
+        const seenProjects = [...new Set(fileMapping.filter(f => f.project).map(f => f.project))];
+        for (const proj of seenProjects) {
+          try {
+            const raw = runCbm(['detect_changes', JSON.stringify({ project: proj })]);
+            const data = JSON.parse(raw);
+            blastRadius.changed_files += (data.changed_files || []).length;
+            blastRadius.impacted_symbols += (data.impacted_symbols || []).length;
+          } catch { /* best effort */ }
+        }
+
+        // ─── Step 6: Aggregate results ─────────────
+        const riskSummary = { CRITICAL: 0, HIGH: 0, MEDIUM: 0, LOW: 0 };
+        for (const s of allSymbols) riskSummary[s.risk]++;
+
+        // ─── Step 7: Build markdown report ─────────
+        const lines = [];
+        lines.push(`# Tech Lead Pre-Flight Report: ${task_id}`);
+        lines.push('');
+        lines.push(`**Task:** ${task.title}`);
+        lines.push(`**Status:** ${task.status}`);
+        if (task.description) lines.push(`**Description:** ${task.description}`);
+        lines.push(`**Analyzed:** ${new Date().toISOString()}`);
+        lines.push(`**Files:** ${fileMapping.length} | **Symbols:** ${allSymbols.length} | **Depth:** ${depth}`);
+        lines.push('');
+
+        // Risk summary
+        lines.push('## Risk Summary');
+        lines.push('');
+        lines.push('| Level | Count |');
+        lines.push('|-------|-------|');
+        lines.push(`| CRITICAL | ${riskSummary.CRITICAL} |`);
+        lines.push(`| HIGH | ${riskSummary.HIGH} |`);
+        lines.push(`| MEDIUM | ${riskSummary.MEDIUM} |`);
+        lines.push(`| LOW | ${riskSummary.LOW} |`);
+        lines.push('');
+
+        // Cross-repo impact
+        if (crossRepoImpact.length > 0) {
+          lines.push('## Cross-Repo Impact');
+          lines.push('');
+          for (const impact of crossRepoImpact) {
+            const icon = impact.risk === 'CRITICAL' ? '🔴' : impact.risk === 'HIGH' ? '🟠' : '🟡';
+            lines.push(`${icon} **${impact.risk}** \`${impact.source_repo}.${impact.source_symbol}\` → \`${impact.target_symbol}\``);
+            lines.push(`   Edge: ${impact.edge_type}`);
+            lines.push('');
+          }
+        }
+
+        // Per-file analysis
+        const byFile = {};
+        for (const s of allSymbols) {
+          if (!byFile[s.file]) byFile[s.file] = { repo: s.repo, symbols: [] };
+          byFile[s.file].symbols.push(s);
+        }
+
+        if (Object.keys(byFile).length > 0) {
+          lines.push('## Per-File Analysis');
+          lines.push('');
+          for (const [file, data] of Object.entries(byFile)) {
+            lines.push(`### ${file} (${data.repo})`);
+            lines.push('');
+            lines.push('| Symbol | Risk | Callers | Callees | Cross-Repo | Complexity |');
+            lines.push('|--------|------|---------|---------|------------|------------|');
+            for (const s of data.symbols) {
+              const crossCount = s.cross_repo_callers.length + s.cross_repo_callees.length;
+              const crossStr = crossCount > 0 ? `${crossCount} edge${crossCount > 1 ? 's' : ''}` : '—';
+              lines.push(`| ${s.name} | ${s.risk} | ${s.callers.length} | ${s.callees.length} | ${crossStr} | ${s.complexity} |`);
+            }
+            lines.push('');
+          }
+        }
+
+        // Blast radius
+        if (blastRadius.changed_files > 0 || blastRadius.impacted_symbols > 0) {
+          lines.push('## Blast Radius');
+          lines.push('');
+          lines.push(`- Changed files: ${blastRadius.changed_files}`);
+          lines.push(`- Impacted symbols: ${blastRadius.impacted_symbols}`);
+          lines.push('');
+        }
+
+        // Errors
+        if (errors.length > 0) {
+          lines.push('## Warnings');
+          lines.push('');
+          for (const e of errors) {
+            lines.push(`- ${e}`);
+          }
+          lines.push('');
+        }
+
+        // Instructions for LLM
+        lines.push('---');
+        lines.push('');
+        lines.push('*Interpret this data to provide actionable recommendations. ' +
+          'Focus on: deployment coordination for cross-repo impacts, ' +
+          'backward compatibility for high-caller-count symbols, ' +
+          'and code review priorities for high-complexity functions.*');
+
+        return { content: [{ type: 'text', text: lines.join('\n') }] };
       }
     }
   };
