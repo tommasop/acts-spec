@@ -146,7 +146,7 @@ acts task update T1 --status DONE
 
 ```bash
 # Create a new story with git worktree
-acts story create PROJ-43 --title "JWT refresh" --from main
+acts story create PROJ-43 --title "JWT refresh" --from master
 
 # List all stories
 acts story list
@@ -158,7 +158,7 @@ acts story switch PROJ-43
 acts story archive PROJ-42
 
 # Merge story (enforces all tasks DONE + reviews approved)
-acts story merge PROJ-43 --into main
+acts story merge PROJ-43 --into master
 ```
 
 ### Check File Ownership
@@ -266,7 +266,7 @@ acts task update BUG-1 --status DONE
 
 ```bash
 # Update system-wide installation (auto-migrates projects)
-bash <(curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/main/install.sh) --update
+bash <(curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/master/install.sh) --update
 
 # Or using Make
 make update
@@ -294,7 +294,7 @@ rm -f /usr/local/bin/acts ~/.local/bin/acts ./.acts/bin/acts
 | `story list` | List all stories | `acts story list --include-maintenance` |
 | `story switch <id>` | Switch active story | `acts story switch PROJ-43` |
 | `story archive <id>` | Archive completed story | `acts story archive PROJ-42` |
-| `story merge <id>` | Merge story into branch | `acts story merge PROJ-43 --into main` |
+| `story merge <id>` | Merge story into branch | `acts story merge PROJ-43 --into master` |
 | `story graph` | Show dependency graph | `acts story graph --format dot` |
 
 ### State
