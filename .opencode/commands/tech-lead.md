@@ -1,5 +1,8 @@
 ---
+
 description: Pre-flight risk analysis for a task — traces call chains, identifies cross-repo impact, and classifies risk
+agent: build
+
 ---
 
 Run a tech lead pre-flight analysis on task $ARGUMENTS.
