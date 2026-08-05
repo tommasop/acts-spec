@@ -173,8 +173,33 @@ fn installBinaries(allocator: std.mem.Allocator, bin_dir_raw: []const u8) !void 
     defer allocator.free(self_path);
     const acts_dest = try std.fs.path.join(allocator, &.{ bin_dir, "acts" });
     defer allocator.free(acts_dest);
-    try writeFile(acts_dest, std.fs.cwd().readFileAlloc(allocator, self_path, 1 << 30) catch return SetupError.SelfCopyFailed);
-    std.posix.fchmodat(std.posix.AT.FDCWD, acts_dest, 0o755, 0) catch {};
+
+    const self_canon = std.fs.realpathAlloc(allocator, self_path) catch self_path;
+    defer if (!std.mem.eql(u8, self_canon, self_path)) allocator.free(self_canon);
+
+    // If the destination is already the running executable (e.g. `acts` is
+    // installed at ~/.local/bin/acts and that's the default bin dir), skip the
+    // self-copy — overwriting a running binary fails with FileBusy (ETXTBSY).
+    const already_here = if (std.fs.realpathAlloc(allocator, acts_dest) catch null) |d| blk: {
+        defer allocator.free(d);
+        break :blk std.mem.eql(u8, d, self_canon);
+    } else false;
+
+    if (already_here) {
+        std.debug.print("acts already installed at {s} — skipping self-copy.\n", .{acts_dest});
+    } else {
+        // Write via a temp file + rename so we never clobber a running binary
+        // and never leave a partial file on failure.
+        const tmp = try std.fs.path.join(allocator, &.{ bin_dir, ".acts-install.tmp" });
+        defer allocator.free(tmp);
+        try writeFile(tmp, std.fs.cwd().readFileAlloc(allocator, self_path, 1 << 30) catch return SetupError.SelfCopyFailed);
+        std.posix.fchmodat(std.posix.AT.FDCWD, tmp, 0o755, 0) catch {};
+        std.fs.cwd().rename(tmp, acts_dest) catch |e| {
+            std.fs.cwd().deleteFile(tmp) catch {};
+            return e;
+        };
+        std.debug.print("acts installed to {s}\n", .{acts_dest});
+    }
 
     // --- cbm: run its official installer (best-effort) ---
     // cbm decides its own canonical install location (~/.local/bin or
