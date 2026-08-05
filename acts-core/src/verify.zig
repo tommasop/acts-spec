@@ -99,13 +99,22 @@ pub fn runStage(allocator: std.mem.Allocator, stage: QualityStage, command: ?[]c
     const cmd = command.?;
     const start = try std.time.Instant.now();
 
-    // Parse command into argv (simple space split)
+    // If the command contains shell metacharacters (&&, |, >, ;), run it via `sh -c`
+    // so chained commands work. Otherwise exec directly (no shell overhead).
+    const has_shell = std.mem.indexOfAny(u8, cmd, "&|><;`$\n") != null;
+
     var argv_list = std.ArrayList([]const u8).init(allocator);
     defer argv_list.deinit();
 
-    var iter = std.mem.split(u8, cmd, " ");
-    while (iter.next()) |part| {
-        if (part.len > 0) try argv_list.append(part);
+    if (has_shell) {
+        try argv_list.append("sh");
+        try argv_list.append("-c");
+        try argv_list.append(cmd);
+    } else {
+        var iter = std.mem.split(u8, cmd, " ");
+        while (iter.next()) |part| {
+            if (part.len > 0) try argv_list.append(part);
+        }
     }
 
     if (argv_list.items.len == 0) {

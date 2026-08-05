@@ -1,0 +1,57 @@
+{
+  "version": 2,
+  "id": "acts-v2",
+  "title": "ACTS v2 git-native redesign",
+  "base_branch": "master",
+  "changes": [
+    {
+      "id": "v2-redesign",
+      "title": "ACTS v2 git-native coordination protocol",
+      "branch": "v2.0",
+      "parent": null,
+      "acceptance": [
+        "git-native: .acts/stack.json manifest replaces SQLite",
+        "verification is the gate: acts verify blocks review until green",
+        "changes map to stacked PRs (push + gh/git-spice)",
+        "durable context: acts context / note / checkpoint / redirect",
+        "v1->v2 migration: acts migrate imports SQLite story",
+        "opencode integration: skill + plugin + slash commands"
+      ],
+      "status": "IN_REVIEW",
+      "verify": {
+        "test": {
+          "cmd": "npm test && cd acts-core && zig build test",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 200
+        },
+        "lint": {
+          "cmd": "node --check .opencode/plugins/acts.js && node --check .opencode/plugins/cbm.js",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 45
+        },
+        "typecheck": {
+          "cmd": "skipped",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 0
+        },
+        "build": {
+          "cmd": "cd acts-core && zig build",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 15
+        }
+      },
+      "notes": [
+        ".acts/changes/v2-redesign/notes/1785923038.md"
+      ],
+      "checkpoint": "all acceptance criteria implemented; verify passes; ready for PR review",
+      "pr": {
+        "url": "https://github.com/tommasop/acts-spec/pull/1",
+        "approved": false
+      }
+    }
+  ]
+}
