@@ -35,15 +35,39 @@ zig build release -Dversion=2.0.0
 # Binary: zig-out/bin/acts
 ```
 
-### Project Setup
+### Install Binaries Globally (acts + cbm)
+
+The quickest path installs `acts` **and** the cross-repo graph engine `cbm` once per machine — no per-project copies:
 
 ```bash
-# Option 1: Local copy (recommended for a single project)
-cp acts-core/zig-out/bin/acts .acts/bin/acts
+# Install acts globally (~/.local/bin), plus cbm for cross-repo intelligence
+curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/master/install.sh | bash -s -- --with-cbm
 
-# Option 2: Install globally
-sudo cp acts-core/zig-out/bin/acts /usr/local/bin/
+# Update both later
+curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/master/install.sh | bash -s -- --update --with-cbm
 ```
+
+Or, after building from source, self-install with the binary itself:
+
+```bash
+cd acts-core && zig build release -Dversion=2.0.0
+./zig-out/bin/acts setup . --bin-dir ~/.local/bin --github
+# → copies `acts` to ~/.local/bin, installs `cbm`, and bootstraps the project
+```
+
+### Bootstrap a Project (no clone needed)
+
+You do **not** need to clone `acts-spec` to use ACTS. Once `acts` is installed, run:
+
+```bash
+acts setup . --github
+# → installs .opencode/plugins/{acts,cbm}.js + skill + slash commands
+# → merges opencode.json (superpowers + acts + cbm plugins, skill permission)
+# → injects the ACTS v2 section into AGENTS.md (idempotent)
+# → writes .github/workflows/opencode.yml (OpenCode GitHub integration)
+```
+
+Options: `--source <acts-spec-dir>` (use a local checkout instead of GitHub, e.g. offline), `--no-install` (skip binary install), `--bin-dir <dir>` (global install location), `--force` (overwrite existing files).
 
 > Pre-built binaries for Linux/macOS are published to [GitHub Releases](https://github.com/tommasop/acts-spec/releases) once tagged.
 
@@ -153,6 +177,7 @@ In OpenCode, the active change's context pack (plus optional CBM blast radius) i
 |---------|-------------|
 | `scope <id> <file>` | Check file ownership (derived from diffs) |
 | `validate` | Validate manifest + branch consistency |
+| `setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>]` | Install binaries globally + wire a project (plugins, opencode.json, AGENTS.md, GitHub workflow) |
 | `migrate [<story-id>]` | Import a v1 SQLite story into a v2 stack |
 | `version` / `help` | Show version / help |
 
@@ -365,7 +390,7 @@ MIT License — See [LICENSE](LICENSE)
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
-| 2.1.0 | 2026-08 | **Risk-based HITL + centralized CBM**: `acts risk` tiering (LOW/MEDIUM/HIGH/CRITICAL), auto-land LOW-risk verified changes, escalation checklist for HIGH/CRITICAL, approval audit log, stale-verification guard; CBM binary installed once per machine with one shared graph + `cbm_bootstrap` for CI; plugin auto-injects the active change's context pack with optional CBM blast-radius; per-change cost tracking (`acts note --cost`) |
+| 2.1.0 | 2026-08 | **Risk-based HITL + centralized CBM + `acts setup`**: risk tiering (LOW/MEDIUM/HIGH/CRITICAL), auto-land LOW-risk verified changes, escalation checklist, approval audit log, stale-verification guard; CBM binary installed once per machine with one shared graph + `cbm_bootstrap` for CI; plugin auto-injects the active change's context pack with optional CBM blast-radius; per-change cost tracking; `acts setup` bootstraps a project without cloning (global binary install + plugins/skill/commands + opencode.json + AGENTS.md + GitHub workflow) |
 | 2.0.0 | 2026-08 | **Git-native redesign**: SQLite replaced by `.acts/stack.json` manifest; story/task/gate model replaced by **stack** (base branch) + **change** (stacked branch + PR); verification gates (`acts verify`) replace preflight/review ceremony; review via standard stacked PRs (gh/git-spice); durable context packs (`acts context`) with notes/checkpoint/redirect; ownership derived from git diffs; OpenCode skill + slash commands; greenfield Zig core |
 | 1.3.1 | 2026-07 | Cross-repo memory delivered as a dedicated `cbm` OpenCode plugin: auto-installs the codebase-memory-mcp binary, exposes its 14 native tools + fleet helpers (`cbm_repos`/`cbm_index_all`/`cbm_changes`/`cbm_install`), `acts_memory scope` ACTS bridge; removed the separate `mcp` server entry; offline `npm test` added |
 | 1.3.0 | 2026-07 | Cross-repo orchestration via codebase-memory-mcp: OpenCode `references` indexed into a shared knowledge graph, `acts_memory` plugin tool (index, scope, trace, query, changes), cross-repo system context |

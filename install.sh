@@ -1,37 +1,45 @@
 #!/usr/bin/env bash
 set -e
 
-# ACTS Installer v1.2.0
+# ACTS v2.1 Installer — global binaries (acts + cbm)
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/main/install.sh | bash
-#   curl -fsSL ... | bash -s -- --local        # Install to ./.acts/bin/
-#   curl -fsSL ... | bash -s -- --version 1.2.0 # Install specific version
-#   curl -fsSL ... | sudo bash -s -- --update   # Update (use pipe, NOT process substitution)
+#   curl -fsSL ... | bash -s -- --with-cbm         # also install codebase-memory-mcp
+#   curl -fsSL ... | bash -s -- --bin-dir "$HOME/.local/bin"
+#   curl -fsSL ... | bash -s -- --update           # update acts + cbm
+#
+# `acts setup` is the recommended project bootstrap (wires AGENTS.md,
+# opencode.json, plugins). This installer only manages the binaries.
 
 REPO="tommasop/acts-spec"
-INSTALL_DIR="/usr/local/bin"
-LOCAL_DIR="./.acts/bin"
 VERSION=""
+BIN_DIR="${ACTS_BIN_DIR:-}"
+WITH_CBM=false
 FORCE=false
-MIGRATE=true
+
+# Default global bin dir: $HOME/.local/bin (no sudo needed).
+if [ -z "$BIN_DIR" ]; then
+    if [ -w "/usr/local/bin" ]; then
+        BIN_DIR="/usr/local/bin"
+    else
+        BIN_DIR="${HOME}/.local/bin"
+    fi
+fi
 
 detect_platform() {
     local os arch
     os=$(uname -s | tr '[:upper:]' '[:lower:]')
     arch=$(uname -m)
-
     case "$os" in
         linux) os="linux" ;;
         darwin) os="macos" ;;
         *) echo "Unsupported OS: $os"; exit 1 ;;
     esac
-
     case "$arch" in
         x86_64|amd64) arch="x86_64" ;;
         aarch64|arm64) arch="aarch64" ;;
         *) echo "Unsupported architecture: $arch"; exit 1 ;;
     esac
-
     echo "acts-${os}-${arch}"
 }
 
@@ -54,8 +62,6 @@ download() {
     curl -fsSL "$url" -o "${tmpdir}/acts.tar.gz"
     tar xzf "${tmpdir}/acts.tar.gz" -C "$tmpdir"
 
-    # The archive contains acts/bin/acts (release archives)
-    # or the raw binary at root level (dev builds)
     if [ -f "${tmpdir}/acts/bin/acts" ]; then
         mkdir -p "$(dirname "$dest")"
         cp "${tmpdir}/acts/bin/acts" "$dest"
@@ -71,110 +77,57 @@ download() {
     fi
 }
 
-migrate_projects() {
+install_cbm() {
     echo ""
-    echo "Checking for ACTS projects to migrate..."
-
-    # Find all .acts/acts.db files in current directory and subdirectories
-    local db_files
-    db_files=$(find . -name "acts.db" -path "*/.acts/*" 2>/dev/null || true)
-
-    # Also check parent directories up to home
-    local dir="$PWD"
-    while [ "$dir" != "/" ] && [ "$dir" != "$HOME" ]; do
-        if [ -f "$dir/.acts/acts.db" ]; then
-            db_files="${db_files:+$db_files
-}$dir/.acts/acts.db"
-        fi
-        dir=$(dirname "$dir")
-    done
-
-    if [ -z "$db_files" ]; then
-        echo "No existing ACTS projects found."
-        return 0
-    fi
-
-    local acts_bin="$1"
-    local migrated=0
-
-    while IFS= read -r db_path; do
-        local project_dir
-        project_dir=$(dirname "$(dirname "$db_path")")
-
-        # Check schema version
-        local current_version
-        current_version=$(sqlite3 "$db_path" "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1;" 2>/dev/null || echo "0")
-
-        if [ "$current_version" -lt 5 ] 2>/dev/null; then
-            echo "Migrating project at ${project_dir} (schema v${current_version} -> v5)..."
-            cd "$project_dir" && "$acts_bin" migrate && cd - > /dev/null
-            migrated=$((migrated + 1))
-        else
-            echo "Project at ${project_dir} is already up to date (schema v${current_version})."
-        fi
-    done <<< "$db_files"
-
-    if [ "$migrated" -gt 0 ]; then
-        echo ""
-        echo "Migrated ${migrated} project(s) to schema v5."
+    echo "Installing codebase-memory-mcp (cbm) via its official installer..."
+    # cbm picks its own canonical location; we just invoke its installer.
+    curl -fsSL "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh" | bash -s -- --skip-config || {
+        echo "Warning: cbm install did not complete cleanly. Run \`acts setup\` to retry."
+    }
+    local cbm
+    cbm="$(command -v codebase-memory-mcp 2>/dev/null || true)"
+    if [ -n "$cbm" ]; then
+        echo "cbm installed at: $cbm"
+    else
+        echo "cbm not found on PATH after install."
     fi
 }
 
 usage() {
     cat <<EOF
-ACTS Installer v1.2.0
+ACTS Installer v2.1.0 — global binaries (acts + cbm)
 
 Usage: install.sh [OPTIONS]
 
 Options:
-  --local          Install to ./.acts/bin/ instead of /usr/local/bin
-  --version V      Install specific version (default: latest)
-  --update         Update existing installation and migrate projects
-  --force          Overwrite existing binary
-  --no-migrate     Skip project migration (update only)
+  --with-cbm       Also install codebase-memory-mcp (cross-repo graph engine)
+  --bin-dir PATH   Install acts to PATH (default: ~/.local/bin or /usr/local/bin)
+  --version V      Install specific acts version (default: latest)
+  --force          Overwrite existing acts binary
+  --update         Update acts (and cbm with --with-cbm)
   --help           Show this help
 
 Examples:
-  install.sh                          # System-wide install
-  install.sh --local                  # Project-local install
-  install.sh --version v1.1.0         # Install specific version
-  install.sh --update                 # Update and migrate projects
+  install.sh                       # Install acts globally
+  install.sh --with-cbm            # Install acts + cbm globally
+  install.sh --update --with-cbm   # Update both
+  install.sh --bin-dir "$HOME/.local/bin"
+
+Project bootstrap (after install):
+  acts setup . --github            # Wire AGENTS.md + opencode.json + plugins
 EOF
 }
 
 main() {
     while [[ $# -gt 0 ]]; do
         case $1 in
-            --local)
-                INSTALL_DIR="$LOCAL_DIR"
-                shift
-                ;;
-            --version)
-                VERSION="$2"
-                shift 2
-                ;;
-            --update)
-                FORCE=true
-                MIGRATE=true
-                shift
-                ;;
-            --force)
-                FORCE=true
-                shift
-                ;;
-            --no-migrate)
-                MIGRATE=false
-                shift
-                ;;
-            --help|-h)
-                usage
-                exit 0
-                ;;
-            *)
-                echo "Unknown option: $1"
-                usage
-                exit 1
-                ;;
+            --with-cbm) WITH_CBM=true; shift ;;
+            --bin-dir) BIN_DIR="$2"; shift 2 ;;
+            --version) VERSION="$2"; shift 2 ;;
+            --force) FORCE=true; shift ;;
+            --update) FORCE=true; shift ;;
+            --help|-h) usage; exit 0 ;;
+            *) echo "Unknown option: $1"; usage; exit 1 ;;
         esac
     done
 
@@ -189,45 +142,28 @@ main() {
         fi
     fi
 
-    local dest="${INSTALL_DIR}/acts"
+    local dest="${BIN_DIR}/acts"
+    mkdir -p "$BIN_DIR"
 
-    # Check if already installed
     if [ -f "$dest" ] && [ "$FORCE" = false ]; then
         local current_version
-        current_version=$("$dest" version 2>/dev/null || "$dest" --version 2>/dev/null || echo "unknown")
-        echo "ACTS is already installed: ${current_version}"
+        current_version=$("$dest" version 2>/dev/null || echo "unknown")
+        echo "acts is already installed: ${current_version}"
         echo "Use --update or --force to reinstall"
-        exit 0
+    else
+        download "$platform" "$VERSION" "$dest"
+        echo "acts ${VERSION} installed to ${dest}"
     fi
 
-    # Create directory if needed
-    if [ "$INSTALL_DIR" = "$LOCAL_DIR" ]; then
-        mkdir -p "$LOCAL_DIR"
-    elif [ ! -w "$(dirname "$dest")" ]; then
-        echo "Need sudo to install to ${INSTALL_DIR}"
-        INSTALL_DIR="${HOME}/.local/bin"
-        dest="${INSTALL_DIR}/acts"
-        mkdir -p "$INSTALL_DIR"
+    if [ "$WITH_CBM" = true ]; then
+        install_cbm
     fi
 
-    download "$platform" "$VERSION" "$dest"
-
-    echo "ACTS ${VERSION} installed to ${dest}"
-
-    # Verify
-    "$dest" version 2>/dev/null || "$dest" --version 2>/dev/null || true
-
-    # Migrate existing projects
-    if [ "$MIGRATE" = true ]; then
-        migrate_projects "$dest"
-    fi
-
-    # Check if in PATH
+    echo ""
+    echo "Next: run \`acts setup\` in your project to wire AGENTS.md + opencode.json."
     if ! command -v acts &>/dev/null; then
-        echo ""
-        echo "Note: ${INSTALL_DIR} is not in your PATH"
-        echo "Add this to your shell profile:"
-        echo "  export PATH=\"${INSTALL_DIR}:\$PATH\""
+        echo "Note: ${BIN_DIR} is not in your PATH. Add it:"
+        echo "  export PATH=\"${BIN_DIR}:\$PATH\""
     fi
 }
 

@@ -184,20 +184,28 @@ For editors without plugin support, agents interact with ACTS through standard C
 
 ### Setup
 
-**1. Install the binary:**
+**1. Install the binary (globally):**
 
 ```bash
-# Build from source
-cd acts-core
-zig build release
-sudo cp zig-out/bin/acts /usr/local/bin/
+curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/master/install.sh | bash -s -- --with-cbm
+# or build from source:
+cd acts-core && zig build release
+./zig-out/bin/acts setup . --bin-dir ~/.local/bin
 ```
 
-**2. Update AGENTS.md:**
+**2. Bootstrap a project (no clone needed):**
 
-Add the ACTS v2 rules + commands (see [docs/templates/agents-minimal.md](templates/agents-minimal.md) for a full template).
+```bash
+acts setup . --github
+# wires .opencode/plugins, the acts skill + slash commands, opencode.json,
+# injects AGENTS.md, and (with --github) writes .github/workflows/opencode.yml
+```
 
-**3. Start a stack:**
+**3. Add/verify AGENTS.md:**
+
+`acts setup` injects the ACTS v2 section (rules + commands) into `AGENTS.md`. If you prefer to write it by hand, see [docs/templates/agents-minimal.md](templates/agents-minimal.md).
+
+**4. Start a stack:**
 
 ```bash
 acts stack create auth -t "Add user authentication"

@@ -6,6 +6,7 @@ const git = @import("git.zig");
 const context = @import("context.zig");
 const verify = @import("verify.zig");
 const risk = @import("risk.zig");
+const setup = @import("setup.zig");
 
 const version_str = build_options.version;
 
@@ -38,6 +39,8 @@ const usage_text =
     \\Coordination:
     \\  scope <id> <file>                       Check file ownership (derived from diffs)
     \\  validate                                Validate manifest + branch consistency
+    \\  setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>]
+    \\                                          Install binaries globally + wire a project
     \\  migrate [<story-id>]                    Import a v1 SQLite story into a v2 stack
     \\  version                                 Show version
     \\  help                                    Show this help
@@ -78,7 +81,8 @@ fn parseArgs(allocator: std.mem.Allocator, argv: []const []const u8) !Args {
     var args = Args.init(allocator);
     errdefer args.deinit();
 
-    const long_value_flags = [_][]const u8{ "--title", "--accept", "--message", "--cost", "-t", "-m" };
+    const long_value_flags = [_][]const u8{ "--title", "--accept", "--message", "--cost", "--source", "--bin-dir", "-t", "-m" };
+    const bool_flags = [_][]const u8{ "--all", "--json", "--github", "--force", "--no-install" };
     var i: usize = 0;
     while (i < argv.len) : (i += 1) {
         const a = argv[i];
@@ -97,15 +101,24 @@ fn parseArgs(allocator: std.mem.Allocator, argv: []const []const u8) !Args {
                 } else {
                     try args.flags.put(a, "");
                 }
-            } else if (std.mem.eql(u8, a, "--all") or std.mem.eql(u8, a, "--json")) {
-                try args.bool_flags.put(a, {});
-            } else if (std.mem.eql(u8, a, "-s")) {
-                if (i + 1 < argv.len) {
-                    try args.flags.put("-s", argv[i + 1]);
-                    i += 1;
-                }
             } else {
-                // unknown flag, ignore
+                var is_bool = false;
+                for (bool_flags) |f| {
+                    if (std.mem.eql(u8, a, f)) {
+                        try args.bool_flags.put(a, {});
+                        is_bool = true;
+                        break;
+                    }
+                }
+                if (is_bool) continue;
+                if (std.mem.eql(u8, a, "-s")) {
+                    if (i + 1 < argv.len) {
+                        try args.flags.put("-s", argv[i + 1]);
+                        i += 1;
+                    }
+                } else {
+                    // unknown flag, ignore
+                }
             }
         } else {
             try args.positional.append(a);
@@ -218,6 +231,9 @@ fn runCommand(allocator: std.mem.Allocator, cmd: []const u8, args: *const Args) 
     }
     if (std.mem.eql(u8, cmd, "validate")) {
         return cmdValidate(allocator);
+    }
+    if (std.mem.eql(u8, cmd, "setup")) {
+        return cmdSetup(allocator, args);
     }
     if (std.mem.eql(u8, cmd, "migrate")) {
         return cmdMigrate(allocator, args);
@@ -931,6 +947,27 @@ fn cmdValidate(allocator: std.mem.Allocator) !void {
                 }
             }
         }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// setup
+// ---------------------------------------------------------------------------
+
+fn cmdSetup(allocator: std.mem.Allocator, args: *const Args) !void {
+    const target = if (args.positional.items.len >= 1) args.positional.items[0] else ".";
+    try setup.run(allocator, .{
+        .target_dir = target,
+        .source_dir = args.flag("--source"),
+        .with_github = args.has("--github"),
+        .force = args.has("--force"),
+        .no_install = args.has("--no-install"),
+        .bin_dir = args.flag("--bin-dir") orelse "~/.local/bin",
+    });
+    try stdout("setup complete for {s}\n", .{target});
+    try stdout("  next: open a session with OpenCode — the acts skill + tools are wired.\n", .{});
+    if (!args.has("--no-install")) {
+        try stdout("  next: `acts stack create <id>` to start your first stack.\n", .{});
     }
 }
 
