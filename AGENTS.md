@@ -17,170 +17,66 @@
 
 ---
 
-## ACTS Integration
+## ACTS Integration (v2)
 
-This project uses ACTS (Agent Collaborative Tracking Standard) for multi-developer coordination.
+This project uses ACTS v2 — a **git-native coordination protocol** for agent-aided development. Git is the system of record: a *stack* is a feature (base branch), a *change* is one unit of agent work (a stacked branch + PR). Verification is the gate; context is served on demand.
 
 ### Agent Framework
 
 This project uses [superpowers](https://github.com/obra/superpowers) for agent workflow skills.
 
-**Required for all agents:**
 - Install superpowers plugin for your platform before starting work
-- Skills auto-activate: brainstorming, TDD, subagent-driven-development, code review
-- ACTS handles multi-developer coordination (state, handoffs, file ownership)
+- Skills auto-activate: brainstorming, TDD, subagent-driven-development, code review, acts
+- ACTS handles coordination (branch stacks, verification gates, durable context, PR review, cross-repo impact)
 - Superpowers handles single-developer agent quality (TDD, planning, code review, debugging)
 
 ### Rules
-- Agent MUST read state before writing code: `acts state read`
-- Agent MUST NOT modify files owned by completed tasks: `acts scope check --task <id> --file <path>`
-- Agent MUST record session summary before ending
-- Agent MUST stay within assigned task boundary
-- Agent MUST get developer approval before committing
-- Agent MUST run code review before task completion (v1.0.0)
+- Agent MUST load context before writing code: `acts context <change>`
+- Agent MUST NOT submit a change for review until `acts verify <change>` passes
+- Agent MUST record a session note + checkpoint before ending: `acts note` / `acts checkpoint`
+- Agent MUST stay within the change's scope: `acts scope <change> <file>`
+- Agent MUST get developer approval on the PR before `acts approve` / `acts stack land`
+- Agent MUST run `acts validate` before finishing
+
+### ACTS v2 Commands
+- `acts stack create <id> [-t <title>]` — Start a new stack (base branch + manifest)
+- `acts stack status [--json]` — Show stack tree + change statuses
+- `acts stack land` — Merge APPROVED changes bottom-up
+- `acts change add <id> -t <title> [--accept <criteria>]` — Add a change on top of the stack
+- `acts change status [<id>]` — Show change details
+- `acts verify [<id>] [--all]` — Run quality gates; record evidence (GATE for review)
+- `acts review <id>` — Submit stacked PR (requires verify to pass)
+- `acts approve <id>` — Mark approved after human PR review
+- `acts rework <id>` — Reopen for rework (clears approval)
+- `acts context [<id>]` — Emit scoped context pack (durable task state)
+- `acts note <id> -m <text>` — Append a session note
+- `acts checkpoint <id> -s <summary>` — Record a status checkpoint
+- `acts redirect <id> --accept <criteria>` — Update scope mid-flight without context loss
+- `acts scope <id> <file>` — Check file ownership (derived from diffs)
+- `acts migrate [<story-id>]` — Import a v1 SQLite story into a v2 stack (reads `.acts/acts.db` via `sqlite3`)
+- `acts validate` — Validate manifest + branch consistency
+
+Status Values: TODO, IN_PROGRESS, VERIFIED, IN_REVIEW, APPROVED, MERGED
 
 ### Review Workflow
+1. Agent implements on the change branch (loaded via `acts context`).
+2. `acts verify <change>` runs quality gates; a change CANNOT be reviewed until verify passes.
+3. `acts review <change>` submits a stacked PR (via `gh`), body = rationale + verification evidence + acceptance criteria.
+4. Human reviews on GitHub PR UI → `acts approve <change>`.
+5. `acts stack land` merges approved changes bottom-up.
+6. Agent records `acts note` + `acts checkpoint`, then `acts validate`.
 
-```bash
-# 1. Agent completes implementation
-# ... writes code ...
-
-# 2. Agent creates review context with rationale (optional but recommended)
-cat > .acts/reviews/T1-context.json << 'EOF'
-{
-  "version": 1,
-  "summary": "Replaced tmux with hunk daemon for cleaner UX",
-  "files": [
-    {
-      "path": "src/main.zig",
-      "summary": "Added daemon spawning and session seeding",
-      "annotations": [
-        {
-          "newRange": [354, 397],
-          "summary": "Three new daemon management functions",
-          "rationale": "spawnHunkDaemon starts the broker, seedHunkSession registers a session, killHunkDaemon cleans up"
-        }
-      ]
-    }
-  ]
-}
-EOF
-
-# 3. Agent launches review (auto-detects context file)
-acts review T1
-#   → If TTY: opens hunk diff interactively
-#   → If no TTY: starts daemon, exports artifact, polls for approval
-
-# 4. Human reviews in hunk, then approves:
-acts approve T1
-
-# 5. Agent marks task done
-acts task update T1 --status DONE
-```
-
-### Conversational Review (non-TTY)
-
-When running in an agent context without a TTY (e.g. OpenCode subagent):
-
-```bash
-# Same context file setup as above (optional)
-
-# Agent gathers review data as JSON:
-acts gather-review T1
-
-# Agent parses JSON and drives per-file review via chat:
-#   - Presents each file with hunk lines
-#   - Uses question tool to ask "Approve this file?"
-#   - Collects per-file decisions from human
-
-# On full approval:
-acts approve T1
-
-# On changes requested:
-acts reject T1 --reason "add missing test for login handler"
-```
-
-### ACTS Binary Commands
-- `acts init <story-id>` — Initialize new ACTS story
-- `acts state read` — Read current story state
-- `acts state write --story <id>` — Update story state (JSON from stdin)
-- `acts task get <task-id>` — Get task details
-- `acts task update <id> --status <status>` — Update task status (enforces gates)
-- `acts review <task-id>` — Interactive code review with hunk
-- `acts gather-review <task-id>` — Emit structured JSON for conversational review (no TUI)
-- `acts approve <task-id>` — Approve task-review gate (shorthand)
-- `acts reject <task-id>` — Request changes on task-review gate (shorthand)
-- `acts gate add --task <id> --type <type> --status <status>` — Add gate checkpoint
-- `acts ownership map` — Show file ownership
-- `acts scope check --task <id> --file <path>` — Check if file is safe to modify
-- `acts validate` — Validate entire ACTS project
-- `acts migrate` — Force schema migration
-
-### Agent Configuration
-```json
-{
-  "tool": "Cursor",
-  "version": "0.45.0",
-  "model": "claude-3.5-sonnet",
-  "cost_limit_per_session": 10.00,
-  "config_preset": "default-ruleset"
-}
-```
-
-### OpenCode Plugin
-The ACTS OpenCode plugin is installed at `.opencode/plugins/acts.js`.
-Add `"./.opencode/plugins/acts.js"` to your `opencode.json` plugin array.
-
-### ACTS Mode (Plugin)
-
-The OpenCode plugin supports three modes:
-
-| Mode | Behavior |
-|------|----------|
-| `off` | No ACTS context injection. Use when ACTS is not relevant to the conversation. |
-| `on` | Full context injection: story state, active tasks, file ownership, approved overrides. |
-| `strict` | All of `on` plus enforcement language. Agent MUST follow gate protocol explicitly. |
-
-**Commands:**
-- `acts_mode enter [--level strict]` — Activate ACTS mode
-- `acts_mode exit` — Deactivate ACTS mode
-- `acts_mode status` — Show current mode
-
-**When to use strict mode:**
-- Multi-developer projects with concurrent agents
-- High-risk changes (production code, infrastructure)
-- When gate violations have been observed
-
-### File Override Protocol
-
-Files owned by **DONE** tasks are locked by default. To modify a locked file:
-
-**1. Agent requests override:**
-```
-acts_override request --file src/locked.ts --task T3 --reason "bugfix: null pointer"
-```
-
-**2. Human developer MUST approve:**
-```
-acts_override approve --override_id ovr-abc123
-```
-*Or edit `.acts/override-approvals.json` manually.*
-
-**3. Agent verifies approval:**
-```
-acts_override check --override_id ovr-abc123
-```
-
-**Rules:**
-- AI agents MUST NEVER approve their own override requests.
-- Overrides expire after 24 hours.
-- All approvals are logged in `.acts/override-approvals.json` for audit.
-- Without approval, the agent MUST NOT modify the file.
+### Design Links (Zeplin)
+When a Zeplin link is given, extract the API contract before planning:
+- `acts_zeplin <url>` (plugin tool) or `node acts-zeplin-contract.mjs --flow <url>` / `--scenario <url>`
+- Feed inferred endpoints + fields into change `--accept` criteria; sequence changes along the flow path.
+- Requires `ZEPLIN_ACCESS_TOKEN` (env or opencode.json `mcp.zeplin.environment`).
 
 ### Data Storage
-- Structured state (stories, tasks, gates, decisions): SQLite at `.acts/acts.db`
-- Narratives: Markdown files
-- `.story/state.json`: REMOVED (replaced by SQLite)
+- Coordination state: `.acts/stack.json` (git-committed manifest, diffable)
+- Code truth: git branches/PRs (no sidecar database)
+- Session notes: `.acts/changes/<id>/notes/*.md`
+- Cross-repo knowledge graph: `.acts/cbm/` (gitignored)
 
 ---
 

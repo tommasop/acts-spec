@@ -1,6 +1,12 @@
 {
   "manifest_version": "1.2.0",
   "conformance_level": "strict",
+  "quality_gate": {
+    "test": "npm test && cd acts-core && zig build test",
+    "lint": "node --check .opencode/plugins/acts.js && node --check .opencode/plugins/cbm.js",
+    "typecheck": null,
+    "build": "cd acts-core && zig build"
+  },
   "agent_framework": {
     "enabled": true,
     "name": "superpowers",

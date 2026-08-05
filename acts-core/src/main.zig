@@ -1,2150 +1,1083 @@
 const std = @import("std");
-const cli = @import("cli.zig");
-const db = @import("db.zig");
 const build_options = @import("build_options");
-const compress = @import("compress.zig");
 
-const c = @cImport({
-    @cInclude("sqlite3.h");
-});
+const stack = @import("stack.zig");
+const git = @import("git.zig");
+const context = @import("context.zig");
+const verify = @import("verify.zig");
+
+const version_str = build_options.version;
+
+const usage_text =
+    \\ACTS v2.0 — Git-native coordination protocol
+    \\
+    \\Usage: acts <command> [args]
+    \\
+    \\Stack lifecycle:
+    \\  stack create <id> [-t <title>]          Start a new stack (base branch + manifest)
+    \\  stack status                            Show stack and change status tree
+    \\  stack land                              Merge approved changes bottom-up
+    \\
+    \\Change lifecycle:
+    \\  change add <id> -t <title> [--accept <criteria>]
+    \\                                          Add a change (branch) on top of the stack
+    \\  change status [<id>]                    Show change details
+    \\  verify [<id>] [--all]                   Run quality gates, record evidence
+    \\  review <id>                             Submit stacked PR (requires verify to pass)
+    \\  approve <id>                            Mark change approved (after human PR review)
+    \\  rework <id>                             Reopen for rework (clears approval)
+    \\
+    \\Context continuity:
+    \\  context [<id>]                          Emit scoped context pack for a change
+    \\  note <id> -m <text>                     Append a session note
+    \\  checkpoint <id> -s <summary>            Record a status checkpoint
+    \\  redirect <id> --accept <criteria>       Update scope mid-flight without context loss
+    \\
+    \\Coordination:
+    \\  scope <id> <file>                       Check file ownership (derived from diffs)
+    \\  validate                                Validate manifest + branch consistency
+    \\  migrate [<story-id>]                    Import a v1 SQLite story into a v2 stack
+    \\  version                                 Show version
+    \\  help                                    Show this help
+    \\
+;
+
+const Args = struct {
+    allocator: std.mem.Allocator,
+    positional: std.ArrayList([]const u8),
+    flags: std.StringHashMap([]const u8),
+    bool_flags: std.StringHashMap(void),
+
+    fn init(allocator: std.mem.Allocator) Args {
+        return .{
+            .allocator = allocator,
+            .positional = std.ArrayList([]const u8).init(allocator),
+            .flags = std.StringHashMap([]const u8).init(allocator),
+            .bool_flags = std.StringHashMap(void).init(allocator),
+        };
+    }
+
+    fn deinit(self: *Args) void {
+        self.positional.deinit();
+        self.flags.deinit();
+        self.bool_flags.deinit();
+    }
+
+    fn flag(self: *const Args, name: []const u8) ?[]const u8 {
+        return self.flags.get(name);
+    }
+
+    fn has(self: *const Args, name: []const u8) bool {
+        return self.bool_flags.contains(name);
+    }
+};
+
+fn parseArgs(allocator: std.mem.Allocator, argv: []const []const u8) !Args {
+    var args = Args.init(allocator);
+    errdefer args.deinit();
+
+    const long_value_flags = [_][]const u8{ "--title", "--accept", "--message", "-t", "-m" };
+    var i: usize = 0;
+    while (i < argv.len) : (i += 1) {
+        const a = argv[i];
+        if (a.len > 0 and a[0] == '-') {
+            var is_value = false;
+            for (long_value_flags) |f| {
+                if (std.mem.eql(u8, a, f)) {
+                    is_value = true;
+                    break;
+                }
+            }
+            if (is_value) {
+                if (i + 1 < argv.len) {
+                    try args.flags.put(a, argv[i + 1]);
+                    i += 1;
+                } else {
+                    try args.flags.put(a, "");
+                }
+            } else if (std.mem.eql(u8, a, "--all") or std.mem.eql(u8, a, "--json")) {
+                try args.bool_flags.put(a, {});
+            } else if (std.mem.eql(u8, a, "-s")) {
+                if (i + 1 < argv.len) {
+                    try args.flags.put("-s", argv[i + 1]);
+                    i += 1;
+                }
+            } else {
+                // unknown flag, ignore
+            }
+        } else {
+            try args.positional.append(a);
+        }
+    }
+    return args;
+}
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
-    defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
-    const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
+    const argv = try std.process.argsAlloc(allocator);
+    defer std.process.argsFree(allocator, argv);
 
-    if (args.len < 2) {
-        try printUsage();
-        std.process.exit(1);
+    if (argv.len < 2) {
+        try stdout("{s}", .{usage_text});
+        std.process.exit(0);
     }
 
-    const command = args[1];
-    const cmd_args = args[2..];
-
-    if (std.mem.eql(u8, command, "init")) {
-        try handleInit(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "state")) {
-        try handleState(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "task")) {
-        try handleTask(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "review")) {
-        try handleReview(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "gather-review")) {
-        try handleGatherReview(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "approve")) {
-        try handleApprove(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "reject")) {
-        try handleReject(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "gate")) {
-        try handleGate(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "decision")) {
-        try handleDecision(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "approach")) {
-        try handleApproach(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "question")) {
-        try handleQuestion(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "ownership")) {
-        try handleOwnership(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "scope")) {
-        try handleScope(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "session")) {
-        try handleSession(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "operation")) {
-        try handleOperation(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "validate")) {
-        try handleValidate(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "migrate")) {
-        try handleMigrate(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "story")) {
-        try handleStory(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "db")) {
-        try handleDb(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "presence")) {
-        try handlePresence(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "unblock")) {
-        try handleUnblock(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "review-queue")) {
-        try handleReviewQueue(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "gate-sla")) {
-        try handleGateSla(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "changelog")) {
-        try handleChangelog(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "override")) {
-        try handleOverride(allocator, cmd_args);
-    } else if (std.mem.eql(u8, command, "version") or std.mem.eql(u8, command, "--version") or std.mem.eql(u8, command, "-v")) {
-        try printVersion();
-    } else if (std.mem.eql(u8, command, "help") or std.mem.eql(u8, command, "--help") or std.mem.eql(u8, command, "-h")) {
-        try printUsage();
-    } else {
-        std.debug.print("Unknown command: {s}\n", .{command});
-        try printUsage();
-        std.process.exit(1);
+    const cmd = argv[1];
+    if (std.mem.eql(u8, cmd, "help") or std.mem.eql(u8, cmd, "--help") or std.mem.eql(u8, cmd, "-h")) {
+        try stdout("{s}", .{usage_text});
+        std.process.exit(0);
     }
-}
+    if (std.mem.eql(u8, cmd, "version") or std.mem.eql(u8, cmd, "--version")) {
+        try stdout("acts {s}\n", .{version_str});
+        std.process.exit(0);
+    }
 
-fn printUsage() !void {
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("ACTS Core {s} - Agent Collaborative Tracking Standard\n", .{build_options.version});
-    try stdout.writeAll(
-        \\
-        \\Usage: acts <command> [options]
-        \\
-        \\Story Management:
-        \\  init <story-id>              Initialize a new ACTS story
-        \\  story create <id>            Create story with worktree
-        \\    --title "..."                Story title
-        \\    --from <branch>              Base branch (default: main)
-        \\    --parent <story-id>          Parent story (optional)
-        \\  story list                   List all stories
-        \\    --include-archived           Show archived stories
-        \\    --include-maintenance        Show maintenance story
-        \\  story switch <id>            Switch active story
-        \\  story archive <id>           Archive a completed story
-        \\  story merge <id>             Merge story into target branch
-        \\    --into <branch>              Target branch (default: main)
-        \\    --semver <version>           Override computed semver
-        \\  story graph                  Show story dependency graph
-        \\    --format json|dot            Output format (default: json)
-        \\  story rules <subcommand>     Manage story rules
-        \\    import <file.md>             Import rules from markdown file
-        \\    show                         Show parsed rule sections
-        \\    toggle <id>                  Toggle rule section enabled/disabled
-        \\    add-section --heading "..."   Add rule section manually
-        \\      --content "..."             Rule content (required)
-        \\    update <id>                  Update rule section
-        \\      --heading "..."             New heading (optional)
-        \\      --content "..."             New content (optional)
-        \\
-        \\State:
-        \\  state read [--story <id>]    Read story state
-        \\    --format json|pretty|table   Output format (default: json)
-        \\  state write --story <id>     Write story state from stdin JSON
-        \\
-        \\Tasks:
-        \\  task create <id>             Create a new task
-        \\    --title "..."                Task title (required)
-        \\    --story <id>                 Story (default: __maintenance__)
-        \\    --description "..."          Task description
-        \\    --labels "a,b"               JSON labels array
-        \\  task get <id>                Get task details
-        \\  task list                    List tasks
-        \\    --story <id>                 Filter by story
-        \\    --maintenance                Show maintenance tasks only
-        \\    --status <status>            Filter by status
-        \\  task update <id>             Update task status
-        \\    --status <status>            Set status
-        \\    --assigned-to <name>         Set assignee
-        \\  task move <id>               Move task to another story
-        \\    --to <story-id>              Target story (required)
-        \\
-        \\Review:
-        \\  review <task-id>             Review task changes (enhanced HRE with vim navigation)
-        \\  approve <task-id>            Approve task-review gate
-        \\  reject <task-id>             Request changes on task-review gate
-        \\
-        \\Gates:
-        \\  gate add --task <id>         Add gate checkpoint
-        \\    --type <type>                Gate type
-        \\    --status <status>            Status
-        \\    --by <name>                  Who approved
-        \\  gate list --task <id>        List gate checkpoints
-        \\  gate-sla                     Show gate SLA status
-        \\    --breached                   Show only breached SLAs
-        \\
-        \\Decisions & Learnings:
-        \\  decision add                 Record decision from stdin JSON
-        \\  decision list --task <id>    List decisions
-        \\  approach add --rejected      Record rejected approach
-        \\  question add                 Add open question
-        \\  question resolve <id>        Resolve question
-        \\
-        \\Ownership & Scope:
-        \\  ownership map                Show file ownership
-        \\  scope check --task <id>      Check file scope
-        \\    --file <path>                File to check
-        \\
-        \\Proactive Signals:
-        \\  presence set                 Set agent presence
-        \\    --agent <id>                 Agent ID
-        \\    --task <id>                  Current task
-        \\    --action "..."               Current action
-        \\  presence list                Show active agents
-        \\  unblock list                 Show unblock events
-        \\    --acknowledged               Show acknowledged only
-        \\  unblock ack <id>             Acknowledge unblock event
-        \\  review-queue                 Show review queue
-        \\    --story <id>                 Filter by story
-        \\
-        \\Changelog:
-        \\  changelog --story <id>       Generate changelog from story data
-        \\    --format md|json             Output format (default: md)
-        \\
-        \\Overrides (human-only):
-        \\  override request               Request file override
-        \\    --file <path>                  File to override (required)
-        \\    --task <id>                    Requesting task (required)
-        \\    --reason "..."                 Reason (required)
-        \\  override approve <id>        Approve override (human only)
-        \\    --by <name>                    Human approver name (required)
-        \\  override reject <id>         Reject override
-        \\  override list [--pending]    List overrides
-        \\
-        \\Database:
-        \\  db checkpoint                Run WAL checkpoint
-        \\  db status                    Show database status
-        \\
-        \\Sessions:
-        \\  session parse <file.md>      Parse session markdown
-        \\  session validate <file.md>   Validate session
-        \\  session list --task <id>     List sessions for task
-        \\
-        \\Operations:
-        \\  operation log --id <op>      Log operation
-        \\  operation list [--task <id>] List operations
-        \\  operation show <id>          Show operation details
-        \\
-        \\Validation:
-        \\  validate                     Validate entire project
-        \\  migrate                      Force schema migration
-        \\  version                      Show version
-        \\
-    );
-}
+    var args = try parseArgs(allocator, argv[2..]);
+    defer args.deinit();
 
-fn printVersion() !void {
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("acts {s}\n", .{build_options.version});
-}
-
-// ============================================================
-// Story resolution (implicit --story from env/symlink/cwd)
-// ============================================================
-
-fn resolveStoryId(allocator: std.mem.Allocator, database: *db.Database, explicit: ?[]const u8) ![]const u8 {
-    if (explicit) |id| return try allocator.dupe(u8, id);
-    const env_story = std.process.getEnvVarOwned(allocator, "ACTS_STORY") catch null;
-    if (env_story) |env| return env;
-
-    // Try .acts/current symlink
-    var link_buf: [4096]u8 = undefined;
-    const link = std.fs.cwd().readLink(".acts/current", &link_buf) catch |err| {
-        if (err == error.FileNotFound or err == error.SymLinkInvalid) {
-            // Check if single story in DB
-            return try getSingleStoryId(allocator, database);
-        }
-        return err;
+    const run_result = runCommand(allocator, cmd, &args);
+    run_result catch |err| {
+        try stderr("acts: error: {s}\n", .{@errorName(err)});
+        std.process.exit(1);
     };
-    const basename = std.fs.path.basename(link);
-    return try allocator.dupe(u8, basename);
 }
 
-fn getSingleStoryId(allocator: std.mem.Allocator, database: *db.Database) ![]const u8 {
-    var stmt: ?*c.sqlite3_stmt = null;
-    const rc = c.sqlite3_prepare_v2(database.db, "SELECT id FROM stories WHERE id != '__maintenance__' AND status != 'ARCHIVED'", -1, &stmt, null);
-    if (rc != c.SQLITE_OK) return error.QueryFailed;
-    defer _ = c.sqlite3_finalize(stmt);
-
-    const first = c.sqlite3_step(stmt) == c.SQLITE_ROW;
-    const id1 = if (first) try allocator.dupe(u8, std.mem.span(c.sqlite3_column_text(stmt, 0))) else null;
-    const second = c.sqlite3_step(stmt) == c.SQLITE_ROW;
-
-    if (id1) |id| {
-        if (!second) return id; // Exactly one story
-        allocator.free(id);
+fn runCommand(allocator: std.mem.Allocator, cmd: []const u8, args: *const Args) !void {
+    if (std.mem.eql(u8, cmd, "stack")) {
+        if (args.positional.items.len < 1) return error.MissingSubcommand;
+        const sub = args.positional.items[0];
+        if (std.mem.eql(u8, sub, "create")) {
+            if (args.positional.items.len < 2) return error.MissingStackId;
+            return cmdStackCreate(allocator, args.positional.items[1], args);
+        } else if (std.mem.eql(u8, sub, "status")) {
+            return cmdStackStatus(allocator, args);
+        } else if (std.mem.eql(u8, sub, "land")) {
+            return cmdStackLand(allocator);
+        }
+        return error.UnknownSubcommand;
     }
-    return error.NoActiveStory;
+    if (std.mem.eql(u8, cmd, "change")) {
+        if (args.positional.items.len < 1) return error.MissingSubcommand;
+        const sub = args.positional.items[0];
+        if (std.mem.eql(u8, sub, "add")) {
+            if (args.positional.items.len < 2) return error.MissingChangeId;
+            return cmdChangeAdd(allocator, args.positional.items[1], args);
+        } else if (std.mem.eql(u8, sub, "status")) {
+            const id = if (args.positional.items.len >= 2) args.positional.items[1] else null;
+            return cmdChangeStatus(allocator, id);
+        }
+        return error.UnknownSubcommand;
+    }
+    if (std.mem.eql(u8, cmd, "verify")) {
+        const id = if (args.positional.items.len >= 1) args.positional.items[0] else null;
+        return cmdVerify(allocator, id, args.has("--all"));
+    }
+    if (std.mem.eql(u8, cmd, "review")) {
+        if (args.positional.items.len < 1) return error.MissingChangeId;
+        return cmdReview(allocator, args.positional.items[0]);
+    }
+    if (std.mem.eql(u8, cmd, "approve")) {
+        if (args.positional.items.len < 1) return error.MissingChangeId;
+        return cmdApprove(allocator, args.positional.items[0]);
+    }
+    if (std.mem.eql(u8, cmd, "rework")) {
+        if (args.positional.items.len < 1) return error.MissingChangeId;
+        return cmdRework(allocator, args.positional.items[0]);
+    }
+    if (std.mem.eql(u8, cmd, "context")) {
+        const id = if (args.positional.items.len >= 1) args.positional.items[0] else null;
+        return cmdContext(allocator, id);
+    }
+    if (std.mem.eql(u8, cmd, "note")) {
+        if (args.positional.items.len < 1) return error.MissingChangeId;
+        const msg = args.flag("-m") orelse return error.MissingMessage;
+        return cmdNote(allocator, args.positional.items[0], msg);
+    }
+    if (std.mem.eql(u8, cmd, "checkpoint")) {
+        if (args.positional.items.len < 1) return error.MissingChangeId;
+        const summary = args.flag("-s") orelse return error.MissingSummary;
+        return cmdCheckpoint(allocator, args.positional.items[0], summary);
+    }
+    if (std.mem.eql(u8, cmd, "redirect")) {
+        if (args.positional.items.len < 1) return error.MissingChangeId;
+        const accept = args.flag("--accept") orelse return error.MissingAcceptance;
+        return cmdRedirect(allocator, args.positional.items[0], accept);
+    }
+    if (std.mem.eql(u8, cmd, "scope")) {
+        if (args.positional.items.len < 2) return error.MissingScopeArgs;
+        return cmdScope(allocator, args.positional.items[0], args.positional.items[1]);
+    }
+    if (std.mem.eql(u8, cmd, "validate")) {
+        return cmdValidate(allocator);
+    }
+    if (std.mem.eql(u8, cmd, "migrate")) {
+        return cmdMigrate(allocator, args);
+    }
+    return error.UnknownCommand;
 }
 
-// ============================================================
-// Init
-// ============================================================
+// ---------------------------------------------------------------------------
+// Commands
+// ---------------------------------------------------------------------------
 
-fn handleInit(_: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts init <story-id> [--title \"...\"]\n", .{});
-        std.process.exit(1);
+fn cmdStackCreate(allocator: std.mem.Allocator, id: []const u8, args: *const Args) !void {
+    if (!git.isGitRepo(allocator)) return error.NotGitRepo;
+    if (!validId(id)) return error.InvalidStackId;
+    if (stack.manifestExists()) return error.StackAlreadyExists;
+
+    const title = args.flag("--title") orelse args.flag("-t") orelse id;
+    const base_branch = try std.fmt.allocPrint(allocator, "acts/{s}/base", .{id});
+
+    // Create the base branch from current HEAD
+    const res = try git.createBranch(allocator, base_branch, "");
+    if (res.exit_code != 0) {
+        try stderr("git: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
+        return error.BranchConflict;
     }
-    const story_id = args[0];
-    var title: ?[]const u8 = null;
 
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--title") and i + 1 < args.len) {
-            title = args[i + 1];
-            i += 1;
-        }
-    }
+    var root = std.json.ObjectMap.init(allocator);
+    try root.put("version", .{ .integer = 2 });
+    try root.put("id", .{ .string = id });
+    try root.put("title", .{ .string = title });
+    try root.put("base_branch", .{ .string = base_branch });
+    try root.put("changes", .{ .array = std.json.Array.init(allocator) });
 
-    try std.fs.cwd().makePath(".acts");
-    try std.fs.cwd().makePath(".story/sessions");
-    try std.fs.cwd().makePath(".story/tasks");
+    try stack.save(allocator, .{ .object = root });
 
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-
-    try database.migrate();
-    try database.initStory(story_id, title orelse story_id);
-
-    const plan_file = try std.fs.cwd().createFile(".story/plan.md", .{});
-    defer plan_file.close();
-    try plan_file.writeAll("# Plan\n\n## Overview\n\n[Story overview]\n\n## Tasks\n\n");
-
-    const spec_file = try std.fs.cwd().createFile(".story/spec.md", .{});
-    defer spec_file.close();
-    try spec_file.writeAll("# Specification\n\n## Overview\n\n[Story specification]\n\n## Acceptance Criteria\n\n");
-
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("Initialized ACTS story: {s}\n", .{story_id});
-    try stdout.print("Database: {s}\n", .{db_path});
-    try stdout.writeAll("Created: .story/plan.md, .story/spec.md, .story/sessions/\n");
+    try stdout("stack {s} created on branch {s}\n", .{ id, base_branch });
+    try stdout("  next: acts change add c1 -t \"<title>\" --accept \"<criteria>\"\n", .{});
 }
 
-// ============================================================
-// State
-// ============================================================
+fn cmdStackStatus(allocator: std.mem.Allocator, args: *const Args) !void {
+    var parsed = try stack.load(allocator);
+    defer parsed.deinit();
+    const v = parsed.value;
 
-fn handleState(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts state <read|write> [options]\n", .{});
-        std.process.exit(1);
+    const root = &v.object;
+    const sid = if (root.get("id")) |s| if (s == .string) s.string else "" else "";
+    const stitle = if (root.get("title")) |s| if (s == .string) s.string else "" else "";
+    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
+
+    try stdout("Stack: {s} — {s} (base: {s})\n", .{ sid, stitle, base });
+
+    const changes = root.get("changes") orelse return;
+    if (changes != .array) return;
+    var idx: usize = 0;
+    for (changes.array.items) |*c| {
+        if (c.* != .object) continue;
+        const m = &c.*.object;
+        const cid = if (m.get("id")) |s| if (s == .string) s.string else "" else "";
+        const ctitle = if (m.get("title")) |s| if (s == .string) s.string else "" else "";
+        const cstatus = if (m.get("status")) |s| if (s == .string) s.string else "" else "";
+        const marker: []const u8 = if (cstatus.len == 0) "  " else cstatus;
+        try stdout("  {s} {s}  {s}\n", .{ if (idx == 0) "└" else "├", marker, ctitle });
+        _ = cid;
+        idx += 1;
     }
-
-    const subcommand = args[0];
-    var story_id: ?[]const u8 = null;
-    var format: []const u8 = "json";
-
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--story") and i + 1 < args.len) {
-            story_id = args[i + 1];
-            i += 1;
-        } else if (std.mem.eql(u8, args[i], "--format") and i + 1 < args.len) {
-            format = args[i + 1];
-            i += 1;
-        }
+    if (args.has("--json")) {
+        var buf = std.ArrayList(u8).init(allocator);
+        defer buf.deinit();
+        try std.json.stringify(v, .{ .whitespace = .indent_2 }, buf.writer());
+        try stdout("{s}\n", .{buf.items});
     }
+}
 
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
+fn cmdStackLand(allocator: std.mem.Allocator) !void {
+    var parsed = try stack.load(allocator);
+    defer parsed.deinit();
+    const v = parsed.value;
+    const root = &v.object;
 
-    if (std.mem.eql(u8, subcommand, "read")) {
-        const state = try database.readState(allocator, story_id);
-        defer allocator.free(state);
-        const stdout = std.io.getStdOut().writer();
+    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
+    if (base.len == 0) return error.ManifestInvalid;
 
-        if (std.mem.eql(u8, format, "json")) {
-            try stdout.writeAll(state);
-            try stdout.writeAll("\n");
-        } else if (std.mem.eql(u8, format, "pretty")) {
-            const pretty = try prettyPrintJson(allocator, state);
-            defer allocator.free(pretty);
-            try stdout.writeAll(pretty);
-            try stdout.writeAll("\n");
-        } else if (std.mem.eql(u8, format, "table")) {
-            try printStateTable(stdout, allocator, state);
-        } else {
-            std.debug.print("Unknown format: {s}. Use json, pretty, or table.\n", .{format});
-            std.process.exit(1);
+    const changes = root.get("changes") orelse return error.ManifestInvalid;
+    if (changes != .array) return error.ManifestInvalid;
+
+    var landed_any = false;
+    for (changes.array.items) |*c| {
+        if (c.* != .object) continue;
+        const m = &c.*.object;
+        const cid = if (m.get("id")) |s| if (s == .string) s.string else "" else "";
+        const cstatus = if (m.get("status")) |s| if (s == .string) s.string else "" else "";
+        const cbranch = if (m.get("branch")) |s| if (s == .string) s.string else "" else "";
+
+        if (std.mem.eql(u8, cstatus, stack.status_merged)) continue;
+        if (!std.mem.eql(u8, cstatus, stack.status_approved)) {
+            try stdout("skip {s}: status is {s} (need APPROVED)\n", .{ cid, cstatus });
+            continue;
         }
-    } else if (std.mem.eql(u8, subcommand, "write")) {
-        if (story_id == null) {
-            std.debug.print("Usage: acts state write --story <id> (reads JSON from stdin)\n", .{});
-            std.process.exit(1);
+        // Merge the change branch into the base branch
+        _ = try git.checkoutBranch(allocator, base);
+        const mr = try git.run(allocator, &.{ "git", "merge", "--no-ff", cbranch, "-m", try std.fmt.allocPrint(allocator, "acts: land {s}", .{cid}) }, 8192);
+        if (mr.exit_code != 0) {
+            try stderr("merge failed for {s}: {s}\n", .{ cid, std.mem.trim(u8, mr.stderr, " \n\r") });
+            return error.MergeFailed;
         }
-        const stdin = std.io.getStdIn().reader();
-        const input = try stdin.readAllAlloc(allocator, 1024 * 1024);
-        defer allocator.free(input);
-        try database.writeState(allocator, story_id.?, input);
+        _ = try stack.setChangeString(v, cid, "status", stack.status_merged);
+        try stdout("landed {s}\n", .{cid});
+        landed_any = true;
+    }
+    if (landed_any) {
+        try stack.save(allocator, v);
     } else {
-        std.debug.print("Unknown state subcommand: {s}\n", .{subcommand});
-        std.process.exit(1);
+        try stdout("nothing to land (no APPROVED changes)\n", .{});
     }
 }
 
-// ============================================================
-// State formatting helpers
-// ============================================================
-
-fn prettyPrintJson(allocator: std.mem.Allocator, json: []const u8) ![]u8 {
-    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+fn cmdChangeAdd(allocator: std.mem.Allocator, id: []const u8, args: *const Args) !void {
+    if (!validId(id)) return error.InvalidChangeId;
+    var parsed = try stack.load(allocator);
     defer parsed.deinit();
+    const v = parsed.value;
 
-    var out = std.ArrayList(u8).init(allocator);
-    errdefer out.deinit();
+    if (stack.getChange(v, id) != null) return error.ChangeExists;
 
-    try std.json.stringify(parsed.value, .{ .whitespace = .indent_2 }, out.writer());
+    const title = args.flag("--title") orelse args.flag("-t") orelse return error.MissingTitle;
+    const root = &v.object;
+    const sid = if (root.get("id")) |s| if (s == .string) s.string else "" else "";
+    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
 
-    return out.toOwnedSlice();
+    // Determine parent: current top of stack (or base if none)
+    const parent = stack.topChange(v);
+    const parent_branch = if (parent) |p| blk: {
+        const pm = stack.getChange(v, p) orelse break :blk base;
+        if (pm.get("branch")) |b| if (b == .string) break :blk b.string;
+        break :blk base;
+    } else base;
+
+    const changes = root.get("changes").?.array.items.len;
+    const slug = try slugify(allocator, title);
+    const branch = try std.fmt.allocPrint(allocator, "acts/{s}/c{d}-{s}", .{ sid, changes + 1, slug });
+
+    const res = try git.createBranch(allocator, branch, parent_branch);
+    if (res.exit_code != 0) {
+        try stderr("git: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
+        return error.BranchConflict;
+    }
+
+    // Build the change entry
+    var entry = std.json.ObjectMap.init(allocator);
+    try entry.put("id", .{ .string = id });
+    try entry.put("title", .{ .string = title });
+    try entry.put("branch", .{ .string = branch });
+    if (parent) |p| {
+        try entry.put("parent", .{ .string = p });
+    } else {
+        try entry.put("parent", .null);
+    }
+    try entry.put("status", .{ .string = stack.status_todo });
+
+    // Acceptance criteria (split on newlines if --accept given)
+    var acceptance = std.json.Array.init(allocator);
+    if (args.flag("--accept")) |accept_raw| {
+        try appendAcceptance(allocator, &acceptance, accept_raw);
+    }
+    try entry.put("acceptance", .{ .array = acceptance });
+    try entry.put("verify", .{ .object = std.json.ObjectMap.init(allocator) });
+    try entry.put("notes", .{ .array = std.json.Array.init(allocator) });
+    try entry.put("checkpoint", .null);
+
+    var pr = std.json.ObjectMap.init(allocator);
+    try pr.put("url", .null);
+    try pr.put("approved", .{ .bool = false });
+    try entry.put("pr", .{ .object = pr });
+
+    const changes_arr = root.getPtr("changes").?;
+    try changes_arr.array.append(.{ .object = entry });
+
+    try stack.save(allocator, v);
+    try stdout("change {s} added on branch {s} (parent: {s})\n", .{ id, branch, if (parent) |p| p else base });
 }
 
-fn printStateTable(writer: anytype, allocator: std.mem.Allocator, json: []const u8) !void {
-    const parsed = try std.json.parseFromSlice(std.json.Value, allocator, json, .{});
+fn cmdChangeStatus(allocator: std.mem.Allocator, id_arg: ?[]const u8) !void {
+    var parsed = try stack.load(allocator);
     defer parsed.deinit();
+    const v = parsed.value;
 
-    if (parsed.value != .object) return;
-    const obj = parsed.value.object;
+    const id = id_arg orelse (resolveCurrentChange(allocator, v) orelse return error.NoActiveChange);
+    const m = stack.getChange(v, id) orelse return error.ChangeNotFound;
 
-    // Story header
-    const title = if (obj.get("title")) |v| if (v == .string) v.string else "?" else "?";
-    const status = if (obj.get("status")) |v| if (v == .string) v.string else "?" else "?";
-    const story_id = if (obj.get("story_id")) |v| if (v == .string) v.string else "?" else "?";
-    const story_type = if (obj.get("type")) |v| if (v == .string) v.string else "?" else "?";
+    const ctitle = if (m.get("title")) |s| if (s == .string) s.string else "" else "";
+    const cstatus = if (m.get("status")) |s| if (s == .string) s.string else "" else "";
+    const cbranch = if (m.get("branch")) |s| if (s == .string) s.string else "" else "";
+    const parent = stack.parentOf(v, id) orelse "";
 
-    try writer.print("{s}{s} — {s}{s} ({s}, {s})\n", .{ "\x1b[1m", story_id, title, "\x1b[0m", story_type, status });
-    try writer.writeAll("══════════════════════════════════════════════════════\n\n");
+    try stdout("Change: {s} — {s}\n", .{ id, ctitle });
+    try stdout("  status: {s}\n", .{cstatus});
+    try stdout("  branch: {s}\n", .{cbranch});
+    try stdout("  parent: {s}\n", .{parent});
+    if (m.get("acceptance")) |acc| {
+        if (acc == .array) {
+            try stdout("  acceptance:\n", .{});
+            for (acc.array.items) |item| {
+                if (item == .string) try stdout("    - {s}\n", .{item.string});
+            }
+        }
+    }
+    if (stack.getCheckpoint(v, id)) |cp| {
+        try stdout("  checkpoint: {s}\n", .{cp});
+    }
+    const verified = stack.verifyAllPassed(v, id);
+    try stdout("  verified: {s}\n", .{if (verified) "yes" else "no"});
+    if (m.get("pr")) |pr| {
+        if (pr == .object) {
+            if (pr.object.get("url")) |u| {
+                if (u == .string and u.string.len > 0) try stdout("  pr: {s}\n", .{u.string});
+            }
+        }
+    }
+}
 
-    // Tasks table
-    if (obj.get("tasks")) |tasks| {
-        if (tasks == .array and tasks.array.items.len > 0) {
-            try writer.print("{s}{s:<10} {s:<30} {s:<12} {s:<10} {s:<12}{s}\n", .{
-                "\x1b[1m", "ID", "Title", "Status", "Priority", "Review", "\x1b[0m",
-            });
-            try writer.writeAll("────────────────────────────────────────────────────────────\n");
+fn cmdVerify(allocator: std.mem.Allocator, id_arg: ?[]const u8, all: bool) !void {
+    var parsed = try stack.load(allocator);
+    defer parsed.deinit();
+    const v = parsed.value;
+    const root = &v.object;
+    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
 
-            for (tasks.array.items) |task| {
-                if (task != .object) continue;
-                const t = task.object;
+    if (all) {
+        var total_pass = true;
+        const changes = root.get("changes") orelse return;
+        if (changes != .array) return;
+        for (changes.array.items) |*c| {
+            if (c.* != .object) continue;
+            const m = &c.*.object;
+            const cid = if (m.get("id")) |s| if (s == .string) s.string else "" else "";
+            const cstatus = if (m.get("status")) |s| if (s == .string) s.string else "" else "";
+            if (std.mem.eql(u8, cstatus, stack.status_merged)) continue;
+            const ok = try runVerifyForChange(allocator, v, cid, base);
+            if (!ok) total_pass = false;
+        }
+        try stack.save(allocator, v);
+        if (!total_pass) return error.VerifyFailed;
+        try stdout("all changes verified\n", .{});
+        return;
+    }
 
-                const tid = if (t.get("id")) |v| if (v == .string) v.string else "?" else "?";
-                const ttitle = if (t.get("title")) |v| if (v == .string) v.string else "?" else "?";
-                const tstatus = if (t.get("status")) |v| if (v == .string) v.string else "?" else "?";
-                const treview = if (t.get("review_status")) |v| if (v == .string) v.string else "?" else "?";
-                const tpriority = if (t.get("context_priority")) |v| if (v == .integer) std.fmt.allocPrint(allocator, "{d}", .{v.integer}) catch "?" else "?" else "?";
+    const id = id_arg orelse (resolveCurrentChange(allocator, v) orelse return error.NoActiveChange);
+    if (stack.getChange(v, id) == null) return error.ChangeNotFound;
 
-                // Color status
-                const status_color = if (std.mem.eql(u8, tstatus, "DONE")) "\x1b[32m"
-                    else if (std.mem.eql(u8, tstatus, "IN_PROGRESS")) "\x1b[33m"
-                    else if (std.mem.eql(u8, tstatus, "BLOCKED")) "\x1b[31m"
-                    else "\x1b[0m";
+    const ok = try runVerifyForChange(allocator, v, id, base);
+    try stack.save(allocator, v);
+    if (!ok) return error.VerifyFailed;
+    try stdout("change {s} verified\n", .{id});
+}
 
-                try writer.print("{s:<10} {s:<30} {s}{s:<12}{s} {s:<10} {s:<12}\n", .{
-                    tid, ttitle, status_color, tstatus, "\x1b[0m", tpriority, treview,
-                });
+fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []const u8, base: []const u8) !bool {
+    // Check out the change branch so tests run against its code
+    const m = stack.getChange(v, id).?;
+    const branch = if (m.get("branch")) |b| if (b == .string) b.string else "" else "";
+    if (branch.len > 0) {
+        _ = try git.checkoutBranch(allocator, branch);
+    }
+    _ = base;
 
-                // Show files if any
-                if (t.get("files_touched")) |files| {
-                    if (files == .array and files.array.items.len > 0) {
-                        for (files.array.items) |f| {
-                            if (f == .string) {
-                                try writer.print("             {s}{s}\n", .{ "\x1b[2m", f.string });
-                            }
-                        }
+    const results = try verify.runAllQualityGates(allocator);
+    defer verify.freeQualityResults(allocator, results);
+
+    var all_ok = true;
+    for (results) |r| {
+        const stage_name = switch (r.stage) {
+            .Test => "test",
+            .Lint => "lint",
+            .Typecheck => "typecheck",
+            .Build => "build",
+        };
+        const ok = r.status == .pass or r.status == .skipped;
+        if (!ok) all_ok = false;
+        _ = try stack.recordVerify(allocator, v, id, stage_name, r.command, ok, r.exit_code, r.duration_ms);
+        try stdout("  {s}: {s} ({s}) [{d}ms]\n", .{ stage_name, if (ok) "PASS" else "FAIL", r.command, r.duration_ms });
+        if (!ok and r.output.len > 0) {
+            const trimmed = std.mem.trim(u8, r.output, " \n\r");
+            if (trimmed.len > 400) {
+                try stdout("      {s}\n", .{trimmed[0..400]});
+            } else if (trimmed.len > 0) {
+                try stdout("      {s}\n", .{trimmed});
+            }
+        }
+    }
+
+    const new_status: []const u8 = if (all_ok) stack.status_verified else stack.status_in_progress;
+    _ = try stack.setChangeString(v, id, "status", new_status);
+    return all_ok;
+}
+
+fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
+    var parsed = try stack.load(allocator);
+    defer parsed.deinit();
+    const v = parsed.value;
+
+    const m = stack.getChange(v, id) orelse return error.ChangeNotFound;
+    if (!stack.verifyAllPassed(v, id)) return error.VerifyRequired;
+
+    const branch = if (m.get("branch")) |b| if (b == .string) b.string else "" else "";
+    const ctitle = if (m.get("title")) |s| if (s == .string) s.string else "" else "";
+    const root = &v.object;
+    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
+
+    // Ensure we're on the change's branch so the PR reflects its code.
+    const cur_branch = (try git.currentBranch(allocator)) orelse "";
+    if (!std.mem.eql(u8, cur_branch, branch)) {
+        _ = try git.checkoutBranch(allocator, branch);
+    }
+
+    // Push the branch (and, when using git-spice, the rest of the stack).
+    const remote = git.defaultRemote(allocator) orelse {
+        try stdout("note: no git remote configured — cannot submit PR. Commit and push manually.\n", .{});
+        _ = try stack.setChangeString(v, id, "status", stack.status_in_review);
+        try stack.save(allocator, v);
+        return;
+    };
+
+    const push_res = try git.pushBranch(allocator, remote, branch);
+    if (push_res.exit_code != 0) {
+        try stderr("git push: {s}\n", .{std.mem.trim(u8, push_res.stderr, " \n\r")});
+        return error.PushFailed;
+    }
+
+    // Build PR body from the context pack
+    const body = try context.buildContextPack(allocator, v, id);
+
+    const tools = git.detectTools(allocator);
+    var pr_url: ?[]const u8 = null;
+
+    if (tools.git_spice) {
+        // git-spice handles the full stack of PRs bottom-up.
+        const res = try git.run(allocator, &.{ "gs", "stack", "submit" }, 16384);
+        if (res.exit_code == 0) {
+            const trimmed = std.mem.trim(u8, res.stdout, " \n\r");
+            if (trimmed.len > 0) {
+                // Best-effort: surface any PR URL in gs output.
+                var it = std.mem.tokenizeAny(u8, trimmed, " \n\r");
+                while (it.next()) |tok| {
+                    if (std.mem.indexOf(u8, tok, "github.com/") != null or std.mem.indexOf(u8, tok, "gitlab.com/") != null) {
+                        pr_url = tok;
+                        break;
                     }
                 }
             }
-            try writer.writeAll("\n");
-        }
-    }
-}
-
-// ============================================================
-// Task (get, update, create, list, move)
-// ============================================================
-
-fn handleTask(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts task <get|update|create|list|move> ...\n", .{});
-        std.process.exit(1);
-    }
-
-    const subcommand = args[0];
-
-    if (std.mem.eql(u8, subcommand, "create")) {
-        try handleTaskCreate(allocator, args[1..]);
-    } else if (std.mem.eql(u8, subcommand, "list")) {
-        try handleTaskList(allocator, args[1..]);
-    } else if (std.mem.eql(u8, subcommand, "move")) {
-        try handleTaskMove(allocator, args[1..]);
-    } else {
-        // get / update (existing behavior)
-        if (args.len < 2) {
-            std.debug.print("Usage: acts task <get|update> <task-id> [--status <s>] [--assigned-to <n>]\n", .{});
-            std.process.exit(1);
-        }
-        const task_id = args[1];
-
-        var status: ?[]const u8 = null;
-        var assigned_to: ?[]const u8 = null;
-
-        var i: usize = 2;
-        while (i < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--status") and i + 1 < args.len) {
-                status = args[i + 1];
-                i += 1;
-            } else if (std.mem.eql(u8, args[i], "--assigned-to") and i + 1 < args.len) {
-                assigned_to = args[i + 1];
-                i += 1;
-            }
-        }
-
-        const db_path = ".acts/acts.db";
-        var database = try db.Database.open(db_path);
-        defer database.close();
-        try database.migrate();
-
-        if (std.mem.eql(u8, subcommand, "get")) {
-            const task = try database.getTask(allocator, task_id);
-            defer allocator.free(task);
-            const stdout = std.io.getStdOut().writer();
-            try stdout.writeAll(task);
-            try stdout.writeAll("\n");
-        } else if (std.mem.eql(u8, subcommand, "update")) {
-            try database.updateTask(task_id, status, assigned_to);
+            try stdout("{s}\n", .{trimmed});
         } else {
-            std.debug.print("Unknown task subcommand: {s}\n", .{subcommand});
-            std.process.exit(1);
-        }
-    }
-}
-
-fn handleTaskCreate(_: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts task create <id> --title \"...\" [--story <id>] [--description \"...\"] [--labels \"a,b\"]\n", .{});
-        std.process.exit(1);
-    }
-    const task_id = args[0];
-    var title: ?[]const u8 = null;
-    var story_id: ?[]const u8 = null;
-    var description: ?[]const u8 = null;
-    var labels: ?[]const u8 = null;
-
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--title") and i + 1 < args.len) {
-            title = args[i + 1];
-            i += 1;
-        } else if (std.mem.eql(u8, args[i], "--story") and i + 1 < args.len) {
-            story_id = args[i + 1];
-            i += 1;
-        } else if (std.mem.eql(u8, args[i], "--description") and i + 1 < args.len) {
-            description = args[i + 1];
-            i += 1;
-        } else if (std.mem.eql(u8, args[i], "--labels") and i + 1 < args.len) {
-            labels = args[i + 1];
-            i += 1;
+            try stderr("gs stack submit: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
+            try stdout("note: git-spice failed — falling back to gh pr create.\n", .{});
         }
     }
 
-    if (title == null) {
-        std.debug.print("Error: --title is required\n", .{});
-        std.process.exit(1);
+    if (pr_url == null and tools.gh) {
+        const res = try git.run(allocator, &.{
+            "gh",
+            "pr",
+            "create",
+            "--head",
+            branch,
+            "--base",
+            base,
+            "--title",
+            try std.fmt.allocPrint(allocator, "{s}: {s}", .{ id, ctitle }),
+            "--body",
+            body,
+        }, 16384);
+        if (res.exit_code == 0) {
+            const trimmed = std.mem.trim(u8, res.stdout, " \n\r");
+            if (trimmed.len > 0) pr_url = trimmed;
+        } else {
+            try stderr("gh pr create: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
+        }
+    } else if (pr_url == null and !tools.gh and !tools.git_spice) {
+        try stdout("note: neither gh nor gs CLI found — branch pushed to {s}; submit PR manually.\n", .{remote});
     }
 
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    try database.createTask(task_id, story_id, title.?, description, labels);
-
-    const stdout = std.io.getStdOut().writer();
-    const actual_story = story_id orelse "__maintenance__";
-    try stdout.print("Task {s} created in story {s}\n", .{ task_id, actual_story });
+    if (pr_url) |url| {
+        _ = try stack.setPrUrl(allocator, v, id, url);
+        try stdout("PR submitted: {s}\n", .{url});
+    }
+    _ = try stack.setChangeString(v, id, "status", stack.status_in_review);
+    try stack.save(allocator, v);
 }
 
-fn handleTaskList(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    var story_id: ?[]const u8 = null;
-    var maintenance_only = false;
-    var status_filter: ?[]const u8 = null;
+fn cmdApprove(allocator: std.mem.Allocator, id: []const u8) !void {
+    var parsed = try stack.load(allocator);
+    defer parsed.deinit();
+    const v = parsed.value;
 
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--story") and i + 1 < args.len) {
-            story_id = args[i + 1];
-            i += 1;
-        } else if (std.mem.eql(u8, args[i], "--maintenance")) {
-            maintenance_only = true;
-        } else if (std.mem.eql(u8, args[i], "--status") and i + 1 < args.len) {
-            status_filter = args[i + 1];
-            i += 1;
+    if (stack.getChange(v, id) == null) return error.ChangeNotFound;
+    _ = try stack.setPrApproved(allocator, v, id, true);
+    _ = try stack.setChangeString(v, id, "status", stack.status_approved);
+    try stack.save(allocator, v);
+    try stdout("change {s} approved\n", .{id});
+}
+
+fn cmdRework(allocator: std.mem.Allocator, id: []const u8) !void {
+    var parsed = try stack.load(allocator);
+    defer parsed.deinit();
+    const v = parsed.value;
+
+    if (stack.getChange(v, id) == null) return error.ChangeNotFound;
+    _ = try stack.setPrApproved(allocator, v, id, false);
+    _ = try stack.setChangeString(v, id, "status", stack.status_in_progress);
+    try stack.save(allocator, v);
+    try stdout("change {s} reopened for rework\n", .{id});
+}
+
+fn cmdContext(allocator: std.mem.Allocator, id_arg: ?[]const u8) !void {
+    var parsed = try stack.load(allocator);
+    defer parsed.deinit();
+    const v = parsed.value;
+
+    const id = id_arg orelse (resolveCurrentChange(allocator, v) orelse return error.NoActiveChange);
+    const pack = try context.buildContextPack(allocator, v, id);
+    try stdout("{s}\n", .{pack});
+}
+
+fn cmdNote(allocator: std.mem.Allocator, id: []const u8, msg: []const u8) !void {
+    var parsed = try stack.load(allocator);
+    defer parsed.deinit();
+    const v = parsed.value;
+
+    if (stack.getChange(v, id) == null) return error.ChangeNotFound;
+
+    // Write the note to .acts/changes/<id>/notes/<ts>.md
+    const ts = std.time.timestamp();
+    const dir = try std.fmt.allocPrint(allocator, ".acts/changes/{s}/notes", .{id});
+    std.fs.cwd().makePath(dir) catch {};
+    const fname = try std.fmt.allocPrint(allocator, "{s}/{d}.md", .{ dir, ts });
+    var content = std.ArrayList(u8).init(allocator);
+    try content.writer().print("# Session note ({d})\n\n{s}\n", .{ ts, msg });
+    try std.fs.cwd().writeFile(.{ .sub_path = fname, .data = content.items });
+
+    _ = try stack.appendNote(allocator, v, id, fname);
+    try stack.save(allocator, v);
+    try stdout("note appended to {s}: {s}\n", .{ id, fname });
+}
+
+fn cmdCheckpoint(allocator: std.mem.Allocator, id: []const u8, summary: []const u8) !void {
+    var parsed = try stack.load(allocator);
+    defer parsed.deinit();
+    const v = parsed.value;
+
+    if (stack.getChange(v, id) == null) return error.ChangeNotFound;
+    _ = try stack.setCheckpoint(v, id, summary);
+    try stack.save(allocator, v);
+    try stdout("checkpoint recorded for {s}\n", .{id});
+}
+
+fn cmdRedirect(allocator: std.mem.Allocator, id: []const u8, accept: []const u8) !void {
+    var parsed = try stack.load(allocator);
+    defer parsed.deinit();
+    const v = parsed.value;
+
+    const m = stack.getChange(v, id) orelse return error.ChangeNotFound;
+    var acceptance = std.json.Array.init(allocator);
+    try appendAcceptance(allocator, &acceptance, accept);
+    try m.put("acceptance", .{ .array = acceptance });
+    _ = try stack.setChangeString(v, id, "status", stack.status_in_progress);
+    try stack.save(allocator, v);
+    try stdout("change {s} redirected with updated scope (status -> IN_PROGRESS)\n", .{id});
+}
+
+fn cmdScope(allocator: std.mem.Allocator, id: []const u8, file: []const u8) !void {
+    var parsed = try stack.load(allocator);
+    defer parsed.deinit();
+    const v = parsed.value;
+
+    const m = stack.getChange(v, id) orelse return error.ChangeNotFound;
+    const branch = if (m.get("branch")) |b| if (b == .string) b.string else "" else "";
+    const root = &v.object;
+    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
+
+    const cur_branch = (try git.currentBranch(allocator)) orelse "";
+    if (!std.mem.eql(u8, cur_branch, branch)) {
+        _ = try git.checkoutBranch(allocator, branch);
+    }
+
+    const files = try git.changedFilesSince(allocator, base);
+    for (files) |f| {
+        if (std.mem.eql(u8, f, file)) {
+            try stdout("{{\n  \"file_path\": \"{s}\",\n  \"action\": \"ok\",\n  \"message\": \"File is part of change {s}'s diff\"\n}}\n", .{ file, id });
+            return;
         }
     }
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    const tasks = try database.listTasks(allocator, story_id, maintenance_only, status_filter);
-    defer allocator.free(tasks);
-    const stdout = std.io.getStdOut().writer();
-    try stdout.writeAll(tasks);
-    try stdout.writeAll("\n");
+    try stdout("{{\n  \"file_path\": \"{s}\",\n  \"action\": \"warn\",\n  \"message\": \"File not in change {s}'s diff — verify it belongs to this task before editing\"\n}}\n", .{ file, id });
 }
 
-fn handleTaskMove(_: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts task move <id> --to <story-id>\n", .{});
-        std.process.exit(1);
+fn cmdValidate(allocator: std.mem.Allocator) !void {
+    if (!stack.manifestExists()) {
+        try stdout("no active stack (missing {s})\n", .{stack.manifest_path});
+        return;
     }
-    const task_id = args[0];
-    var to_story: ?[]const u8 = null;
+    var parsed = try stack.load(allocator);
+    defer parsed.deinit();
+    const v = parsed.value;
 
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--to") and i + 1 < args.len) {
-            to_story = args[i + 1];
-            i += 1;
-        }
-    }
-
-    if (to_story == null) {
-        std.debug.print("Error: --to <story-id> is required\n", .{});
-        std.process.exit(1);
+    const problems = try stack.validate(allocator, v);
+    const trimmed = std.mem.trim(u8, problems, " \n\r");
+    if (trimmed.len == 0) {
+        try stdout("manifest OK\n", .{});
+    } else {
+        try stdout("manifest problems:\n{s}\n", .{problems});
+        return error.ValidationFailed;
     }
 
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    database.moveTask(task_id, to_story.?) catch |err| {
-        switch (err) {
-            error.CannotMoveDoneTask => {
-                std.debug.print("Error: Cannot move DONE tasks\n", .{});
-                std.process.exit(1);
-            },
-            error.TaskNotFound => {
-                std.debug.print("Error: Task {s} not found\n", .{task_id});
-                std.process.exit(1);
-            },
-            else => {
-                std.debug.print("Error: {}\n", .{err});
-                std.process.exit(1);
-            },
-        }
-    };
-
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("Task {s} moved to story {s}\n", .{ task_id, to_story.? });
-}
-
-// ============================================================
-// Review (enhanced HRE)
-// ============================================================
-
-fn handleReview(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts review <task-id>\n", .{});
-        std.process.exit(1);
+    // Branch consistency
+    const root = &v.object;
+    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
+    if (!git.branchExists(allocator, base)) {
+        try stdout("warn: base branch {s} does not exist\n", .{base});
     }
-    const task_id = args[0];
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    // Verify task exists
-    const task_json = database.getTask(allocator, task_id) catch |err| {
-        if (err == error.TaskNotFound) {
-            std.debug.print("Error: Task {s} not found\n", .{task_id});
-            std.process.exit(1);
-        }
-        std.debug.print("Error: {}\n", .{err});
-        std.process.exit(1);
-    };
-    defer allocator.free(task_json);
-
-    const review = @import("review.zig");
-    review.run(allocator, &database, task_id) catch |err| {
-        std.debug.print("Error during review: {}\n", .{err});
-        std.process.exit(1);
-    };
-}
-
-// ============================================================
-// Gather Review (JSON output for agent-driven review)
-// ============================================================
-
-fn handleGatherReview(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts gather-review <task-id>\n", .{});
-        std.process.exit(1);
-    }
-    const task_id = args[0];
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    const review = @import("review.zig");
-    try review.gatherReview(allocator, &database, task_id);
-}
-
-// ============================================================
-// Approve / Reject
-// ============================================================
-
-fn handleApprove(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts approve <task-id>\n", .{});
-        std.process.exit(1);
-    }
-    const task_id = args[0];
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    const user = std.process.getEnvVarOwned(allocator, "USER") catch blk: {
-        break :blk try allocator.dupe(u8, "developer");
-    };
-    defer allocator.free(user);
-
-    try database.addGate(task_id, "task-review", "approved", user);
-
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("Task-review gate approved for {s} by {s}.\n", .{ task_id, user });
-}
-
-fn handleReject(_: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts reject <task-id>\n", .{});
-        std.process.exit(1);
-    }
-    const task_id = args[0];
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    try database.addGate(task_id, "task-review", "changes_requested", null);
-
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("Changes requested for {s}. Gate marked as 'changes_requested'.\n", .{task_id});
-}
-
-// ============================================================
-// Gate
-// ============================================================
-
-fn handleGate(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 2) {
-        std.debug.print("Usage: acts gate <add|list> [options]\n", .{});
-        std.process.exit(1);
-    }
-
-    const subcommand = args[0];
-    var task_id: ?[]const u8 = null;
-    var gate_type: ?[]const u8 = null;
-    var status: ?[]const u8 = null;
-    var approved_by: ?[]const u8 = null;
-
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--task") and i + 1 < args.len) {
-            task_id = args[i + 1];
-            i += 1;
-        } else if (std.mem.eql(u8, args[i], "--type") and i + 1 < args.len) {
-            gate_type = args[i + 1];
-            i += 1;
-        } else if (std.mem.eql(u8, args[i], "--status") and i + 1 < args.len) {
-            status = args[i + 1];
-            i += 1;
-        } else if (std.mem.eql(u8, args[i], "--by") and i + 1 < args.len) {
-            approved_by = args[i + 1];
-            i += 1;
-        }
-    }
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    if (std.mem.eql(u8, subcommand, "add")) {
-        if (task_id == null or gate_type == null or status == null) {
-            std.debug.print("Usage: acts gate add --task <id> --type <type> --status <status> [--by <name>]\n", .{});
-            std.process.exit(1);
-        }
-
-        // Enforce human developer approval for task-review gates
-        if (std.mem.eql(u8, gate_type.?, "task-review")) {
-            if (approved_by == null or approved_by.?.len == 0) {
-                std.debug.print("Error: task-review gates MUST be approved by a human developer.\n", .{});
-                std.debug.print("Usage: acts gate add --task {s} --type task-review --status approved --by \"<human-developer-name>\"\n", .{task_id.?});
-                std.process.exit(1);
-            }
-
-            const blocked_names = [_][]const u8{ "agent", "ai", "claude", "cursor", "copilot", "gpt", "assistant", "opencode", "model" };
-            const lower_name = try std.ascii.allocLowerString(allocator, approved_by.?);
-            defer allocator.free(lower_name);
-
-            for (blocked_names) |blocked| {
-                if (std.mem.indexOf(u8, lower_name, blocked) != null) {
-                    std.debug.print("Error: '{s}' appears to be an agent name. task-review gates MUST be approved by a human developer.\n", .{approved_by.?});
-                    std.process.exit(1);
+    if (root.get("changes")) |changes| {
+        if (changes == .array) {
+            for (changes.array.items) |*c| {
+                if (c.* != .object) continue;
+                const m = &c.*.object;
+                const cid = if (m.get("id")) |s| if (s == .string) s.string else "" else "";
+                const cbranch = if (m.get("branch")) |s| if (s == .string) s.string else "" else "";
+                if (!git.branchExists(allocator, cbranch)) {
+                    try stdout("warn: change {s} branch {s} does not exist\n", .{ cid, cbranch });
                 }
             }
         }
-
-        try database.addGate(task_id.?, gate_type.?, status.?, approved_by);
-    } else if (std.mem.eql(u8, subcommand, "list")) {
-        if (task_id == null) {
-            std.debug.print("Usage: acts gate list --task <id>\n", .{});
-            std.process.exit(1);
-        }
-        const gates = try database.listGates(allocator, task_id.?);
-        defer allocator.free(gates);
-        const stdout = std.io.getStdOut().writer();
-        try stdout.writeAll(gates);
-        try stdout.writeAll("\n");
-    } else {
-        std.debug.print("Unknown gate subcommand: {s}\n", .{subcommand});
-        std.process.exit(1);
     }
 }
 
-// ============================================================
-// Decision
-// ============================================================
+// ---------------------------------------------------------------------------
+// v1 → v2 migration
+// ---------------------------------------------------------------------------
 
-fn handleDecision(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts decision <add|list> [options]\n", .{});
-        std.process.exit(1);
+/// Migrate a v1 ACTS project (SQLite `.acts/acts.db`) to v2 (`.acts/stack.json`
+/// + git branches). Reads the v1 DB via the `sqlite3` CLI. For each v1 story
+/// (skipping `__maintenance__`), creates a v2 stack and maps its tasks to
+/// changes. Branches are created on demand with `--create-branches`.
+fn cmdMigrate(allocator: std.mem.Allocator, args: *const Args) !void {
+    const v1_db = ".acts/acts.db";
+    if (stack.manifestExists()) {
+        try stdout("a v2 stack already exists ({s}) — refusing to overwrite.\n", .{stack.manifest_path});
+        return error.StackAlreadyExists;
     }
-
-    const subcommand = args[0];
-    var task_id: ?[]const u8 = null;
-
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--task") and i + 1 < args.len) {
-            task_id = args[i + 1];
-            i += 1;
-        }
-    }
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    if (std.mem.eql(u8, subcommand, "add")) {
-        const stdin = std.io.getStdIn().reader();
-        const input = try stdin.readAllAlloc(allocator, 1024 * 1024);
-        defer allocator.free(input);
-        try database.addDecision(allocator, input);
-    } else if (std.mem.eql(u8, subcommand, "list")) {
-        if (task_id == null) {
-            std.debug.print("Usage: acts decision list --task <id>\n", .{});
-            std.process.exit(1);
-        }
-        const decisions = try database.listDecisions(allocator, task_id.?);
-        defer allocator.free(decisions);
-        const stdout = std.io.getStdOut().writer();
-        try stdout.writeAll(decisions);
-        try stdout.writeAll("\n");
-    } else {
-        std.debug.print("Unknown decision subcommand: {s}\n", .{subcommand});
-        std.process.exit(1);
-    }
-}
-
-// ============================================================
-// Approach
-// ============================================================
-
-fn handleApproach(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 2 or !std.mem.eql(u8, args[0], "add") or !std.mem.eql(u8, args[1], "--rejected")) {
-        std.debug.print("Usage: acts approach add --rejected (reads JSON from stdin)\n", .{});
-        std.process.exit(1);
-    }
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    const stdin = std.io.getStdIn().reader();
-    const input = try stdin.readAllAlloc(allocator, 1024 * 1024);
-    defer allocator.free(input);
-    try database.addRejectedApproach(allocator, input);
-}
-
-// ============================================================
-// Question
-// ============================================================
-
-fn handleQuestion(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts question <add|resolve> [options]\n", .{});
-        std.process.exit(1);
-    }
-
-    const subcommand = args[0];
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    if (std.mem.eql(u8, subcommand, "add")) {
-        const stdin = std.io.getStdIn().reader();
-        const input = try stdin.readAllAlloc(allocator, 1024 * 1024);
-        defer allocator.free(input);
-        try database.addQuestion(allocator, input);
-    } else if (std.mem.eql(u8, subcommand, "resolve")) {
-        if (args.len < 2) {
-            std.debug.print("Usage: acts question resolve <id> [--resolution \"...\"] [--by <name>]\n", .{});
-            std.process.exit(1);
-        }
-        const question_id = args[1];
-        var resolution: ?[]const u8 = null;
-        var resolved_by: ?[]const u8 = null;
-
-        var i: usize = 2;
-        while (i < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--resolution") and i + 1 < args.len) {
-                resolution = args[i + 1];
-                i += 1;
-            } else if (std.mem.eql(u8, args[i], "--by") and i + 1 < args.len) {
-                resolved_by = args[i + 1];
-                i += 1;
-            }
-        }
-        try database.resolveQuestion(question_id, resolution, resolved_by);
-    } else {
-        std.debug.print("Unknown question subcommand: {s}\n", .{subcommand});
-        std.process.exit(1);
-    }
-}
-
-// ============================================================
-// Ownership / Scope
-// ============================================================
-
-fn handleOwnership(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1 or !std.mem.eql(u8, args[0], "map")) {
-        std.debug.print("Usage: acts ownership map\n", .{});
-        std.process.exit(1);
-    }
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    const map = try database.getOwnershipMap(allocator);
-    defer allocator.free(map);
-    const stdout = std.io.getStdOut().writer();
-    try stdout.writeAll(map);
-    try stdout.writeAll("\n");
-}
-
-fn handleScope(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 4) {
-        std.debug.print("Usage: acts scope check --task <id> --file <path>\n", .{});
-        std.process.exit(1);
-    }
-
-    var task_id: ?[]const u8 = null;
-    var file_path: ?[]const u8 = null;
-
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--task") and i + 1 < args.len) {
-            task_id = args[i + 1];
-            i += 1;
-        } else if (std.mem.eql(u8, args[i], "--file") and i + 1 < args.len) {
-            file_path = args[i + 1];
-            i += 1;
-        }
-    }
-
-    if (task_id == null or file_path == null) {
-        std.debug.print("Usage: acts scope check --task <id> --file <path>\n", .{});
-        std.process.exit(1);
-    }
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    const result = try database.checkScope(allocator, task_id.?, file_path.?);
-    defer allocator.free(result);
-    const stdout = std.io.getStdOut().writer();
-    try stdout.writeAll(result);
-    try stdout.writeAll("\n");
-}
-
-// ============================================================
-// Session
-// ============================================================
-
-fn handleSession(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 2) {
-        std.debug.print("Usage: acts session <parse|validate|list> [options]\n", .{});
-        std.process.exit(1);
-    }
-
-    const subcommand = args[0];
-
-    if (std.mem.eql(u8, subcommand, "parse")) {
-        if (args.len < 2) {
-            std.debug.print("Usage: acts session parse <file.md>\n", .{});
-            std.process.exit(1);
-        }
-        const sessions = @import("sessions.zig");
-        const result = try sessions.parseFile(allocator, args[1]);
-        defer allocator.free(result);
-        const stdout = std.io.getStdOut().writer();
-        try stdout.writeAll(result);
-        try stdout.writeAll("\n");
-    } else if (std.mem.eql(u8, subcommand, "validate")) {
-        if (args.len < 2) {
-            std.debug.print("Usage: acts session validate <file.md>\n", .{});
-            std.process.exit(1);
-        }
-        const sessions = @import("sessions.zig");
-        const valid = try sessions.validateFile(allocator, args[1]);
-        if (!valid) {
-            std.process.exit(1);
-        }
-    } else if (std.mem.eql(u8, subcommand, "list")) {
-        var task_id: ?[]const u8 = null;
-        var i: usize = 1;
-        while (i < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--task") and i + 1 < args.len) {
-                task_id = args[i + 1];
-                i += 1;
-            }
-        }
-        if (task_id == null) {
-            std.debug.print("Usage: acts session list --task <id>\n", .{});
-            std.process.exit(1);
-        }
-        const sessions = @import("sessions.zig");
-        const result = try sessions.listSessions(allocator, task_id.?);
-        defer allocator.free(result);
-        const stdout = std.io.getStdOut().writer();
-        try stdout.writeAll(result);
-        try stdout.writeAll("\n");
-    } else {
-        std.debug.print("Unknown session subcommand: {s}\n", .{subcommand});
-        std.process.exit(1);
-    }
-}
-
-// ============================================================
-// Operation
-// ============================================================
-
-fn handleOperation(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts operation <log|list|show> [options]\n", .{});
-        std.process.exit(1);
-    }
-
-    const subcommand = args[0];
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    const stdout = std.io.getStdOut().writer();
-
-    if (std.mem.eql(u8, subcommand, "log")) {
-        var operation_id: ?[]const u8 = null;
-        var task_id: ?[]const u8 = null;
-
-        var i: usize = 1;
-        while (i < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--id") and i + 1 < args.len) {
-                operation_id = args[i + 1];
-                i += 1;
-            } else if (std.mem.eql(u8, args[i], "--task") and i + 1 < args.len) {
-                task_id = args[i + 1];
-                i += 1;
-            }
-        }
-
-        if (operation_id == null) {
-            std.debug.print("Usage: acts operation log --id <operation-id> [--task <task-id>]\n", .{});
-            std.process.exit(1);
-        }
-
-        const stdin = std.io.getStdIn().reader();
-        const input = try stdin.readAllAlloc(allocator, 1024 * 1024);
-        defer allocator.free(input);
-        try database.logOperation(allocator, operation_id.?, task_id, input);
-    } else if (std.mem.eql(u8, subcommand, "list")) {
-        var task_id: ?[]const u8 = null;
-
-        var i: usize = 1;
-        while (i < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--task") and i + 1 < args.len) {
-                task_id = args[i + 1];
-                i += 1;
-            }
-        }
-
-        const ops = try database.listOperations(allocator, task_id);
-        defer allocator.free(ops);
-        try stdout.writeAll(ops);
-        try stdout.writeAll("\n");
-    } else if (std.mem.eql(u8, subcommand, "show")) {
-        if (args.len < 2) {
-            std.debug.print("Usage: acts operation show <operation-id>\n", .{});
-            std.process.exit(1);
-        }
-        const operation_id = args[1];
-        const op = try database.getOperation(allocator, operation_id);
-        defer allocator.free(op);
-        try stdout.writeAll(op);
-        try stdout.writeAll("\n");
-    } else {
-        std.debug.print("Unknown operation subcommand: {s}\n", .{subcommand});
-        std.process.exit(1);
-    }
-}
-
-// ============================================================
-// Validate
-// ============================================================
-
-fn handleValidate(_allocator: std.mem.Allocator, args: []const []const u8) !void {
-    _ = _allocator;
-    _ = args;
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    const stdout = std.io.getStdOut().writer();
-    const stderr = std.io.getStdErr().writer();
-
-    var valid = true;
-
-    const version = blk: {
-        break :blk database.getSchemaVersion() catch |err| {
-            try stderr.print("Schema version check failed: {}\n", .{err});
-            valid = false;
-            break :blk 0;
-        };
+    std.fs.cwd().access(v1_db, .{}) catch {
+        try stdout("no v1 database found ({s}) — nothing to migrate.\n", .{v1_db});
+        return;
     };
-    if (valid) {
-        try stdout.print("Schema version: {d}\n", .{version});
+    if (!git.hasTool(allocator, "sqlite3")) {
+        try stdout("error: `sqlite3` CLI not found — required to read the v1 database.\n", .{});
+        return error.ToolMissing;
     }
 
-    const required_files = [_][]const u8{ ".story/plan.md", ".story/spec.md" };
-    for (required_files) |file| {
-        var file_exists = true;
-        std.fs.cwd().access(file, .{}) catch |err| switch (err) {
-            error.FileNotFound => {
-                file_exists = false;
-            },
-            else => return err,
-        };
-        if (!file_exists) {
-            try stderr.print("Missing required file: {s}\n", .{file});
-            valid = false;
+    const story_id = if (args.positional.items.len >= 1) args.positional.items[0] else null;
+
+    // ── Query stories ─────────────────────────
+    const stories_sql = "SELECT id, title, status, type FROM stories WHERE id != '__maintenance__' ORDER BY id;";
+    const stories_res = try git.run(allocator, &.{ "sqlite3", "-separator", "|", v1_db, stories_sql }, 65536);
+    if (stories_res.exit_code != 0) {
+        try stderr("sqlite3: {s}\n", .{std.mem.trim(u8, stories_res.stderr, " \n\r")});
+        return error.MigrationFailed;
+    }
+
+    var stories = std.ArrayList([]const u8).init(allocator);
+    var it = std.mem.tokenizeAny(u8, stories_res.stdout, "\n");
+    while (it.next()) |line| try stories.append(line);
+
+    if (stories.items.len == 0) {
+        try stdout("v1 database has no migratable stories.\n", .{});
+        return;
+    }
+
+    // ── Pick the story to migrate ─────────────
+    const chosen = if (story_id) |sid| blk: {
+        var found: ?[]const u8 = null;
+        for (stories.items) |line| {
+            if (std.mem.startsWith(u8, line, sid) and line.len >= sid.len and line[sid.len] == '|') {
+                found = line;
+                break;
+            }
+        }
+        break :blk found orelse return error.StoryNotFound;
+    } else stories.items[0];
+
+    var fields = std.mem.splitScalar(u8, chosen, '|');
+    const sid = fields.next() orelse return error.MigrationFailed;
+    const stitle = fields.next() orelse sid;
+    const sstatus = fields.next() orelse "";
+    _ = sstatus;
+
+    // ── Create the v2 stack ───────────────────
+    if (!git.isGitRepo(allocator)) return error.NotGitRepo;
+    if (!validId(sid)) return error.InvalidStackId;
+    const base_branch = try std.fmt.allocPrint(allocator, "acts/{s}/base", .{sid});
+    const res = try git.createBranch(allocator, base_branch, "");
+    if (res.exit_code != 0) {
+        try stderr("git: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
+        return error.BranchConflict;
+    }
+
+    var root_map = std.json.ObjectMap.init(allocator);
+    try root_map.put("version", .{ .integer = 2 });
+    try root_map.put("id", .{ .string = sid });
+    try root_map.put("title", .{ .string = stitle });
+    try root_map.put("base_branch", .{ .string = base_branch });
+    var changes = std.json.Array.init(allocator);
+
+    // ── Query tasks for this story ────────────
+    const esc = try std.mem.replaceOwned(u8, allocator, sid, "'", "''");
+    const tasks_sql = try std.fmt.allocPrint(
+        allocator,
+        "SELECT id, title, status, review_status FROM tasks WHERE story_id = '{s}' ORDER BY id;",
+        .{esc},
+    );
+    const tasks_res = try git.run(allocator, &.{ "sqlite3", "-separator", "|", v1_db, tasks_sql }, 65536);
+    if (tasks_res.exit_code != 0) {
+        try stderr("sqlite3: {s}\n", .{std.mem.trim(u8, tasks_res.stderr, " \n\r")});
+        return error.MigrationFailed;
+    }
+
+    var tasks_it = std.mem.tokenizeAny(u8, tasks_res.stdout, "\n");
+    var idx: usize = 0;
+    var prev_tid: ?[]const u8 = null;
+    while (tasks_it.next()) |line| {
+        var f = std.mem.splitScalar(u8, line, '|');
+        const tid = f.next() orelse continue;
+        const ttitle = f.next() orelse continue;
+        const tstatus = f.next() orelse "";
+        const treview = f.next() orelse "";
+
+        idx += 1;
+        const slug = try slugify(allocator, ttitle);
+        const branch = try std.fmt.allocPrint(allocator, "acts/{s}/c{d}-{s}", .{ sid, idx, slug });
+
+        var entry = std.json.ObjectMap.init(allocator);
+        try entry.put("id", .{ .string = tid });
+        try entry.put("title", .{ .string = ttitle });
+        try entry.put("branch", .{ .string = branch });
+        if (prev_tid) |pt| {
+            try entry.put("parent", .{ .string = pt });
         } else {
-            try stdout.print("Found: {s}\n", .{file});
+            try entry.put("parent", .null);
         }
+        prev_tid = tid;
+        try entry.put("acceptance", .{ .array = std.json.Array.init(allocator) });
+        try entry.put("verify", .{ .object = std.json.ObjectMap.init(allocator) });
+        try entry.put("notes", .{ .array = std.json.Array.init(allocator) });
+        try entry.put("checkpoint", .null);
+        try entry.put("status", .{ .string = statusFromV1(tstatus, treview) });
+
+        var pr = std.json.ObjectMap.init(allocator);
+        try pr.put("url", .null);
+        try pr.put("approved", .{ .bool = std.mem.eql(u8, treview, "approved") });
+        try entry.put("pr", .{ .object = pr });
+
+        // Preserve v1 file ownership as a session note
+        const files = try queryV1Files(allocator, v1_db, tid);
+        if (files.len > 0) {
+            var note = std.ArrayList(u8).init(allocator);
+            try note.writer().print("# migrated from ACTS v1 — files owned\n", .{});
+            for (files) |fp| {
+                try note.writer().print("- {s}\n", .{fp});
+            }
+            const dir = try std.fmt.allocPrint(allocator, ".acts/changes/{s}/notes", .{tid});
+            std.fs.cwd().makePath(dir) catch {};
+            const fname = try std.fmt.allocPrint(allocator, "{s}/v1-files.md", .{dir});
+            try std.fs.cwd().writeFile(.{ .sub_path = fname, .data = note.items });
+            _ = try stack.appendNote(allocator, .{ .object = root_map }, tid, fname);
+        }
+
+        try changes.append(.{ .object = entry });
     }
 
-    var sessions_dir: ?std.fs.Dir = null;
-    sessions_dir = std.fs.cwd().openDir(".story/sessions", .{ .iterate = true }) catch |err| switch (err) {
-        error.FileNotFound => blk: {
-            try stderr.writeAll("No sessions directory found\n");
-            break :blk null;
-        },
-        else => return err,
-    };
+    try root_map.put("changes", .{ .array = changes });
+    try stack.save(allocator, .{ .object = root_map });
 
-    if (sessions_dir) |dir| {
-        var iter = dir.iterate();
-        var session_count: usize = 0;
-        while (try iter.next()) |entry| {
-            if (std.mem.endsWith(u8, entry.name, ".md")) {
-                session_count += 1;
+    try stdout("migrated v1 story {s} → v2 stack (base branch {s}, {d} changes)\n", .{ sid, base_branch, idx });
+    try stdout("  next: acts change status c1  |  acts verify --all  |  acts review <id>\n", .{});
+}
+
+/// Query v1 task_files for a task id, returning the list of file paths.
+fn queryV1Files(allocator: std.mem.Allocator, v1_db: []const u8, tid: []const u8) ![][]const u8 {
+    const esc = try std.mem.replaceOwned(u8, allocator, tid, "'", "''");
+    const sql = try std.fmt.allocPrint(allocator, "SELECT file_path FROM task_files WHERE task_id = '{s}';", .{esc});
+    const res = try git.run(allocator, &.{ "sqlite3", "-separator", "|", v1_db, sql }, 65536);
+    var out = std.ArrayList([]const u8).init(allocator);
+    var it = std.mem.tokenizeAny(u8, res.stdout, "\n");
+    while (it.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \r");
+        if (trimmed.len > 0) try out.append(trimmed);
+    }
+    return out.toOwnedSlice();
+}
+
+/// Map v1 task status + review_status to a v2 change status.
+fn statusFromV1(tstatus: []const u8, treview: []const u8) []const u8 {
+    if (std.mem.eql(u8, tstatus, "DONE")) {
+        if (std.mem.eql(u8, treview, "approved")) return stack.status_approved;
+        return stack.status_verified;
+    }
+    if (std.mem.eql(u8, tstatus, "IN_PROGRESS") or std.mem.eql(u8, tstatus, "BLOCKED")) return stack.status_in_progress;
+    return stack.status_todo;
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+fn validId(id: []const u8) bool {
+    if (id.len == 0) return false;
+    for (id) |ch| {
+        const ok = std.ascii.isAlphanumeric(ch) or ch == '-' or ch == '_';
+        if (!ok) return false;
+    }
+    return true;
+}
+
+/// Split acceptance criteria on newlines (real or literal `\n`) and append to an array.
+fn appendAcceptance(allocator: std.mem.Allocator, arr: *std.json.Array, raw: []const u8) !void {
+    // Normalize literal `\n` (backslash-n) to real newline so CLI users can pass one string.
+    var normalized = std.ArrayList(u8).init(allocator);
+    var i: usize = 0;
+    while (i < raw.len) {
+        if (i + 1 < raw.len and raw[i] == '\\' and raw[i + 1] == 'n') {
+            try normalized.append('\n');
+            i += 2;
+        } else {
+            try normalized.append(raw[i]);
+            i += 1;
+        }
+    }
+    var it = std.mem.splitScalar(u8, normalized.items, '\n');
+    while (it.next()) |line| {
+        const t = std.mem.trim(u8, line, " \t\r");
+        if (t.len > 0) try arr.append(.{ .string = t });
+    }
+}
+
+fn slugify(allocator: std.mem.Allocator, title: []const u8) ![]const u8 {
+    var out = std.ArrayList(u8).init(allocator);
+    var prev_dash = false;
+    for (title) |ch| {
+        if (std.ascii.isAlphanumeric(ch)) {
+            try out.append(std.ascii.toLower(ch));
+            prev_dash = false;
+        } else if (ch == ' ' or ch == '-' or ch == '_' or ch == '/') {
+            if (!prev_dash and out.items.len > 0) {
+                try out.append('-');
+                prev_dash = true;
             }
         }
-        try stdout.print("Session files: {d}\n", .{session_count});
     }
-
-    if (!valid) {
-        try stderr.writeAll("\nValidation FAILED\n");
-        std.process.exit(1);
-    } else {
-        try stdout.writeAll("\nValidation PASSED\n");
+    // strip trailing dash
+    if (out.items.len > 0 and out.items[out.items.len - 1] == '-') {
+        _ = out.pop();
     }
+    if (out.items.len == 0) try out.append('x');
+    return out.toOwnedSlice();
 }
 
-// ============================================================
-// Migrate
-// ============================================================
-
-fn handleMigrate(_: std.mem.Allocator, _: []const []const u8) !void {
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-
-    try database.migrate();
-
-    const version = try database.getSchemaVersion();
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("Migration complete. Schema version: {d}\n", .{version});
-}
-
-// ============================================================
-// Story (create, list, switch, archive, merge, graph)
-// ============================================================
-
-fn handleStory(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts story <create|list|switch|archive|merge|graph> ...\n", .{});
-        std.process.exit(1);
-    }
-
-    const subcommand = args[0];
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    if (std.mem.eql(u8, subcommand, "create")) {
-        try handleStoryCreate(allocator, &database, args[1..]);
-    } else if (std.mem.eql(u8, subcommand, "list")) {
-        try handleStoryList(allocator, &database, args[1..]);
-    } else if (std.mem.eql(u8, subcommand, "switch")) {
-        try handleStorySwitch(allocator, &database, args[1..]);
-    } else if (std.mem.eql(u8, subcommand, "archive")) {
-        try handleStoryArchive(allocator, &database, args[1..]);
-    } else if (std.mem.eql(u8, subcommand, "merge")) {
-        try handleStoryMerge(allocator, &database, args[1..]);
-    } else if (std.mem.eql(u8, subcommand, "graph")) {
-        try handleStoryGraph(allocator, &database, args[1..]);
-    } else if (std.mem.eql(u8, subcommand, "rules")) {
-        try handleStoryRules(allocator, &database, args[1..]);
-    } else {
-        std.debug.print("Unknown story subcommand: {s}\n", .{subcommand});
-        std.process.exit(1);
-    }
-}
-
-fn handleStoryCreate(allocator: std.mem.Allocator, database: *db.Database, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts story create <id> --title \"...\" [--from <branch>] [--parent <story-id>]\n", .{});
-        std.process.exit(1);
-    }
-    const story_id = args[0];
-    var title: ?[]const u8 = null;
-    var from_branch: ?[]const u8 = null;
-    var parent_story: ?[]const u8 = null;
-
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--title") and i + 1 < args.len) {
-            title = args[i + 1];
-            i += 1;
-        } else if (std.mem.eql(u8, args[i], "--from") and i + 1 < args.len) {
-            from_branch = args[i + 1];
-            i += 1;
-        } else if (std.mem.eql(u8, args[i], "--parent") and i + 1 < args.len) {
-            parent_story = args[i + 1];
-            i += 1;
-        }
-    }
-
-    if (title == null) {
-        std.debug.print("Error: --title is required\n", .{});
-        std.process.exit(1);
-    }
-
-    const branch = from_branch orelse "main";
-    const worktree_path = try std.fs.path.join(allocator, &[_][]const u8{ ".acts", "worktrees", story_id });
-    defer allocator.free(worktree_path);
-
-    // Create git worktree
-    var wt_argv = [_][]const u8{ "git", "worktree", "add", worktree_path, "-b", story_id, branch };
-    var wt_child = std.process.Child.init(&wt_argv, allocator);
-    wt_child.stdin_behavior = .Ignore;
-    wt_child.stdout_behavior = .Pipe;
-    wt_child.stderr_behavior = .Pipe;
-    const wt_result = wt_child.spawnAndWait() catch |err| {
-        std.debug.print("Error: Could not create git worktree: {}\n", .{err});
-        std.process.exit(1);
-    };
-    if (wt_result.Exited != 0) {
-        std.debug.print("Error: git worktree add failed (exit {d})\n", .{wt_result.Exited});
-        std.process.exit(1);
-    }
-
-    // Create .story scaffold inside worktree
-    const story_dir = try std.fs.path.join(allocator, &[_][]const u8{ worktree_path, ".story" });
-    defer allocator.free(story_dir);
-    try std.fs.cwd().makePath(story_dir);
-    const sessions_dir = try std.fs.path.join(allocator, &[_][]const u8{ story_dir, "sessions" });
-    defer allocator.free(sessions_dir);
-    try std.fs.cwd().makePath(sessions_dir);
-    const tasks_dir = try std.fs.path.join(allocator, &[_][]const u8{ story_dir, "tasks" });
-    defer allocator.free(tasks_dir);
-    try std.fs.cwd().makePath(tasks_dir);
-
-    const plan_path = try std.fs.path.join(allocator, &[_][]const u8{ story_dir, "plan.md" });
-    defer allocator.free(plan_path);
-    const plan_file = try std.fs.cwd().createFile(plan_path, .{});
-    defer plan_file.close();
-    try plan_file.writeAll("# Plan\n\n## Overview\n\n[Story overview]\n\n## Tasks\n\n");
-
-    const spec_path = try std.fs.path.join(allocator, &[_][]const u8{ story_dir, "spec.md" });
-    defer allocator.free(spec_path);
-    const spec_file = try std.fs.cwd().createFile(spec_path, .{});
-    defer spec_file.close();
-    try spec_file.writeAll("# Specification\n\n## Overview\n\n[Story specification]\n\n## Acceptance Criteria\n\n");
-
-    // Create .acts/current symlink
-    std.fs.cwd().deleteFile(".acts/current") catch {};
-    try std.posix.symlink(worktree_path, ".acts/current");
-
-    // Insert into DB
-    try database.createStory(story_id, title.?, branch, worktree_path, parent_story);
-
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("Story {s} created\n", .{story_id});
-    try stdout.print("  Worktree: {s}\n", .{worktree_path});
-    try stdout.print("  Branch: story/{s}\n", .{story_id});
-    try stdout.writeAll("  Switched to this story\n");
-}
-
-fn handleStoryList(allocator: std.mem.Allocator, database: *db.Database, args: []const []const u8) !void {
-    var include_archived = false;
-    var include_maintenance = false;
-
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--include-archived")) {
-            include_archived = true;
-        } else if (std.mem.eql(u8, args[i], "--include-maintenance")) {
-            include_maintenance = true;
-        }
-    }
-
-    const stories = try database.listStories(allocator, include_archived, include_maintenance);
-    defer allocator.free(stories);
-    const stdout = std.io.getStdOut().writer();
-    try stdout.writeAll(stories);
-    try stdout.writeAll("\n");
-}
-
-fn handleStorySwitch(allocator: std.mem.Allocator, database: *db.Database, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts story switch <id>\n", .{});
-        std.process.exit(1);
-    }
-    const story_id = args[0];
-
-    database.switchStory(story_id) catch |err| {
-        switch (err) {
-            error.StoryArchived => {
-                std.debug.print("Error: Story {s} is archived\n", .{story_id});
-                std.process.exit(1);
-            },
-            error.StoryNotFound => {
-                std.debug.print("Error: Story {s} not found\n", .{story_id});
-                std.process.exit(1);
-            },
-            else => {
-                std.debug.print("Error: {}\n", .{err});
-                std.process.exit(1);
-            },
-        }
-    };
-
-    // Update symlink
-    const worktree_path = try std.fs.path.join(allocator, &[_][]const u8{ ".acts", "worktrees", story_id });
-    defer allocator.free(worktree_path);
-    std.fs.cwd().deleteFile(".acts/current") catch {};
-    std.posix.symlink(worktree_path, ".acts/current") catch {};
-
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("Switched to story {s}\n", .{story_id});
-}
-
-fn handleStoryArchive(allocator: std.mem.Allocator, database: *db.Database, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts story archive <id>\n", .{});
-        std.process.exit(1);
-    }
-    const story_id = args[0];
-
-    database.archiveStory(story_id) catch |err| {
-        switch (err) {
-            error.OpenTasksRemain => {
-                std.debug.print("Error: Story {s} has open tasks. Complete all tasks first.\n", .{story_id});
-                std.process.exit(1);
-            },
-            else => {
-                std.debug.print("Error: {}\n", .{err});
-                std.process.exit(1);
-            },
-        }
-    };
-
-    // Remove worktree and branch
-    const worktree_path = try std.fs.path.join(allocator, &[_][]const u8{ ".acts", "worktrees", story_id });
-    defer allocator.free(worktree_path);
-
-    var rm_argv = [_][]const u8{ "git", "worktree", "remove", worktree_path };
-    var rm_child = std.process.Child.init(&rm_argv, allocator);
-    _ = rm_child.spawnAndWait() catch {};
-
-    var branch_argv = [_][]const u8{ "git", "branch", "-D", story_id };
-    var branch_child = std.process.Child.init(&branch_argv, allocator);
-    _ = branch_child.spawnAndWait() catch {};
-
-    // Remove symlink if pointing to this story
-    std.fs.cwd().deleteFile(".acts/current") catch {};
-
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("Story {s} archived\n", .{story_id});
-}
-
-fn handleStoryMerge(allocator: std.mem.Allocator, database: *db.Database, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts story merge <id> --into <branch> [--semver <version>]\n", .{});
-        std.process.exit(1);
-    }
-    const story_id = args[0];
-    var into_branch: ?[]const u8 = null;
-    var semver_override: ?[]const u8 = null;
-
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--into") and i + 1 < args.len) {
-            into_branch = args[i + 1];
-            i += 1;
-        } else if (std.mem.eql(u8, args[i], "--semver") and i + 1 < args.len) {
-            semver_override = args[i + 1];
-            i += 1;
-        }
-    }
-
-    const target = into_branch orelse "main";
-
-    // Trigger will enforce: all tasks DONE, all reviews approved
-    var stmt: ?*c.sqlite3_stmt = null;
-    const sql = "UPDATE stories SET status = 'MERGED' WHERE id = ?";
-    const rc = c.sqlite3_prepare_v2(database.db, sql, -1, &stmt, null);
-    if (rc != c.SQLITE_OK) {
-        std.debug.print("Error: Could not prepare merge statement\n", .{});
-        std.process.exit(1);
-    }
-    defer _ = c.sqlite3_finalize(stmt);
-    _ = c.sqlite3_bind_text(stmt, 1, story_id.ptr, @intCast(story_id.len), c.SQLITE_STATIC);
-
-    const step_rc = c.sqlite3_step(stmt);
-    if (step_rc != c.SQLITE_DONE) {
-        const err = c.sqlite3_errmsg(database.db);
-        std.debug.print("Merge failed: {s}\n", .{err});
-        std.process.exit(1);
-    }
-
-    // Merge git branch
-    const merge_msg = try std.fmt.allocPrint(allocator, "Merge story: {s}", .{story_id});
-    defer allocator.free(merge_msg);
-    var merge_argv = [_][]const u8{ "git", "merge", story_id, "-m", merge_msg };
-    var merge_child = std.process.Child.init(&merge_argv, allocator);
-    merge_child.stdin_behavior = .Ignore;
-    merge_child.stdout_behavior = .Inherit;
-    merge_child.stderr_behavior = .Inherit;
-    merge_child.spawn() catch {};
-    _ = merge_child.wait() catch {};
-
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("Story {s} merged into {s}\n", .{ story_id, target });
-}
-
-fn handleStoryGraph(allocator: std.mem.Allocator, database: *db.Database, args: []const []const u8) !void {
-    var format: []const u8 = "json";
-
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--format") and i + 1 < args.len) {
-            format = args[i + 1];
-            i += 1;
-        }
-    }
-
-    const graph = try database.getStoryGraph(allocator, format);
-    defer allocator.free(graph);
-    const stdout = std.io.getStdOut().writer();
-    try stdout.writeAll(graph);
-    try stdout.writeAll("\n");
-}
-
-// ============================================================
-// Story Rules
-// ============================================================
-
-fn handleStoryRules(allocator: std.mem.Allocator, database: *db.Database, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts story rules <import|show|toggle|add-section|update> ...\n", .{});
-        std.process.exit(1);
-    }
-
-    const subcommand = args[0];
-
-    // Get active story
-    const story_id = resolveStoryId(allocator, database, null) catch |err| {
-        std.debug.print("Error: No active story: {}\n", .{err});
-        std.process.exit(1);
-    };
-    defer allocator.free(story_id);
-
-    if (std.mem.eql(u8, subcommand, "import")) {
-        try handleStoryRulesImport(allocator, database, story_id, args[1..]);
-    } else if (std.mem.eql(u8, subcommand, "show")) {
-        try handleStoryRulesShow(allocator, database, story_id);
-    } else if (std.mem.eql(u8, subcommand, "toggle")) {
-        try handleStoryRulesToggle(allocator, database, args[1..]);
-    } else if (std.mem.eql(u8, subcommand, "add-section")) {
-        try handleStoryRulesAddSection(allocator, database, story_id, args[1..]);
-    } else if (std.mem.eql(u8, subcommand, "update")) {
-        try handleStoryRulesUpdate(allocator, database, args[1..]);
-    } else {
-        std.debug.print("Unknown rules subcommand: {s}\n", .{subcommand});
-        std.process.exit(1);
-    }
-}
-
-fn handleStoryRulesImport(allocator: std.mem.Allocator, database: *db.Database, story_id: []const u8, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts story rules import <file.md>\n", .{});
-        std.process.exit(1);
-    }
-
-    const file_path = args[0];
-
-    // Read the file
-    const file = std.fs.cwd().openFile(file_path, .{}) catch |err| {
-        std.debug.print("Error: Could not open file {s}: {}\n", .{ file_path, err });
-        std.process.exit(1);
-    };
-    defer file.close();
-
-    const content = try file.readToEndAlloc(allocator, 1024 * 1024);
-    defer allocator.free(content);
-
-    // Compute hash
-    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
-    hasher.update(content);
-    var hash_bytes: [32]u8 = undefined;
-    hasher.final(&hash_bytes);
-    const hash_hex = try std.fmt.allocPrint(allocator, "{s}", .{std.fmt.fmtSliceHexLower(&hash_bytes)});
-    defer allocator.free(hash_hex);
-
-    // Store rules in story
-    try database.setStoryRules(story_id, content, file_path, hash_hex);
-
-    // Parse and store sections
-    try parseAndStoreSections(allocator, database, story_id, content);
-
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("Imported rules from {s}\n", .{file_path});
-    try stdout.print("Hash: {s}\n", .{hash_hex});
-}
-
-fn handleStoryRulesShow(allocator: std.mem.Allocator, database: *db.Database, story_id: []const u8) !void {
-    const sections = try database.listRuleSections(allocator, story_id);
-    defer allocator.free(sections);
-    const stdout = std.io.getStdOut().writer();
-    try stdout.writeAll(sections);
-    try stdout.writeAll("\n");
-}
-
-fn handleStoryRulesToggle(_: std.mem.Allocator, database: *db.Database, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts story rules toggle <section-id>\n", .{});
-        std.process.exit(1);
-    }
-
-    const section_id = try std.fmt.parseInt(i32, args[0], 10);
-
-    // Get current state and toggle
-    var stmt: ?*c.sqlite3_stmt = null;
-    const sql = "SELECT enabled FROM story_rule_sections WHERE id = ?";
-    const rc = c.sqlite3_prepare_v2(database.db, sql, -1, &stmt, null);
-    if (rc != c.SQLITE_OK) {
-        std.debug.print("Error: Could not query section\n", .{});
-        std.process.exit(1);
-    }
-    defer _ = c.sqlite3_finalize(stmt);
-
-    _ = c.sqlite3_bind_int(stmt, 1, section_id);
-    if (c.sqlite3_step(stmt) != c.SQLITE_ROW) {
-        std.debug.print("Error: Section {d} not found\n", .{section_id});
-        std.process.exit(1);
-    }
-
-    const current_enabled = c.sqlite3_column_int(stmt, 0) != 0;
-    try database.toggleRuleSection(section_id, !current_enabled);
-
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("Section {d} {s}\n", .{ section_id, if (!current_enabled) "enabled" else "disabled" });
-}
-
-fn handleStoryRulesAddSection(allocator: std.mem.Allocator, database: *db.Database, story_id: []const u8, args: []const []const u8) !void {
-    var heading: ?[]const u8 = null;
-    var content: ?[]const u8 = null;
-
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--heading") and i + 1 < args.len) {
-            heading = args[i + 1];
-            i += 1;
-        } else if (std.mem.eql(u8, args[i], "--content") and i + 1 < args.len) {
-            content = args[i + 1];
-            i += 1;
-        }
-    }
-
-    if (heading == null or content == null) {
-        std.debug.print("Error: --heading and --content are required\n", .{});
-        std.process.exit(1);
-    }
-
-    const tags = deriveTagsFromHeading(allocator, heading.?);
-    defer if (tags) |t| allocator.free(t);
-    const patterns = derivePatternsFromHeading(allocator, heading.?);
-    defer if (patterns) |p| allocator.free(p);
-
-    try database.insertRuleSection(story_id, heading.?, content.?, tags, patterns);
-
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("Rule section added: {s}\n", .{heading.?});
-}
-
-fn handleStoryRulesUpdate(_: std.mem.Allocator, database: *db.Database, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts story rules update <section-id> [--heading \"...\"] [--content \"...\"]\n", .{});
-        std.process.exit(1);
-    }
-
-    const section_id = try std.fmt.parseInt(i32, args[0], 10);
-    var heading: ?[]const u8 = null;
-    var content: ?[]const u8 = null;
-
-    var i: usize = 1;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--heading") and i + 1 < args.len) {
-            heading = args[i + 1];
-            i += 1;
-        } else if (std.mem.eql(u8, args[i], "--content") and i + 1 < args.len) {
-            content = args[i + 1];
-            i += 1;
-        }
-    }
-
-    if (heading == null and content == null) {
-        std.debug.print("Error: At least one of --heading or --content is required\n", .{});
-        std.process.exit(1);
-    }
-
-    try database.beginImmediate();
-    errdefer database.rollback();
-
-    var stmt: ?*c.sqlite3_stmt = null;
-    const sql = "UPDATE story_rule_sections SET heading = COALESCE(?, heading), content = COALESCE(?, content), updated_at = datetime('now') WHERE id = ?";
-    const rc = c.sqlite3_prepare_v2(database.db, sql, -1, &stmt, null);
-    if (rc != c.SQLITE_OK) {
-        std.debug.print("Error: Could not prepare update\n", .{});
-        std.process.exit(1);
-    }
-    defer _ = c.sqlite3_finalize(stmt);
-
-    if (heading) |h| {
-        _ = c.sqlite3_bind_text(stmt, 1, h.ptr, @intCast(h.len), c.SQLITE_STATIC);
-    } else {
-        _ = c.sqlite3_bind_null(stmt, 1);
-    }
-    if (content) |c_content| {
-        _ = c.sqlite3_bind_text(stmt, 2, c_content.ptr, @intCast(c_content.len), c.SQLITE_STATIC);
-    } else {
-        _ = c.sqlite3_bind_null(stmt, 2);
-    }
-    _ = c.sqlite3_bind_int(stmt, 3, section_id);
-
-    if (c.sqlite3_step(stmt) != c.SQLITE_DONE) {
-        std.debug.print("Error: Update failed\n", .{});
-        std.process.exit(1);
-    }
-
-    try database.commit();
-
-    const stdout = std.io.getStdOut().writer();
-    try stdout.print("Section {d} updated\n", .{section_id});
-}
-
-fn parseAndStoreSections(allocator: std.mem.Allocator, database: *db.Database, story_id: []const u8, content: []const u8) !void {
-    // Clear existing sections
-    try database.clearRuleSections(story_id);
-
-    // Parse markdown sections (## headings)
-    var lines = std.mem.splitScalar(u8, content, '\n');
-    var current_heading: ?[]const u8 = null;
-    var current_content = std.ArrayList(u8).init(allocator);
-    defer current_content.deinit();
-
-    while (lines.next()) |line| {
-        // Check for ## heading
-        if (std.mem.startsWith(u8, line, "## ")) {
-            // Store previous section if any
-            if (current_heading) |heading| {
-                const content_str = try current_content.toOwnedSlice();
-                defer allocator.free(content_str);
-                const tags = deriveTagsFromHeading(allocator, heading);
-                defer if (tags) |t| allocator.free(t);
-                const patterns = derivePatternsFromHeading(allocator, heading);
-                defer if (patterns) |p| allocator.free(p);
-
-                try database.insertRuleSection(story_id, heading, content_str, tags, patterns);
-                allocator.free(heading);
-            }
-
-            // Start new section
-            current_heading = try allocator.dupe(u8, line[3..]);
-            current_content.clearRetainingCapacity();
-        } else if (current_heading != null) {
-            try current_content.appendSlice(line);
-            try current_content.append('\n');
-        }
-    }
-
-    // Store last section
-    if (current_heading) |heading| {
-        const content_str = try current_content.toOwnedSlice();
-        defer allocator.free(content_str);
-        const tags = deriveTagsFromHeading(allocator, heading);
-        defer if (tags) |t| allocator.free(t);
-        const patterns = derivePatternsFromHeading(allocator, heading);
-        defer if (patterns) |p| allocator.free(p);
-
-        try database.insertRuleSection(story_id, heading, content_str, tags, patterns);
-        allocator.free(heading);
-    }
-}
-
-fn deriveTagsFromHeading(allocator: std.mem.Allocator, heading: []const u8) ?[]const u8 {
-    const lower = std.ascii.allocLowerString(allocator, heading) catch return null;
-    defer allocator.free(lower);
-
-    var tags = std.ArrayList(u8).init(allocator);
-    defer tags.deinit();
-
-    if (std.mem.indexOf(u8, lower, "security") != null) {
-        tags.appendSlice("security,") catch return null;
-    }
-    if (std.mem.indexOf(u8, lower, "testing") != null or std.mem.indexOf(u8, lower, "test") != null) {
-        tags.appendSlice("testing,") catch return null;
-    }
-    if (std.mem.indexOf(u8, lower, "style") != null or std.mem.indexOf(u8, lower, "format") != null) {
-        tags.appendSlice("style,") catch return null;
-    }
-    if (std.mem.indexOf(u8, lower, "performance") != null or std.mem.indexOf(u8, lower, "perf") != null) {
-        tags.appendSlice("performance,") catch return null;
-    }
-    if (std.mem.indexOf(u8, lower, "api") != null) {
-        tags.appendSlice("api,") catch return null;
-    }
-
-    const result = tags.toOwnedSlice() catch return null;
-    if (result.len > 0 and result[result.len - 1] == ',') {
-        return result[0 .. result.len - 1];
-    }
-    return result;
-}
-
-fn derivePatternsFromHeading(allocator: std.mem.Allocator, heading: []const u8) ?[]const u8 {
-    const lower = std.ascii.allocLowerString(allocator, heading) catch return null;
-    defer allocator.free(lower);
-
-    if (std.mem.indexOf(u8, lower, "zig") != null) {
-        return allocator.dupe(u8, ".zig") catch return null;
-    }
-    if (std.mem.indexOf(u8, lower, "javascript") != null or std.mem.indexOf(u8, lower, "js") != null) {
-        return allocator.dupe(u8, ".js,.ts") catch return null;
-    }
-    if (std.mem.indexOf(u8, lower, "python") != null or std.mem.indexOf(u8, lower, "py") != null) {
-        return allocator.dupe(u8, ".py") catch return null;
-    }
-    if (std.mem.indexOf(u8, lower, "sql") != null) {
-        return allocator.dupe(u8, ".sql") catch return null;
-    }
-    if (std.mem.indexOf(u8, lower, "markdown") != null or std.mem.indexOf(u8, lower, "md") != null) {
-        return allocator.dupe(u8, ".md") catch return null;
-    }
-
-    return allocator.dupe(u8, "") catch return null;
-}
-
-// ============================================================
-// DB (checkpoint, status)
-// ============================================================
-
-fn handleDb(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts db <checkpoint|status>\n", .{});
-        std.process.exit(1);
-    }
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-
-    const subcommand = args[0];
-    const stdout = std.io.getStdOut().writer();
-
-    if (std.mem.eql(u8, subcommand, "checkpoint")) {
-        const result = database.walCheckpoint() catch |err| {
-            std.debug.print("Checkpoint failed: {}\n", .{err});
-            std.process.exit(1);
-        };
-        try stdout.print("WAL checkpoint complete: {d} pages logged, {d} pages checkpointed\n", .{ result.pages_log, result.pages_ckpt });
-    } else if (std.mem.eql(u8, subcommand, "status")) {
-        const status = try database.walStatus(allocator);
-        defer allocator.free(status);
-        try stdout.writeAll(status);
-        try stdout.writeAll("\n");
-    } else {
-        std.debug.print("Unknown db subcommand: {s}\n", .{subcommand});
-        std.process.exit(1);
-    }
-}
-
-// ============================================================
-// Presence
-// ============================================================
-
-fn handlePresence(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts presence <set|list> ...\n", .{});
-        std.process.exit(1);
-    }
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    const subcommand = args[0];
-
-    if (std.mem.eql(u8, subcommand, "set")) {
-        var agent_id: ?[]const u8 = null;
-        var task_id: ?[]const u8 = null;
-        var action: ?[]const u8 = null;
-        var story_id: ?[]const u8 = null;
-
-        var i: usize = 1;
-        while (i < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--agent") and i + 1 < args.len) { agent_id = args[i + 1]; i += 1; }
-            else if (std.mem.eql(u8, args[i], "--task") and i + 1 < args.len) { task_id = args[i + 1]; i += 1; }
-            else if (std.mem.eql(u8, args[i], "--action") and i + 1 < args.len) { action = args[i + 1]; i += 1; }
-            else if (std.mem.eql(u8, args[i], "--story") and i + 1 < args.len) { story_id = args[i + 1]; i += 1; }
-        }
-
-        if (agent_id == null) {
-            std.debug.print("Error: --agent is required\n", .{});
-            std.process.exit(1);
-        }
-
-        try database.setPresence(agent_id.?, story_id, task_id, action);
-        const stdout = std.io.getStdOut().writer();
-        try stdout.print("Presence set for {s}\n", .{agent_id.?});
-    } else if (std.mem.eql(u8, subcommand, "list")) {
-        var story_id: ?[]const u8 = null;
-        var i: usize = 1;
-        while (i < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--story") and i + 1 < args.len) { story_id = args[i + 1]; i += 1; }
-        }
-        const presence = try database.listPresence(allocator, story_id);
-        defer allocator.free(presence);
-        const stdout = std.io.getStdOut().writer();
-        try stdout.writeAll(presence);
-        try stdout.writeAll("\n");
-    } else {
-        std.debug.print("Unknown presence subcommand: {s}\n", .{subcommand});
-        std.process.exit(1);
-    }
-}
-
-// ============================================================
-// Unblock
-// ============================================================
-
-fn handleUnblock(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts unblock <list|ack> ...\n", .{});
-        std.process.exit(1);
-    }
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    const subcommand = args[0];
-
-    if (std.mem.eql(u8, subcommand, "list")) {
-        var acknowledged = false;
-        var i: usize = 1;
-        while (i < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--acknowledged")) acknowledged = true;
-        }
-        const events = try database.listUnblockEvents(allocator, acknowledged);
-        defer allocator.free(events);
-        const stdout = std.io.getStdOut().writer();
-        try stdout.writeAll(events);
-        try stdout.writeAll("\n");
-    } else if (std.mem.eql(u8, subcommand, "ack")) {
-        if (args.len < 2) {
-            std.debug.print("Usage: acts unblock ack <id>\n", .{});
-            std.process.exit(1);
-        }
-        const event_id = try std.fmt.parseInt(i32, args[1], 10);
-        try database.ackUnblockEvent(event_id);
-        const stdout = std.io.getStdOut().writer();
-        try stdout.print("Unblock event {d} acknowledged\n", .{event_id});
-    } else {
-        std.debug.print("Unknown unblock subcommand: {s}\n", .{subcommand});
-        std.process.exit(1);
-    }
-}
-
-// ============================================================
-// Review Queue
-// ============================================================
-
-fn handleReviewQueue(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    var story_id: ?[]const u8 = null;
-
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--story") and i + 1 < args.len) { story_id = args[i + 1]; i += 1; }
-    }
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    const queue = try database.listReviewQueue(allocator, story_id);
-    defer allocator.free(queue);
-    const stdout = std.io.getStdOut().writer();
-    try stdout.writeAll(queue);
-    try stdout.writeAll("\n");
-}
-
-// ============================================================
-// Gate SLA
-// ============================================================
-
-fn handleGateSla(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    var breached_only = false;
-
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--breached")) breached_only = true;
-    }
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    const sla = try database.listGateSla(allocator, breached_only);
-    defer allocator.free(sla);
-    const stdout = std.io.getStdOut().writer();
-    try stdout.writeAll(sla);
-    try stdout.writeAll("\n");
-}
-
-// ============================================================
-// Changelog
-// ============================================================
-
-fn handleChangelog(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    var story_id: ?[]const u8 = null;
-    var format: []const u8 = "md";
-
-    var i: usize = 0;
-    while (i < args.len) : (i += 1) {
-        if (std.mem.eql(u8, args[i], "--story") and i + 1 < args.len) { story_id = args[i + 1]; i += 1; }
-        else if (std.mem.eql(u8, args[i], "--format") and i + 1 < args.len) { format = args[i + 1]; i += 1; }
-    }
-
-    if (story_id == null) {
-        std.debug.print("Usage: acts changelog --story <id> [--format md|json]\n", .{});
-        std.process.exit(1);
-    }
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    const changelog = try database.generateChangelog(allocator, story_id.?, format);
-    defer allocator.free(changelog);
-    const stdout = std.io.getStdOut().writer();
-    try stdout.writeAll(changelog);
-    try stdout.writeAll("\n");
-}
-
-// ============================================================
-// Override (human-only file override requests)
-// ============================================================
-
-fn handleOverride(allocator: std.mem.Allocator, args: []const []const u8) !void {
-    if (args.len < 1) {
-        std.debug.print("Usage: acts override <request|approve|reject|list> [options]\n", .{});
-        std.process.exit(1);
-    }
-
-    const subcommand = args[0];
-
-    const db_path = ".acts/acts.db";
-    var database = try db.Database.open(db_path);
-    defer database.close();
-    try database.migrate();
-
-    // Expire stale overrides first
-    database.expireOverrides() catch {};
-
-    const stdout = std.io.getStdOut().writer();
-
-    if (std.mem.eql(u8, subcommand, "request")) {
-        var file_path: ?[]const u8 = null;
-        var task_id: ?[]const u8 = null;
-        var reason: ?[]const u8 = null;
-
-        var i: usize = 1;
-        while (i < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--file") and i + 1 < args.len) { file_path = args[i + 1]; i += 1; }
-            else if (std.mem.eql(u8, args[i], "--task") and i + 1 < args.len) { task_id = args[i + 1]; i += 1; }
-            else if (std.mem.eql(u8, args[i], "--reason") and i + 1 < args.len) { reason = args[i + 1]; i += 1; }
-        }
-
-        if (file_path == null or task_id == null or reason == null) {
-            std.debug.print("Usage: acts override request --file <path> --task <id> --reason \"...\"\n", .{});
-            std.process.exit(1);
-        }
-
-        const override_id = try database.requestOverride(file_path.?, task_id.?, reason.?);
-        try stdout.print("Override request #{d} created for {s} (task {s})\n", .{ override_id, file_path.?, task_id.? });
-        try stdout.writeAll("Waiting for human approval: acts override approve <id> --by \"<human-name>\"\n");
-
-    } else if (std.mem.eql(u8, subcommand, "approve")) {
-        if (args.len < 2) {
-            std.debug.print("Usage: acts override approve <id> --by \"<human-name>\"\n", .{});
-            std.process.exit(1);
-        }
-        const override_id = try std.fmt.parseInt(i32, args[1], 10);
-        var approved_by: ?[]const u8 = null;
-
-        var i: usize = 2;
-        while (i < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--by") and i + 1 < args.len) { approved_by = args[i + 1]; i += 1; }
-        }
-
-        if (approved_by == null or approved_by.?.len == 0) {
-            std.debug.print("Error: --by <human-name> is required. Only humans can approve overrides.\n", .{});
-            std.process.exit(1);
-        }
-
-        // Block agent names
-        const blocked_names = [_][]const u8{ "agent", "ai", "claude", "cursor", "copilot", "gpt", "assistant", "opencode", "model" };
-        const lower_name = try std.ascii.allocLowerString(allocator, approved_by.?);
-        defer allocator.free(lower_name);
-
-        for (blocked_names) |blocked| {
-            if (std.mem.indexOf(u8, lower_name, blocked) != null) {
-                std.debug.print("Error: '{s}' appears to be an agent name. Only humans can approve overrides.\n", .{approved_by.?});
-                std.process.exit(1);
+/// Resolve the active change id from the currently checked-out git branch.
+fn resolveCurrentChange(allocator: std.mem.Allocator, v: std.json.Value) ?[]const u8 {
+    const branch = git.currentBranch(allocator) catch null orelse return null;
+    const root = &v.object;
+    const changes = root.get("changes") orelse return null;
+    if (changes != .array) return null;
+    for (changes.array.items) |*c| {
+        if (c.* != .object) continue;
+        const m = &c.*.object;
+        if (m.get("branch")) |b| {
+            if (b == .string and std.mem.eql(u8, b.string, branch)) {
+                if (m.get("id")) |idv| {
+                    if (idv == .string) return idv.string;
+                }
             }
         }
-
-        database.approveOverride(override_id, approved_by.?) catch |err| {
-            switch (err) {
-                error.UpdateFailed => {
-                    std.debug.print("Error: Override #{d} not found or already processed\n", .{override_id});
-                    std.process.exit(1);
-                },
-                else => {
-                    std.debug.print("Error: {}\n", .{err});
-                    std.process.exit(1);
-                },
-            }
-        };
-
-        try stdout.print("Override #{d} approved by {s}\n", .{ override_id, approved_by.? });
-
-    } else if (std.mem.eql(u8, subcommand, "reject")) {
-        if (args.len < 2) {
-            std.debug.print("Usage: acts override reject <id>\n", .{});
-            std.process.exit(1);
-        }
-        const override_id = try std.fmt.parseInt(i32, args[1], 10);
-
-        database.rejectOverride(override_id) catch |err| {
-            switch (err) {
-                error.UpdateFailed => {
-                    std.debug.print("Error: Override #{d} not found or already processed\n", .{override_id});
-                    std.process.exit(1);
-                },
-                else => {
-                    std.debug.print("Error: {}\n", .{err});
-                    std.process.exit(1);
-                },
-            }
-        };
-
-        try stdout.print("Override #{d} rejected\n", .{override_id});
-
-    } else if (std.mem.eql(u8, subcommand, "list")) {
-        var pending_only = false;
-
-        var i: usize = 1;
-        while (i < args.len) : (i += 1) {
-            if (std.mem.eql(u8, args[i], "--pending")) pending_only = true;
-        }
-
-        const overrides = try database.listOverrides(allocator, pending_only);
-        defer db.Database.freeOverrides(allocator, overrides);
-
-        if (overrides.len == 0) {
-            try stdout.writeAll("No override requests.\n");
-            return;
-        }
-
-        try stdout.print("{s}{s:<6} {s:<30} {s:<10} {s:<12} {s:<12} {s:<24}{s}\n", .{
-            "\x1b[1m", "ID", "File", "Task", "Status", "Approved By", "Expires", "\x1b[0m",
-        });
-        try stdout.writeAll("────────────────────────────────────────────────────────────────────────────────────────────\n");
-
-        for (overrides) |o| {
-            const approved = if (o.approved_by) |ab| ab else "-";
-            try stdout.print("{d:<6} {s:<30} {s:<10} {s:<12} {s:<12} {s:<24}\n", .{
-                o.id, o.file_path, o.task_id, o.status, approved, o.expires_at,
-            });
-        }
-    } else {
-        std.debug.print("Unknown override subcommand: {s}\n", .{subcommand});
-        std.process.exit(1);
     }
+    return null;
+}
+
+fn stdout(comptime fmt: []const u8, args: anytype) !void {
+    try std.io.getStdOut().writer().print(fmt, args);
+}
+
+fn stderr(comptime fmt: []const u8, args: anytype) !void {
+    try std.io.getStdErr().writer().print(fmt, args);
+}
+
+test "validId rejects spaces and empty" {
+    try std.testing.expect(validId("c1"));
+    try std.testing.expect(validId("auth-flow"));
+    try std.testing.expect(!validId(""));
+    try std.testing.expect(!validId("has space"));
+    try std.testing.expect(!validId("has/slash"));
+}
+
+test "slugify basic" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const s1 = try slugify(a, "JWT middleware");
+    try std.testing.expectEqualStrings("jwt-middleware", s1);
+
+    const s2 = try slugify(a, "Add user auth!");
+    try std.testing.expectEqualStrings("add-user-auth", s2);
+
+    const s3 = try slugify(a, "---");
+    try std.testing.expectEqualStrings("x", s3);
+}
+
+test "manifest roundtrip" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var root = std.json.ObjectMap.init(a);
+    try root.put("version", .{ .integer = 2 });
+    try root.put("id", .{ .string = "auth" });
+    try root.put("title", .{ .string = "Auth" });
+    try root.put("base_branch", .{ .string = "acts/auth/base" });
+
+    var changes = std.json.Array.init(a);
+    var entry = std.json.ObjectMap.init(a);
+    try entry.put("id", .{ .string = "c1" });
+    try entry.put("title", .{ .string = "JWT" });
+    try entry.put("status", .{ .string = stack.status_todo });
+    try entry.put("branch", .{ .string = "acts/auth/c1-jwt" });
+    try entry.put("parent", .null);
+    try changes.append(.{ .object = entry });
+    try root.put("changes", .{ .array = changes });
+
+    const v: std.json.Value = .{ .object = root };
+    const problems = try stack.validate(a, v);
+    try std.testing.expectEqualStrings("", std.mem.trim(u8, problems, " \n\r"));
+
+    // verify record roundtrip
+    _ = try stack.recordVerify(a, v, "c1", "test", "npm test", true, 0, 12);
+    try std.testing.expect(stack.verifyAllPassed(v, "c1"));
+
+    // parent chain
+    try std.testing.expect(stack.parentOf(v, "c1") == null);
+    try std.testing.expectEqualStrings("c1", stack.topChange(v).?);
+}
+
+test "manifest validates missing title" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var root = std.json.ObjectMap.init(a);
+    try root.put("version", .{ .integer = 2 });
+    try root.put("id", .{ .string = "auth" });
+    try root.put("base_branch", .{ .string = "acts/auth/base" });
+    try root.put("changes", .{ .array = std.json.Array.init(a) });
+
+    const v: std.json.Value = .{ .object = root };
+    const problems = try stack.validate(a, v);
+    try std.testing.expect(std.mem.indexOf(u8, problems, "missing 'title'") != null);
+}
+
+test "statusFromV1 maps v1 task statuses to v2 change statuses" {
+    try std.testing.expectEqualStrings(stack.status_approved, statusFromV1("DONE", "approved"));
+    try std.testing.expectEqualStrings(stack.status_verified, statusFromV1("DONE", "pending"));
+    try std.testing.expectEqualStrings(stack.status_in_progress, statusFromV1("IN_PROGRESS", "pending"));
+    try std.testing.expectEqualStrings(stack.status_in_progress, statusFromV1("BLOCKED", "changes_requested"));
+    try std.testing.expectEqualStrings(stack.status_todo, statusFromV1("TODO", "pending"));
 }

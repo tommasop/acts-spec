@@ -1,14 +1,21 @@
 #!/usr/bin/env node
 /**
- * acts-zeplin-contract — Extract API contract from Zeplin flow designs
+ * acts-zeplin-contract — Extract API contract from Zeplin flow designs or scenarios
  *
  * Usage:
  *   node acts-zeplin-contract.mjs --flow "https://app.zeplin.io/project/abc/flow/xyz"
+ *   node acts-zeplin-contract.mjs --scenario "https://app.zeplin.io/project/abc?seid=xyz"
+ *   node acts-zeplin-contract.mjs --scenario "https://zpl.io/ABc123"
  *   node acts-zeplin-contract.mjs --flow "https://app.zeplin.io/project/abc/flow/xyz" --json
  *   node acts-zeplin-contract.mjs --flow "https://app.zeplin.io/project/abc/flow/xyz" --notes
  *
- * Reads the Zeplin flow board via REST API, analyzes screen layers for
- * form fields / buttons / labels, and outputs an inferred API contract.
+ * --flow      Reads a Zeplin flow board via REST API and analyzes screen layers
+ *             for form fields / buttons / labels.
+ * --scenario  Reads a Zeplin scenario (a project screen section subtree) the
+ *             same way. Accepts the ?seid= URL form, the /scenario/{id} form,
+ *             or a zpl.io shortlink.
+ *
+ * Both output an inferred API contract.
  *
  * Auth: reads ZEPLIN_ACCESS_TOKEN from env, or falls back to opencode.json config.
  */
@@ -20,27 +27,36 @@ import fs from 'fs';
 
 const args = process.argv.slice(2);
 let flowUrl = null;
+let scenarioUrl = null;
 let outputJson = false;
 let includeNotes = false;
 
 for (let i = 0; i < args.length; i++) {
   if (args[i] === '--flow') flowUrl = args[++i];
+  else if (args[i] === '--scenario') scenarioUrl = args[++i];
   else if (args[i] === '--json') outputJson = true;
   else if (args[i] === '--notes') includeNotes = true;
   else if (args[i] === '--help' || args[i] === '-h') {
     console.log(`Usage: acts-zeplin-contract --flow <zeplin-flow-url> [--json] [--notes]
+       acts-zeplin-contract --scenario <zeplin-scenario-url> [--json] [--notes]
 
 Options:
-  --flow <url>   Zeplin flow URL (required)
-  --json         Output raw JSON instead of markdown
-  --notes        Fetch screen notes and annotations (slower)
-  --help         Show this message`);
+  --flow <url>      Zeplin flow URL (e.g. .../project/{id}/flow/{board_id})
+  --scenario <url>  Zeplin scenario URL (project ?seid= form, /scenario/{id} form, or zpl.io shortlink)
+  --json            Output raw JSON instead of markdown
+  --notes           Fetch screen notes and annotations (slower)
+  --help            Show this message`);
     process.exit(0);
   }
 }
 
-if (!flowUrl) {
-  console.error('Error: --flow <url> is required. Run with --help for usage.');
+if (flowUrl && scenarioUrl) {
+  console.error('Error: Use either --flow or --scenario, not both.');
+  process.exit(1);
+}
+
+if (!flowUrl && !scenarioUrl) {
+  console.error('Error: --flow <url> or --scenario <url> is required. Run with --help for usage.');
   process.exit(1);
 }
 
@@ -54,6 +70,48 @@ function parseFlowUrl(url) {
     process.exit(1);
   }
   return { projectId: match[1], flowBoardId: match[2] };
+}
+
+async function resolveShortlink(url) {
+  const res = await fetch(url, {
+    method: 'GET',
+    redirect: 'manual',
+    headers: { Accept: 'text/html' },
+  });
+  const location = res.headers.get('location');
+  if (location) return location;
+  if (res.url && res.url !== url) return res.url;
+  return url;
+}
+
+async function parseScenarioUrl(url) {
+  const target = /^https?:\/\//i.test(url) ? url : `https://${url}`;
+  const base = /^https?:\/\/zpl\.io\//i.test(target)
+    ? await resolveShortlink(target)
+    : target;
+
+  let u;
+  try {
+    u = new URL(base);
+  } catch {
+    console.error(`Error: Cannot parse scenario URL: ${url}`);
+    process.exit(1);
+  }
+
+  const seid = u.searchParams.get('seid');
+  const pidFromQuery = u.pathname.match(/\/project\/([^/]+)/);
+  if (seid && pidFromQuery) {
+    return { projectId: pidFromQuery[1], sectionId: seid };
+  }
+
+  const pathMatch = u.pathname.match(/\/project\/([^/]+)\/scenario\/([^/?]+)/);
+  if (pathMatch) {
+    return { projectId: pathMatch[1], sectionId: pathMatch[2] };
+  }
+
+  console.error(`Error: Cannot parse scenario URL: ${url}`);
+  console.error('Expected: https://app.zeplin.io/project/{project_id}?seid={section_id}');
+  process.exit(1);
 }
 
 // ─── Auth ───────────────────────────────────────────────────────────────
@@ -546,6 +604,43 @@ function generateJsonExample(fields) {
 
 // ─── Data Fetching ──────────────────────────────────────────────────────
 
+async function fetchAllPaginated(endpoint, token) {
+  const items = [];
+  let offset = 0;
+  while (true) {
+    const page = await zeplinFetch(`${endpoint}?limit=100&offset=${offset}`, token);
+    if (!Array.isArray(page) || page.length === 0) break;
+    items.push(...page);
+    if (page.length < 100) break;
+    offset += page.length;
+  }
+  return items;
+}
+
+async function fetchScreenDetails(projectId, screenId, token, includeNotes) {
+  const screen = await zeplinFetch(`/projects/${projectId}/screens/${screenId}`, token);
+
+  let layerForbidden = false;
+  const version = await zeplinFetch(
+    `/projects/${projectId}/screens/${screenId}/versions/latest`, token
+  ).catch(e => {
+    if (e.message.includes('403')) layerForbidden = true;
+    return null;
+  });
+
+  let notes = [];
+  let annotations = [];
+  if (includeNotes) {
+    notes = await zeplinFetch(`/projects/${projectId}/screens/${screenId}/notes`, token)
+      .catch(() => []);
+    annotations = await zeplinFetch(
+      `/projects/${projectId}/screens/${screenId}/annotations`, token
+    ).catch(() => []);
+  }
+
+  return { screen, version, notes, annotations, layerForbidden };
+}
+
 async function fetchFlowData(projectId, flowBoardId, token, includeNotes) {
   const [board, nodes, connectors] = await Promise.all([
     zeplinFetch(`/projects/${projectId}/flow_boards/${flowBoardId}`, token),
@@ -564,28 +659,53 @@ async function fetchFlowData(projectId, flowBoardId, token, includeNotes) {
       continue;
     }
 
-    const screen = await zeplinFetch(`/projects/${projectId}/screens/${screenId}`, token);
-    const version = await zeplinFetch(
-      `/projects/${projectId}/screens/${screenId}/versions/latest`, token
-    ).catch(e => {
-      if (e.message.includes('403')) layerAvailable = false;
-      return null;
-    });
-
-    let notes = [];
-    let annotations = [];
-    if (includeNotes) {
-      notes = await zeplinFetch(`/projects/${projectId}/screens/${screenId}/notes`, token)
-        .catch(() => []);
-      annotations = await zeplinFetch(
-        `/projects/${projectId}/screens/${screenId}/annotations`, token
-      ).catch(() => []);
-    }
-
-    screens.push({ node, screen, version, notes, annotations });
+    const details = await fetchScreenDetails(projectId, screenId, token, includeNotes);
+    if (details.layerForbidden) layerAvailable = false;
+    screens.push({ node, ...details });
   }
 
   return { board, nodes: screenNodes, connectors, screens, layerAvailable };
+}
+
+async function fetchScenarioData(projectId, sectionId, token, includeNotes) {
+  const section = await zeplinFetch(`/projects/${projectId}/screen_sections/${sectionId}`, token);
+
+  const allSections = await fetchAllPaginated(`/projects/${projectId}/screen_sections`, token);
+  const sectionNameById = new Map(allSections.map(s => [s.id, s.name]));
+
+  // Collect the scenario section and all its descendant sections (via parent refs).
+  const sectionIds = new Set([sectionId]);
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const s of allSections) {
+      if (sectionIds.has(s.id)) continue;
+      if (s.parent?.id && sectionIds.has(s.parent.id)) {
+        sectionIds.add(s.id);
+        changed = true;
+      }
+    }
+  }
+
+  const allScreens = await fetchAllPaginated(`/projects/${projectId}/screens`, token);
+  const matchedScreens = allScreens.filter(s => s.section?.id && sectionIds.has(s.section.id));
+
+  let layerAvailable = true;
+  const screens = [];
+  for (const s of matchedScreens) {
+    const details = await fetchScreenDetails(projectId, s.id, token, includeNotes);
+    if (details.layerForbidden) layerAvailable = false;
+    screens.push({
+      screen: details.screen,
+      version: details.version,
+      notes: details.notes,
+      annotations: details.annotations,
+      sectionId: s.section.id,
+      sectionName: sectionNameById.get(s.section.id) || '',
+    });
+  }
+
+  return { section, screens, layerAvailable, projectId };
 }
 
 // ─── Contract Builder ───────────────────────────────────────────────────
@@ -657,6 +777,69 @@ function extractPathFromHint(text) {
   const pathMatch = text.match(/(\/api\/[^\s,;]+)/i);
   if (pathMatch) return pathMatch[1];
   return null;
+}
+
+function naturalCompare(a, b) {
+  return a.localeCompare(b, undefined, { numeric: true, sensitivity: 'base' });
+}
+
+function buildScenarioContract(scenarioData) {
+  const { section, screens, layerAvailable } = scenarioData;
+
+  const endpoints = [];
+  for (const s of screens) {
+    if (!s.screen) continue;
+
+    const layers = s.version?.layers || [];
+    const analysis = analyzeLayers(layers);
+    const endpoint = inferEndpoint(s.screen.name, analysis);
+    const fields = inferFields(analysis);
+
+    const screenAnnotations = (s.annotations || []).map(a => a.content).filter(Boolean);
+    const screenNotes = (s.notes || []).flatMap(n => (n.comments || []).map(c => c.content)).filter(Boolean);
+    const allHints = [...screenAnnotations, ...screenNotes];
+    const apiHint = allHints.find(h => /(POST|GET|PUT|PATCH|DELETE)\s+\/|\/api\//i.test(h));
+
+    endpoints.push({
+      screen: s.screen.name,
+      screenId: s.screen.id,
+      nodeId: s.screen.id,
+      method: endpoint.method,
+      path: apiHint ? extractPathFromHint(apiHint) : endpoint.resource,
+      isNonApi: endpoint.isNonApi || false,
+      fields,
+      buttons: analysis.buttons.map(b => b.text || '').filter(b => !isNoiseText(b)),
+      inputCount: analysis.inputs.length,
+      notes: allHints,
+    });
+  }
+
+  // Ordered scenario steps: group by section name, then screen name (natural sort).
+  const ordered = [...screens]
+    .filter(s => s.screen)
+    .sort((a, b) =>
+      naturalCompare(a.sectionName, b.sectionName) || naturalCompare(a.screen.name, b.screen.name)
+    );
+
+  const flow = [];
+  for (let i = 0; i < ordered.length - 1; i++) {
+    flow.push({ from: ordered[i].screen.name, to: ordered[i + 1].screen.name, label: '', type: 'scenario' });
+  }
+
+  return {
+    flowBoard: {
+      id: section.id,
+      name: section.name || 'Unnamed Scenario',
+      description: section.description || '',
+      projectId: scenarioData.projectId,
+    },
+    endpoints,
+    resources: groupResources(endpoints),
+    flow,
+    screenCount: screens.length,
+    connectorCount: 0,
+    layerAvailable,
+  };
 }
 
 // ─── Output Formatters ──────────────────────────────────────────────────
@@ -767,6 +950,20 @@ async function main() {
       'Set ZEPLIN_ACCESS_TOKEN env var or configure zeplin MCP server in opencode.json.'
     );
     process.exit(1);
+  }
+
+  if (scenarioUrl) {
+    const { projectId, sectionId } = await parseScenarioUrl(scenarioUrl);
+
+    const scenarioData = await fetchScenarioData(projectId, sectionId, token, includeNotes);
+    const contract = buildScenarioContract(scenarioData);
+
+    if (outputJson) {
+      console.log(JSON.stringify(contract, null, 2));
+    } else {
+      console.log(outputMarkdown(contract));
+    }
+    return;
   }
 
   const { projectId, flowBoardId } = parseFlowUrl(flowUrl);

@@ -19,6 +19,6 @@
   "author": "Tommaso Patrizi",
   "license": "MIT",
   "scripts": {
-    "test": "node tests/cbm-plugin.test.mjs"
+    "test": "node tests/cbm-plugin.test.mjs && node tests/acts-plugin.test.mjs"
   }
 }

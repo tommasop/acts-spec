@@ -5,6 +5,11 @@
     "./.opencode/plugins/acts.js",
     "./.opencode/plugins/cbm.js"
   ],
+  "permission": {
+    "skill": {
+      "acts": "allow"
+    }
+  },
   "references": {
     "ui-payments":   { "path": "../ui-payments",         "description": "Payments UI repo" },
     "magic":         { "path": "../ex_magic_library",    "description": "Magic core library" },
