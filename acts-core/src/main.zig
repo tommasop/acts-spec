@@ -155,9 +155,40 @@ pub fn main() !void {
 
     const run_result = runCommand(allocator, cmd, &args);
     run_result catch |err| {
+        if (err == error.UnknownCommand) {
+            if (v1Hint(cmd)) |hint| {
+                try stderr("acts: error: UnknownCommand\n", .{});
+                try stderr("note: `{s}` is an ACTS v1 command that was removed in v2. {s}\n", .{ cmd, hint });
+                std.process.exit(1);
+            }
+        }
         try stderr("acts: error: {s}\n", .{@errorName(err)});
         std.process.exit(1);
     };
+}
+
+/// Map removed ACTS v1 commands to their v2 equivalents so users get a helpful
+/// pointer instead of a bare "UnknownCommand".
+fn v1Hint(cmd: []const u8) ?[]const u8 {
+    const hints = [_]struct { cmd: []const u8, hint: []const u8 }{
+        .{ .cmd = "state", .hint = "Try `acts stack status` (or `acts stack status --json`)." },
+        .{ .cmd = "task", .hint = "v2 has no tasks — use `acts change add <id>` and `acts change status`." },
+        .{ .cmd = "gate", .hint = "Gates were replaced by verification: run `acts verify <id>`." },
+        .{ .cmd = "init", .hint = "Start a stack instead: `acts stack create <id> -t \"<title>\"`." },
+        .{ .cmd = "story", .hint = "Stories became stacks: `acts stack create <id>` / `acts stack land`." },
+        .{ .cmd = "ownership", .hint = "Ownership is derived from diffs: `acts scope <id> <file>`." },
+        .{ .cmd = "override", .hint = "File overrides were removed — ownership is git-derived." },
+        .{ .cmd = "reject", .hint = "Use `acts rework <id>` to reopen a change for rework." },
+        .{ .cmd = "session", .hint = "Session summaries moved to `acts note <id> -m \"...\"`." },
+        .{ .cmd = "changelog", .hint = "Removed in v2." },
+        .{ .cmd = "presence", .hint = "Removed in v2." },
+        .{ .cmd = "unblock", .hint = "Removed in v2 — dependencies are handled by the stack." },
+        .{ .cmd = "db", .hint = "Removed in v2 — there is no sidecar database." },
+    };
+    for (hints) |h| {
+        if (std.mem.eql(u8, cmd, h.cmd)) return h.hint;
+    }
+    return null;
 }
 
 fn runCommand(allocator: std.mem.Allocator, cmd: []const u8, args: *const Args) !void {
@@ -1014,7 +1045,8 @@ fn cmdMigrate(allocator: std.mem.Allocator, args: *const Args) !void {
     }
 
     // ── Pick the story to migrate ─────────────
-    const chosen = if (story_id) |sid| blk: {
+    var chosen: []const u8 = undefined;
+    if (story_id) |sid| {
         var found: ?[]const u8 = null;
         for (stories.items) |line| {
             if (std.mem.startsWith(u8, line, sid) and line.len >= sid.len and line[sid.len] == '|') {
@@ -1022,8 +1054,22 @@ fn cmdMigrate(allocator: std.mem.Allocator, args: *const Args) !void {
                 break;
             }
         }
-        break :blk found orelse return error.StoryNotFound;
-    } else stories.items[0];
+        if (found) |f| {
+            chosen = f;
+        } else {
+            // Story not found — list the available ones to help the user.
+            try stdout("no v1 story found with id '{s}'. Available stories:\n", .{sid});
+            for (stories.items) |line| {
+                var f = std.mem.splitScalar(u8, line, '|');
+                if (f.next()) |story_line_id| {
+                    try stdout("  - {s}\n", .{story_line_id});
+                }
+            }
+            return error.StoryNotFound;
+        }
+    } else {
+        chosen = stories.items[0];
+    }
 
     var fields = std.mem.splitScalar(u8, chosen, '|');
     const sid = fields.next() orelse return error.MigrationFailed;
