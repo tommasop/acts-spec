@@ -1,71 +1,12 @@
 {
-  "manifest_version": "1.2.0",
-  "conformance_level": "strict",
+  "manifest_version": "2.0.0",
   "quality_gate": {
     "test": "npm test && cd acts-core && zig build test",
     "lint": "node --check .opencode/plugins/acts.js && node --check .opencode/plugins/cbm.js",
     "typecheck": null,
     "build": "cd acts-core && zig build"
   },
-  "agent_framework": {
-    "enabled": true,
-    "name": "superpowers",
-    "min_version": "5.0.0"
-  },
-  "gh_stack": {
-    "enabled": false,
-    "description": "GitHub Stacked PRs adapter (private preview). Turns task branches into stacked PRs.",
-    "prefix": "story/<STORY_ID>",
-    "numbered": true,
-    "draft_prs": true
-  },
-  "description": "Project-level ACTS configuration \u2014 controls behavior, integration, and protocol settings.",
-  "commit_convention": "conventional",
-  "allow_reopen_completed": false,
-  "agent_roles": [
-    "coder",
-    "reviewer"
-  ],
-  "jira_integration": {
-    "enabled": true,
-    "description": "Jira integration for story-init auto-fetch and tracker-sync status push.",
-    "fetch_fields": [
-      "description",
-      "summary",
-      "issuetype",
-      "labels",
-      "components"
-    ],
-    "key_pattern": "^[A-Z]+-\\d+$",
-    "sync": {
-      "create_subtasks": true,
-      "sync_on_completion": true,
-      "status_map": {
-        "TODO": null,
-        "IN_PROGRESS": "In Progress",
-        "DONE": "Done",
-        "BLOCKED": null
-      }
-    }
-  },
-  "plugin": {
-    "enabled": true,
-    "description": "OpenCode plugin configuration for ACTS context injection and enforcement.",
-    "mode": "on",
-    "auto_inject": true,
-    "auto_read_state": true,
-    "auto_read_ownership": true,
-    "override": {
-      "enabled": true,
-      "require_human_approval": true,
-      "expiry_hours": 24,
-      "audit_file": ".acts/override-approvals.json"
-    },
-    "system_transform": {
-      "enabled": true,
-      "inject_active_tasks": true,
-      "inject_locked_files": true,
-      "inject_approved_overrides": true
-    }
+  "hilt": {
+    "auto_land_low": true
   }
 }

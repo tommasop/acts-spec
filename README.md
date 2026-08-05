@@ -69,7 +69,20 @@ acts setup . --github
 
 Options: `--source <acts-spec-dir>` (use a local checkout instead of GitHub, e.g. offline), `--no-install` (skip binary install), `--bin-dir <dir>` (global install location), `--force` (overwrite existing files).
 
-> Pre-built binaries for Linux/macOS are published to [GitHub Releases](https://github.com/tommasop/acts-spec/releases) once tagged.
+> Pre-built binaries for Linux/macOS are published to [GitHub Releases](https://github.com/tommasop/acts-spec/releases) once tagged. Release artifacts (`dist/`) are **built by CI**, never committed to the repo.
+
+## Releasing
+
+Releases are produced entirely by [`.github/workflows/release.yml`](.github/workflows/release.yml) — no local `dist/` build is needed. To cut a release:
+
+```bash
+git tag 2.1.0            # push a tag (with or without a leading 'v')
+git push origin 2.1.0
+```
+
+CI cross-compiles for Linux/macOS (x86_64 + aarch64), packages `acts-<version>-<platform>.tar.gz` per target, and attaches them to a GitHub Release. `install.sh` downloads these exact archives, so the archive name must stay `acts-<version>-<platform>.tar.gz`.
+
+A local host-only archive (for testing) is available via `make package VERSION=2.1.0` — it writes to `dist/` (gitignored).
 
 ## Quick Start
 

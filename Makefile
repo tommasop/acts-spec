@@ -1,24 +1,31 @@
-.PHONY: install install-local uninstall update clean test build release cross
+.PHONY: install install-local uninstall update build test release cross clean package
 
-# Default: install system-wide
+# Default: install acts + cbm globally
 install:
-	@echo "Installing ACTS system-wide..."
+	@echo "Installing ACTS (acts + cbm) globally..."
+	@bash install.sh --with-cbm
+
+# Install acts only, globally
+install-acts:
+	@echo "Installing ACTS globally..."
 	@bash install.sh
 
-# Install to project-local .acts/bin/
+# Install to a project-local .acts/bin/
 install-local:
 	@echo "Installing ACTS to ./.acts/bin/..."
-	@bash install.sh --local
+	@mkdir -p .acts/bin
+	@cp acts-core/zig-out/bin/acts .acts/bin/acts 2>/dev/null || (echo "build first: make build" && exit 1)
 
 # Update to latest version
 update:
-	@bash install.sh --update
+	@bash install.sh --update --with-cbm
 
 # Uninstall
 uninstall:
 	@echo "Removing ACTS..."
 	@rm -f /usr/local/bin/acts
 	@rm -f $(HOME)/.local/bin/acts
+	@rm -f $(HOME)/.local/bin/codebase-memory-mcp
 	@rm -f ./.acts/bin/acts
 	@echo "Done"
 
@@ -32,8 +39,10 @@ test:
 release:
 	cd acts-core && zig build release
 
+# Cross-compile for all supported targets (host build only; CI does per-target)
 cross:
-	cd acts-core && zig build cross -Dversion=$(VERSION)
+	@echo "Cross-compilation is handled by CI (release.yml matrix)."
+	@echo "Local host build: make release"
 
 # Clean build artifacts
 clean:
@@ -41,17 +50,15 @@ clean:
 
 VERSION ?= dev
 
-# Generate release archives
-package: cross
+# Generate release archives (host build, acts/bin layout). The canonical
+# release artifacts are produced by CI (release.yml), not committed.
+package: release
 	@mkdir -p dist
-	@for bin in acts-linux-x86_64 acts-linux-aarch64 acts-macos-x86_64 acts-macos-aarch64; do \
-		tmpdir=$$(mktemp -d); \
-		mkdir -p "$$tmpdir/acts/bin" "$$tmpdir/acts/.acts/review-providers"; \
-		cp "acts-core/zig-out/bin/$$bin" "$$tmpdir/acts/bin/acts"; \
-		cp .acts/acts.json "$$tmpdir/acts/.acts/"; \
-		cp .acts/review-providers/hunk.json "$$tmpdir/acts/.acts/review-providers/" 2>/dev/null || true; \
-		cp README.md LICENSE "$$tmpdir/acts/" 2>/dev/null || true; \
-		tar czf "dist/acts-$(VERSION)-$${bin#acts-}.tar.gz" -C "$$tmpdir" acts; \
-		rm -rf "$$tmpdir"; \
-		echo "Created dist/acts-$(VERSION)-$${bin#acts-}.tar.gz"; \
-	done
+	@platform="$$(uname -s | tr '[:upper:]' '[:lower:]')-$$(uname -m | sed 's/x86_64/x86_64/;s/arm64/aarch64/')"; \
+	tmpdir=$$(mktemp -d); \
+	mkdir -p "$$tmpdir/acts/bin"; \
+	cp acts-core/zig-out/bin/acts "$$tmpdir/acts/bin/acts"; \
+	cp README.md LICENSE "$$tmpdir/acts/" 2>/dev/null || true; \
+	tar czf "dist/acts-$(VERSION)-$$platform.tar.gz" -C "$$tmpdir" acts; \
+	rm -rf "$$tmpdir"; \
+	echo "Created dist/acts-$(VERSION)-$$platform.tar.gz"

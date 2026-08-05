@@ -5,12 +5,11 @@ dist/
 .story/
 .acts/bin/
 .acts/cbm/
-.acts/mcp-server/node_modules/
-.acts/mcp-server/dist/
-__pycache__/
-*.pyc
+.acts/plugin-state.json
+.acts/*.db
 
 # Zig build artifacts
 acts-core/.zig-cache/
 acts-core/zig-out/
 acts-core/*.db
+acts-core/vendor/

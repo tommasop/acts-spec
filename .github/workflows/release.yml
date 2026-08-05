@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*'
+      - '[0-9]*'
 
 permissions:
   contents: write
@@ -43,17 +44,20 @@ jobs:
 
       - name: Package
         run: |
+          # Version from the tag (strip a leading 'v' if present) so archive
+          # names match what install.sh downloads: acts-<version>-<platform>.tar.gz
+          VERSION="${GITHUB_REF_NAME#v}"
           mkdir -p dist
           cp acts-core/zig-out/bin/acts dist/acts-${{ matrix.name }}
           chmod +x dist/acts-${{ matrix.name }}
           cd dist
-          tar czf acts-${{ matrix.name }}.tar.gz acts-${{ matrix.name }}
+          tar czf acts-${VERSION}-${{ matrix.name }}.tar.gz acts-${{ matrix.name }}
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: acts-${{ matrix.name }}
-          path: dist/acts-${{ matrix.name }}.tar.gz
+          path: dist/acts-*.tar.gz
 
   release:
     name: Create Release
