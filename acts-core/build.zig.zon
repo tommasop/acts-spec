@@ -1,6 +1,6 @@
 .{
     .name = "acts-core",
-    .version = "2.1.1",
+    .version = "2.1.2",
     .minimum_zig_version = "0.13.0",
     .dependencies = .{},
     .paths = .{
