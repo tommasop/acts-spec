@@ -45,9 +45,10 @@
         }
       },
       "notes": [
-        ".acts/changes/v2-redesign/notes/1785923038.md"
+        ".acts/changes/v2-redesign/notes/1785923038.md",
+        ".acts/changes/v2-redesign/notes/1785923751.md"
       ],
-      "checkpoint": "all acceptance criteria implemented; verify passes; ready for PR review",
+      "checkpoint": "MERGED: ACTS v2 git-native redesign landed on master",
       "pr": {
         "url": "https://github.com/tommasop/acts-spec/pull/1",
         "approved": true
