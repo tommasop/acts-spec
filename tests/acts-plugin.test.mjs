@@ -59,10 +59,10 @@ try {
   const tools = await hooks.tools();
 
   // 2. Core tools registered
-  for (const n of ['acts', 'acts_context', 'acts_mode']) {
+  for (const n of ['acts', 'acts_context', 'acts_mode', 'acts_zeplin']) {
     assert.ok(tools[n] && typeof tools[n].handler === 'function', `missing tool: ${n}`);
   }
-  ok('acts / acts_context / acts_mode tools registered');
+  ok('acts / acts_context / acts_mode / acts_zeplin tools registered');
 
   // 3. acts tool passes command through to binary
   const res = await tools.acts.handler({ command: 'verify c1' });
@@ -75,7 +75,12 @@ try {
   assert.ok(ctx.content[0].text.includes('ACTS_CALLED:context c1'), 'acts_context passes context <id>');
   ok('acts_context emits context pack for a change');
 
-  // 5. System context includes stack info from manifest
+  // 5. acts_zeplin returns a helpful error when the contract script is absent (offline)
+  const zp = await tools.acts_zeplin.handler({ url: 'https://app.zeplin.io/project/abc/flow/xyz' });
+  assert.ok(zp.content[0].text.includes('acts-zeplin-contract.mjs'), 'acts_zeplin references the contract script');
+  ok('acts_zeplin handles missing script gracefully offline');
+
+  // 6. System context includes stack info from manifest
   const out = { system: [] };
   await hooks['experimental.chat.system.transform']({}, out);
   const sys = out.system.join('\n');
@@ -83,7 +88,7 @@ try {
   assert.ok(sys.includes('JWT middleware'), 'system context lists changes');
   ok('system transform injects v2 stack context');
 
-  // 6. Bootstrap injected into first user message
+  // 7. Bootstrap injected into first user message
   const msg = { messages: [{ info: { role: 'user' }, parts: [{ type: 'text', text: 'hello' }] }] };
   await hooks['experimental.chat.messages.transform']({}, msg);
   const first = msg.messages[0].parts[0].text;

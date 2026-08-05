@@ -38,11 +38,13 @@ ACTS coordinates human + agent development on a shared repo. **Git is the system
 | `acts checkpoint <id> -s <summary>` | Record a status checkpoint. |
 | `acts redirect <id> --accept <criteria>` | Update scope mid-flight without context loss. |
 | `acts scope <id> <file>` | Check file ownership (derived from diffs). |
+| `acts migrate [<story-id>]` | Import a v1 SQLite story into a v2 stack. |
 | `acts validate` | Validate manifest + branch consistency. |
 
 ## Workflow
 
 1. **Plan** — use spec-kit / superpowers for spec, plan, task breakdown (outside ACTS).
+   - If a **Zeplin design link** is given, extract the API contract first: `acts_zeplin <url>` (or `node acts-zeplin-contract.mjs --flow <url>` / `--scenario <url>`). Feed the inferred endpoints + fields into acceptance criteria and use the flow path to sequence changes.
 2. **Start a stack**: `acts stack create <id> -t "<title>"`.
 3. **Add a change**: `acts change add <id> -t "<title>" --accept "<criteria>"`. This checks out the new branch.
 4. **Load context**: `acts context <id>` — read acceptance criteria, parent chain, verification status, notes, and changed files.

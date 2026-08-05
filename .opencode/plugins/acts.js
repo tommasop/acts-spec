@@ -275,6 +275,45 @@ verify -> review (PR) -> approve -> stack land -> note + checkpoint + validate.
           }
         },
 
+        // ─── Zeplin Contract Tool ───────────────
+        acts_zeplin: {
+          description: 'Extract an API contract from a Zeplin flow or scenario link (via acts-zeplin-contract.mjs) ' +
+            'for analysis and planning. Use when a design link is given. Detects flow vs scenario URLs.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              url: { type: 'string', description: 'Zeplin link (flow board, scenario, or zpl.io shortlink)' },
+              notes: { type: 'boolean', description: 'Include screen notes/annotations (slower)' }
+            },
+            required: ['url']
+          },
+          handler: async ({ url, notes = false }) => {
+            const script = path.join(__dirname, '..', 'acts-zeplin-contract.mjs');
+            if (!fs.existsSync(script)) {
+              return {
+                content: [{ type: 'text', text: 'acts-zeplin-contract.mjs not found in project root.' }],
+                isError: true
+              };
+            }
+            const kind = /\/flow\//i.test(url) ? 'flow' : 'scenario';
+            const args = [script, '--' + kind, url, ...(notes ? ['--notes'] : [])];
+            try {
+              const result = execFileSync('node', args, {
+                encoding: 'utf8',
+                cwd: directory,
+                timeout: 120000,
+                stdio: ['pipe', 'pipe', 'pipe']
+              });
+              return { content: [{ type: 'text', text: result }] };
+            } catch (error) {
+              return {
+                content: [{ type: 'text', text: `acts_zeplin error: ${error.stderr || error.message}\n\nSet ZEPLIN_ACCESS_TOKEN or configure the zeplin MCP server in opencode.json.` }],
+                isError: true
+              };
+            }
+          }
+        },
+
         // ─── Mode Tool ──────────────────────────
         acts_mode: {
           description: 'Control ACTS plugin mode. Modes: off (disable ACTS context), ' +

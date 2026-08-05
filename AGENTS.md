@@ -53,6 +53,7 @@ This project uses [superpowers](https://github.com/obra/superpowers) for agent w
 - `acts checkpoint <id> -s <summary>` — Record a status checkpoint
 - `acts redirect <id> --accept <criteria>` — Update scope mid-flight without context loss
 - `acts scope <id> <file>` — Check file ownership (derived from diffs)
+- `acts migrate [<story-id>]` — Import a v1 SQLite story into a v2 stack (reads `.acts/acts.db` via `sqlite3`)
 - `acts validate` — Validate manifest + branch consistency
 
 Status Values: TODO, IN_PROGRESS, VERIFIED, IN_REVIEW, APPROVED, MERGED
@@ -64,6 +65,12 @@ Status Values: TODO, IN_PROGRESS, VERIFIED, IN_REVIEW, APPROVED, MERGED
 4. Human reviews on GitHub PR UI → `acts approve <change>`.
 5. `acts stack land` merges approved changes bottom-up.
 6. Agent records `acts note` + `acts checkpoint`, then `acts validate`.
+
+### Design Links (Zeplin)
+When a Zeplin link is given, extract the API contract before planning:
+- `acts_zeplin <url>` (plugin tool) or `node acts-zeplin-contract.mjs --flow <url>` / `--scenario <url>`
+- Feed inferred endpoints + fields into change `--accept` criteria; sequence changes along the flow path.
+- Requires `ZEPLIN_ACCESS_TOKEN` (env or opencode.json `mcp.zeplin.environment`).
 
 ### Data Storage
 - Coordination state: `.acts/stack.json` (git-committed manifest, diffable)

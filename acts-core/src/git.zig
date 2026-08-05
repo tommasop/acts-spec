@@ -118,8 +118,39 @@ pub const Tool = struct {
     gh: bool,
 };
 
+/// Detect git-spice specifically. The `gs` binary name collides with Ghostscript,
+/// so we verify the version output actually names git-spice.
+pub fn hasGitSpice(arena: std.mem.Allocator) bool {
+    const res = run(arena, &.{ "gs", "--version" }, 512) catch return false;
+    if (res.exit_code != 0) return false;
+    const out = std.mem.trim(u8, res.stdout, " \n\r");
+    if (out.len == 0) return false;
+    // git-spice prints "gs version 0.x" (or similar); Ghostscript prints "GPL Ghostscript ...".
+    if (std.ascii.indexOfIgnoreCase(out, "ghostscript") != null) return false;
+    return std.ascii.indexOfIgnoreCase(out, "gs") != null;
+}
+
 pub fn detectTools(arena: std.mem.Allocator) Tool {
-    return .{ .git_spice = hasTool(arena, "gs"), .gh = hasTool(arena, "gh") };
+    return .{ .git_spice = hasGitSpice(arena), .gh = hasTool(arena, "gh") };
+}
+
+/// Name of the default remote (e.g. "origin"), or null if none configured.
+pub fn defaultRemote(arena: std.mem.Allocator) ?[]const u8 {
+    const res = run(arena, &.{ "git", "remote" }, 512) catch return null;
+    if (res.exit_code != 0) return null;
+    var it = std.mem.tokenizeAny(u8, res.stdout, " \n\r");
+    return it.next();
+}
+
+/// Push the current branch (or `branch`) to `remote` with upstream tracking.
+pub fn pushBranch(arena: std.mem.Allocator, remote: []const u8, branch: []const u8) !CmdResult {
+    return run(arena, &.{ "git", "push", "-u", remote, branch }, 8192);
+}
+
+/// Whether the current branch has an upstream already.
+pub fn hasUpstream(arena: std.mem.Allocator) bool {
+    const res = run(arena, &.{ "git", "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}" }, 512) catch return false;
+    return res.exit_code == 0;
 }
 
 pub fn gitCommitCountOnBranch(arena: std.mem.Allocator, base: []const u8) !usize {

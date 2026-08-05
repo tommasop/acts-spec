@@ -36,6 +36,7 @@ const usage_text =
     \\Coordination:
     \\  scope <id> <file>                       Check file ownership (derived from diffs)
     \\  validate                                Validate manifest + branch consistency
+    \\  migrate [<story-id>]                    Import a v1 SQLite story into a v2 stack
     \\  version                                 Show version
     \\  help                                    Show this help
     \\
@@ -211,6 +212,9 @@ fn runCommand(allocator: std.mem.Allocator, cmd: []const u8, args: *const Args) 
     }
     if (std.mem.eql(u8, cmd, "validate")) {
         return cmdValidate(allocator);
+    }
+    if (std.mem.eql(u8, cmd, "migrate")) {
+        return cmdMigrate(allocator, args);
     }
     return error.UnknownCommand;
 }
@@ -515,20 +519,61 @@ fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
     const root = &v.object;
     const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
 
+    // Ensure we're on the change's branch so the PR reflects its code.
+    const cur_branch = (try git.currentBranch(allocator)) orelse "";
+    if (!std.mem.eql(u8, cur_branch, branch)) {
+        _ = try git.checkoutBranch(allocator, branch);
+    }
+
+    // Push the branch (and, when using git-spice, the rest of the stack).
+    const remote = git.defaultRemote(allocator) orelse {
+        try stdout("note: no git remote configured — cannot submit PR. Commit and push manually.\n", .{});
+        _ = try stack.setChangeString(v, id, "status", stack.status_in_review);
+        try stack.save(allocator, v);
+        return;
+    };
+
+    const push_res = try git.pushBranch(allocator, remote, branch);
+    if (push_res.exit_code != 0) {
+        try stderr("git push: {s}\n", .{std.mem.trim(u8, push_res.stderr, " \n\r")});
+        return error.PushFailed;
+    }
+
     // Build PR body from the context pack
     const body = try context.buildContextPack(allocator, v, id);
 
     const tools = git.detectTools(allocator);
     var pr_url: ?[]const u8 = null;
 
-    if (tools.gh) {
-        const head = branch;
+    if (tools.git_spice) {
+        // git-spice handles the full stack of PRs bottom-up.
+        const res = try git.run(allocator, &.{ "gs", "stack", "submit" }, 16384);
+        if (res.exit_code == 0) {
+            const trimmed = std.mem.trim(u8, res.stdout, " \n\r");
+            if (trimmed.len > 0) {
+                // Best-effort: surface any PR URL in gs output.
+                var it = std.mem.tokenizeAny(u8, trimmed, " \n\r");
+                while (it.next()) |tok| {
+                    if (std.mem.indexOf(u8, tok, "github.com/") != null or std.mem.indexOf(u8, tok, "gitlab.com/") != null) {
+                        pr_url = tok;
+                        break;
+                    }
+                }
+            }
+            try stdout("{s}\n", .{trimmed});
+        } else {
+            try stderr("gs stack submit: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
+            try stdout("note: git-spice failed — falling back to gh pr create.\n", .{});
+        }
+    }
+
+    if (pr_url == null and tools.gh) {
         const res = try git.run(allocator, &.{
             "gh",
             "pr",
             "create",
             "--head",
-            head,
+            branch,
             "--base",
             base,
             "--title",
@@ -542,8 +587,8 @@ fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
         } else {
             try stderr("gh pr create: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
         }
-    } else {
-        try stdout("note: gh CLI not found — PR not submitted. Push branch {s} manually.\n", .{branch});
+    } else if (pr_url == null and !tools.gh and !tools.git_spice) {
+        try stdout("note: neither gh nor gs CLI found — branch pushed to {s}; submit PR manually.\n", .{remote});
     }
 
     if (pr_url) |url| {
@@ -696,6 +741,180 @@ fn cmdValidate(allocator: std.mem.Allocator) !void {
             }
         }
     }
+}
+
+// ---------------------------------------------------------------------------
+// v1 → v2 migration
+// ---------------------------------------------------------------------------
+
+/// Migrate a v1 ACTS project (SQLite `.acts/acts.db`) to v2 (`.acts/stack.json`
+/// + git branches). Reads the v1 DB via the `sqlite3` CLI. For each v1 story
+/// (skipping `__maintenance__`), creates a v2 stack and maps its tasks to
+/// changes. Branches are created on demand with `--create-branches`.
+fn cmdMigrate(allocator: std.mem.Allocator, args: *const Args) !void {
+    const v1_db = ".acts/acts.db";
+    if (stack.manifestExists()) {
+        try stdout("a v2 stack already exists ({s}) — refusing to overwrite.\n", .{stack.manifest_path});
+        return error.StackAlreadyExists;
+    }
+    std.fs.cwd().access(v1_db, .{}) catch {
+        try stdout("no v1 database found ({s}) — nothing to migrate.\n", .{v1_db});
+        return;
+    };
+    if (!git.hasTool(allocator, "sqlite3")) {
+        try stdout("error: `sqlite3` CLI not found — required to read the v1 database.\n", .{});
+        return error.ToolMissing;
+    }
+
+    const story_id = if (args.positional.items.len >= 1) args.positional.items[0] else null;
+
+    // ── Query stories ─────────────────────────
+    const stories_sql = "SELECT id, title, status, type FROM stories WHERE id != '__maintenance__' ORDER BY id;";
+    const stories_res = try git.run(allocator, &.{ "sqlite3", "-separator", "|", v1_db, stories_sql }, 65536);
+    if (stories_res.exit_code != 0) {
+        try stderr("sqlite3: {s}\n", .{std.mem.trim(u8, stories_res.stderr, " \n\r")});
+        return error.MigrationFailed;
+    }
+
+    var stories = std.ArrayList([]const u8).init(allocator);
+    var it = std.mem.tokenizeAny(u8, stories_res.stdout, "\n");
+    while (it.next()) |line| try stories.append(line);
+
+    if (stories.items.len == 0) {
+        try stdout("v1 database has no migratable stories.\n", .{});
+        return;
+    }
+
+    // ── Pick the story to migrate ─────────────
+    const chosen = if (story_id) |sid| blk: {
+        var found: ?[]const u8 = null;
+        for (stories.items) |line| {
+            if (std.mem.startsWith(u8, line, sid) and line.len >= sid.len and line[sid.len] == '|') {
+                found = line;
+                break;
+            }
+        }
+        break :blk found orelse return error.StoryNotFound;
+    } else stories.items[0];
+
+    var fields = std.mem.splitScalar(u8, chosen, '|');
+    const sid = fields.next() orelse return error.MigrationFailed;
+    const stitle = fields.next() orelse sid;
+    const sstatus = fields.next() orelse "";
+    _ = sstatus;
+
+    // ── Create the v2 stack ───────────────────
+    if (!git.isGitRepo(allocator)) return error.NotGitRepo;
+    if (!validId(sid)) return error.InvalidStackId;
+    const base_branch = try std.fmt.allocPrint(allocator, "acts/{s}/base", .{sid});
+    const res = try git.createBranch(allocator, base_branch, "");
+    if (res.exit_code != 0) {
+        try stderr("git: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
+        return error.BranchConflict;
+    }
+
+    var root_map = std.json.ObjectMap.init(allocator);
+    try root_map.put("version", .{ .integer = 2 });
+    try root_map.put("id", .{ .string = sid });
+    try root_map.put("title", .{ .string = stitle });
+    try root_map.put("base_branch", .{ .string = base_branch });
+    var changes = std.json.Array.init(allocator);
+
+    // ── Query tasks for this story ────────────
+    const esc = try std.mem.replaceOwned(u8, allocator, sid, "'", "''");
+    const tasks_sql = try std.fmt.allocPrint(
+        allocator,
+        "SELECT id, title, status, review_status FROM tasks WHERE story_id = '{s}' ORDER BY id;",
+        .{esc},
+    );
+    const tasks_res = try git.run(allocator, &.{ "sqlite3", "-separator", "|", v1_db, tasks_sql }, 65536);
+    if (tasks_res.exit_code != 0) {
+        try stderr("sqlite3: {s}\n", .{std.mem.trim(u8, tasks_res.stderr, " \n\r")});
+        return error.MigrationFailed;
+    }
+
+    var tasks_it = std.mem.tokenizeAny(u8, tasks_res.stdout, "\n");
+    var idx: usize = 0;
+    var prev_tid: ?[]const u8 = null;
+    while (tasks_it.next()) |line| {
+        var f = std.mem.splitScalar(u8, line, '|');
+        const tid = f.next() orelse continue;
+        const ttitle = f.next() orelse continue;
+        const tstatus = f.next() orelse "";
+        const treview = f.next() orelse "";
+
+        idx += 1;
+        const slug = try slugify(allocator, ttitle);
+        const branch = try std.fmt.allocPrint(allocator, "acts/{s}/c{d}-{s}", .{ sid, idx, slug });
+
+        var entry = std.json.ObjectMap.init(allocator);
+        try entry.put("id", .{ .string = tid });
+        try entry.put("title", .{ .string = ttitle });
+        try entry.put("branch", .{ .string = branch });
+        if (prev_tid) |pt| {
+            try entry.put("parent", .{ .string = pt });
+        } else {
+            try entry.put("parent", .null);
+        }
+        prev_tid = tid;
+        try entry.put("acceptance", .{ .array = std.json.Array.init(allocator) });
+        try entry.put("verify", .{ .object = std.json.ObjectMap.init(allocator) });
+        try entry.put("notes", .{ .array = std.json.Array.init(allocator) });
+        try entry.put("checkpoint", .null);
+        try entry.put("status", .{ .string = statusFromV1(tstatus, treview) });
+
+        var pr = std.json.ObjectMap.init(allocator);
+        try pr.put("url", .null);
+        try pr.put("approved", .{ .bool = std.mem.eql(u8, treview, "approved") });
+        try entry.put("pr", .{ .object = pr });
+
+        // Preserve v1 file ownership as a session note
+        const files = try queryV1Files(allocator, v1_db, tid);
+        if (files.len > 0) {
+            var note = std.ArrayList(u8).init(allocator);
+            try note.writer().print("# migrated from ACTS v1 — files owned\n", .{});
+            for (files) |fp| {
+                try note.writer().print("- {s}\n", .{fp});
+            }
+            const dir = try std.fmt.allocPrint(allocator, ".acts/changes/{s}/notes", .{tid});
+            std.fs.cwd().makePath(dir) catch {};
+            const fname = try std.fmt.allocPrint(allocator, "{s}/v1-files.md", .{dir});
+            try std.fs.cwd().writeFile(.{ .sub_path = fname, .data = note.items });
+            _ = try stack.appendNote(allocator, .{ .object = root_map }, tid, fname);
+        }
+
+        try changes.append(.{ .object = entry });
+    }
+
+    try root_map.put("changes", .{ .array = changes });
+    try stack.save(allocator, .{ .object = root_map });
+
+    try stdout("migrated v1 story {s} → v2 stack (base branch {s}, {d} changes)\n", .{ sid, base_branch, idx });
+    try stdout("  next: acts change status c1  |  acts verify --all  |  acts review <id>\n", .{});
+}
+
+/// Query v1 task_files for a task id, returning the list of file paths.
+fn queryV1Files(allocator: std.mem.Allocator, v1_db: []const u8, tid: []const u8) ![][]const u8 {
+    const esc = try std.mem.replaceOwned(u8, allocator, tid, "'", "''");
+    const sql = try std.fmt.allocPrint(allocator, "SELECT file_path FROM task_files WHERE task_id = '{s}';", .{esc});
+    const res = try git.run(allocator, &.{ "sqlite3", "-separator", "|", v1_db, sql }, 65536);
+    var out = std.ArrayList([]const u8).init(allocator);
+    var it = std.mem.tokenizeAny(u8, res.stdout, "\n");
+    while (it.next()) |line| {
+        const trimmed = std.mem.trim(u8, line, " \r");
+        if (trimmed.len > 0) try out.append(trimmed);
+    }
+    return out.toOwnedSlice();
+}
+
+/// Map v1 task status + review_status to a v2 change status.
+fn statusFromV1(tstatus: []const u8, treview: []const u8) []const u8 {
+    if (std.mem.eql(u8, tstatus, "DONE")) {
+        if (std.mem.eql(u8, treview, "approved")) return stack.status_approved;
+        return stack.status_verified;
+    }
+    if (std.mem.eql(u8, tstatus, "IN_PROGRESS") or std.mem.eql(u8, tstatus, "BLOCKED")) return stack.status_in_progress;
+    return stack.status_todo;
 }
 
 // ---------------------------------------------------------------------------
@@ -853,4 +1072,12 @@ test "manifest validates missing title" {
     const v: std.json.Value = .{ .object = root };
     const problems = try stack.validate(a, v);
     try std.testing.expect(std.mem.indexOf(u8, problems, "missing 'title'") != null);
+}
+
+test "statusFromV1 maps v1 task statuses to v2 change statuses" {
+    try std.testing.expectEqualStrings(stack.status_approved, statusFromV1("DONE", "approved"));
+    try std.testing.expectEqualStrings(stack.status_verified, statusFromV1("DONE", "pending"));
+    try std.testing.expectEqualStrings(stack.status_in_progress, statusFromV1("IN_PROGRESS", "pending"));
+    try std.testing.expectEqualStrings(stack.status_in_progress, statusFromV1("BLOCKED", "changes_requested"));
+    try std.testing.expectEqualStrings(stack.status_todo, statusFromV1("TODO", "pending"));
 }
