@@ -40,7 +40,7 @@ jobs:
 
       - name: Build
         working-directory: ./acts-core
-        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe
+        run: zig build -Dtarget=${{ matrix.target }} -Doptimize=ReleaseSafe -Dversion=${GITHUB_REF_NAME#v}
 
       - name: Package
         run: |
