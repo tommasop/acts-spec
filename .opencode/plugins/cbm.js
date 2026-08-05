@@ -208,6 +208,46 @@ export const CbmPlugin = async ({ client, directory }) => {
     });
   };
 
+  // ─── ACTS v2 manifest reader (no binary needed) ──
+  const readStackManifest = () => {
+    const p = path.join(directory, '.acts', 'stack.json');
+    if (!fs.existsSync(p)) return null;
+    try {
+      return JSON.parse(fs.readFileSync(p, 'utf8'));
+    } catch {
+      return null;
+    }
+  };
+
+  const changeById = (id) => {
+    const manifest = readStackManifest();
+    if (!manifest || !Array.isArray(manifest.changes)) return null;
+    return manifest.changes.find(c => c.id === id) || null;
+  };
+
+  const changesByStatus = (status) => {
+    const manifest = readStackManifest();
+    if (!manifest || !Array.isArray(manifest.changes)) return [];
+    return manifest.changes.filter(c => (c.status || 'TODO') === status);
+  };
+
+  // Files changed on a change's branch relative to the stack base (git-derived).
+  const filesForChange = (changeId) => {
+    try {
+      const manifest = readStackManifest();
+      if (!manifest) return [];
+      const change = changeById(changeId);
+      if (!change || !change.branch) return [];
+      const base = manifest.base_branch || '';
+      const res = execFileSync('git', ['diff', '--name-only', base, change.branch], {
+        encoding: 'utf8', cwd: directory, stdio: ['pipe', 'pipe', 'pipe']
+      });
+      return res.split('\n').map(s => s.trim()).filter(Boolean);
+    } catch {
+      return [];
+    }
+  };
+
   // ─── System Context Builder ─────────────────
   const buildSystemContext = () => {
     if (!cbmBinary && !ensureCbm().ok) {
@@ -220,22 +260,22 @@ export const CbmPlugin = async ({ client, directory }) => {
     lines.push(`- Fleet repos (OpenCode references): ${Object.keys(references).join(', ')}`);
     lines.push(`- Native tools available: index_repository, search_graph, trace_path, query_graph, get_architecture, detect_changes, …`);
     lines.push(`- Fleet helpers: cbm_repos, cbm_index_all, cbm_changes, cbm_install`);
-    lines.push(`- ACTS bridge: acts_memory scope <task_id> maps a task's files to its repos`);
+    lines.push(`- ACTS bridge: acts_memory scope <change_id> maps a change's files to its repos`);
 
-    // Per active-task repo span (read ACTS state if present)
-    if (actsBinary) {
+    // Per active-change repo span (read ACTS v2 manifest if present)
+    const manifest = readStackManifest();
+    if (manifest) {
       try {
-        const state = JSON.parse(runActs(['state', 'read']));
-        const inProgress = (state.tasks || []).filter(t => t.status === 'IN_PROGRESS');
+        const active = (manifest.changes || []).filter(c => !['MERGED', 'APPROVED'].includes(c.status || ''));
         const spanned = [];
-        for (const task of inProgress) {
-          const files = task.files_touched || [];
+        for (const change of active) {
+          const files = filesForChange(change.id);
           const repos = new Set();
           for (const f of files) {
             const r = repoForFile(path.resolve(directory, f));
             if (r) repos.add(r);
           }
-          if (repos.size) spanned.push(`  - ${task.id} spans: ${[...repos].join(', ')}`);
+          if (repos.size) spanned.push(`  - ${change.id} spans: ${[...repos].join(', ')}`);
         }
         if (spanned.length) lines.push(...spanned);
       } catch { /* ignore — ACTS state not required for code intelligence */ }
@@ -362,13 +402,13 @@ export const CbmPlugin = async ({ client, directory }) => {
       }
     },
 
-    // ACTS bridge: map a task's files to repos
+    // ACTS bridge: map a change's files to repos
     'acts_memory': {
-      description: 'ACTS ↔ codebase-memory-mcp bridge. Subcommand: scope <task_id> maps an ACTS task\'s files_touched to the repos it spans.',
+      description: 'ACTS v2 ↔ codebase-memory-mcp bridge. Subcommand: scope <change_id> maps an ACTS change\'s changed files to the repos it spans.',
       inputSchema: {
         type: 'object',
         properties: {
-          command: { type: 'string', description: 'e.g. "scope T3"' }
+          command: { type: 'string', description: 'e.g. "scope c1"' }
         },
         required: ['command']
       },
@@ -378,23 +418,25 @@ export const CbmPlugin = async ({ client, directory }) => {
         const err = (m) => ({ content: [{ type: 'text', text: m }], isError: true });
         try {
           if (sub === 'scope') {
-            const taskId = args[1];
-            if (!taskId) return err('Usage: acts_memory scope <task_id>');
-            if (!actsBinary) return err('ACTS binary not found; cannot read task files.');
-            const task = JSON.parse(runActs(['task', 'get', taskId]));
-            const files = task.files_touched || [];
+            const changeId = args[1];
+            if (!changeId) return err('Usage: acts_memory scope <change_id>');
+            const change = changeById(changeId);
+            if (!change) return err(`Change ${changeId} not found in .acts/stack.json.`);
+            const files = filesForChange(changeId);
             const mapping = files.map(f => ({ file: f, repo: repoForFile(path.resolve(directory, f)) || 'unknown' }));
             const repos = [...new Set(mapping.map(m => m.repo))];
-            let text = `# Task ${taskId} — cross-repo span\n`;
+            let text = `# Change ${changeId} — cross-repo span\n`;
+            text += `Title: ${change.title || ''}\n`;
+            text += `Status: ${change.status || 'TODO'}\n`;
             text += `Repos touched: ${repos.join(', ') || 'none'}\n\n`;
             if (mapping.length) {
               for (const m of mapping) text += `- ${m.file} → ${m.repo}\n`;
             } else {
-              text += 'No files_touched recorded for this task yet.\n';
+              text += 'No changed files detected for this change yet (git diff empty or branch not pushed).\n';
             }
             return { content: [{ type: 'text', text }] };
           }
-          return err('Unknown subcommand. Available: scope <task_id>');
+          return err('Unknown subcommand. Available: scope <change_id>');
         } catch (error) {
           return { content: [{ type: 'text', text: `acts_memory error: ${error.stderr || error.message}` }], isError: true };
         }
@@ -403,13 +445,13 @@ export const CbmPlugin = async ({ client, directory }) => {
 
     // ─── Tech Lead Pre-Flight Analysis ────────
     acts_tech_lead_analysis: {
-      description: 'Pre-flight risk report: combines ACTS task context with CBM graph intelligence. ' +
+      description: 'Pre-flight risk report: combines ACTS v2 change context with CBM graph intelligence. ' +
         'Traces call chains with risk classification, identifies cross-repo impact, and produces ' +
         'a structured report for tech lead review before coding begins.',
       inputSchema: {
         type: 'object',
         properties: {
-          task_id: { type: 'string', description: 'ACTS task ID to analyze (e.g., T1)' },
+          task_id: { type: 'string', description: 'ACTS change ID to analyze (e.g., c1)' },
           depth: { type: 'number', description: 'Call chain trace depth (default: 3)' },
           risk_threshold: {
             type: 'string',
@@ -425,34 +467,25 @@ export const CbmPlugin = async ({ client, directory }) => {
         const RISK_ORDER = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
         const threshold = RISK_ORDER[risk_threshold] || 2;
 
-        if (!actsBinary) return err('ACTS binary not found. Cannot read task context.');
         if (!cbmBinary && !ensureCbm().ok) {
           return err('codebase-memory-mcp not available. Run `cbm_install` first.');
         }
 
-        // ─── Step 1: Read ACTS task context ──────
-        // Note: `acts task get` doesn't return files_touched, so we read from state
-        let task;
-        try {
-          const state = JSON.parse(runActs(['state', 'read']));
-          task = (state.tasks || []).find(t => t.id === task_id);
-          if (!task) {
-            return err(`Task ${task_id} not found in story ${state.story_id}`);
-          }
-        } catch (e) {
-          return err(`Failed to read ACTS state: ${e.stderr || e.message}`);
+        // ─── Step 1: Read ACTS v2 change context ──────
+        const change = changeById(task_id);
+        if (!change) {
+          return err(`Change ${task_id} not found in .acts/stack.json. Run \`acts stack status\` to list changes.`);
         }
 
-        const files = task.files_touched || [];
+        const files = filesForChange(task_id);
         if (files.length === 0) {
           return {
             content: [{
               type: 'text',
               text: `# Tech Lead Pre-Flight Report: ${task_id}\n\n` +
-                `**Task:** ${task.title}\n` +
-                `**Status:** ${task.status}\n\n` +
-                `No files_touched recorded for this task yet. ` +
-                `Add files to the task before running analysis.`
+                `**Change:** ${change.title}\n` +
+                `**Status:** ${change.status || 'TODO'}\n\n` +
+                `No changed files detected for this change yet (git diff empty or branch not pushed).`
             }]
           };
         }
@@ -622,9 +655,11 @@ export const CbmPlugin = async ({ client, directory }) => {
         const lines = [];
         lines.push(`# Tech Lead Pre-Flight Report: ${task_id}`);
         lines.push('');
-        lines.push(`**Task:** ${task.title}`);
-        lines.push(`**Status:** ${task.status}`);
-        if (task.description) lines.push(`**Description:** ${task.description}`);
+        lines.push(`**Change:** ${change.title}`);
+        lines.push(`**Status:** ${change.status || 'TODO'}`);
+        if (change.acceptance && change.acceptance.length) {
+          lines.push(`**Acceptance:** ${change.acceptance.join('; ')}`);
+        }
         lines.push(`**Analyzed:** ${new Date().toISOString()}`);
         lines.push(`**Files:** ${fileMapping.length} | **Symbols:** ${allSymbols.length} | **Depth:** ${depth}`);
         lines.push('');

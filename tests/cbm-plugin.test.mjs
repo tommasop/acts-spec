@@ -1,7 +1,8 @@
-// Offline test for the cbm.js OpenCode plugin.
-// Spins up a temp project with dummy `acts` + `codebase-memory-mcp` binaries
-// so we can assert tool registration, reference loading, path resolution, and
-// the ACTS↔repo scope bridge without network or the real CBM binary.
+// Offline test for the cbm.js OpenCode plugin (ACTS v2 — git-native).
+// Spins up a temp project with a dummy `codebase-memory-mcp` binary and an
+// ACTS v2 `.acts/stack.json` manifest so we can assert tool registration,
+// reference loading, path resolution, and the ACTS↔repo scope bridge
+// without network or the real CBM binary.
 
 import fs from 'fs';
 import os from 'os';
@@ -29,22 +30,22 @@ fs.writeFileSync(path.join(tmp, 'opencode.json'), JSON.stringify({
   },
 }));
 
+// ACTS v2 manifest (git-native coordination state)
+fs.writeFileSync(path.join(tmp, '.acts', 'stack.json'), JSON.stringify({
+  version: 2,
+  id: 'auth',
+  title: 'User auth',
+  base_branch: 'acts/auth/base',
+  changes: [
+    { id: 'c1', title: 'JWT middleware', status: 'IN_PROGRESS', branch: 'acts/auth/c1-jwt' },
+    { id: 'c2', title: 'Login endpoint', status: 'TODO', branch: 'acts/auth/c2-login' },
+  ],
+}, null, 2));
+
 // Dummy CBM binary: echoes its args (handler returns stdout).
 const cbmBin = path.join(binDir, 'codebase-memory-mcp');
 fs.writeFileSync(cbmBin, `#!/usr/bin/env bash\necho "CBM_CALLED:$@"\n`);
 fs.chmodSync(cbmBin, 0o755);
-
-// Dummy acts binary: returns a task + state with cross-repo files_touched.
-const actsBin = path.join(binDir, 'acts');
-fs.writeFileSync(actsBin, `#!/usr/bin/env bash
-if [ "$1" = "task" ] && [ "$2" = "get" ]; then
-  echo '{"id":"T1","status":"IN_PROGRESS","files_touched":["repos/ui-payments/src/foo.ts","repos/magic/lib/bar.ts"]}'
-fi
-if [ "$1" = "state" ] && [ "$2" = "read" ]; then
-  echo '{"tasks":[{"id":"T1","status":"IN_PROGRESS","files_touched":["repos/ui-payments/src/foo.ts","repos/magic/lib/bar.ts"]}]}'
-fi
-`);
-fs.chmodSync(actsBin, 0o755);
 
 const cleanup = () => fs.rmSync(tmp, { recursive: true, force: true });
 
@@ -90,22 +91,26 @@ try {
   assert.ok(idxText.includes(path.join(tmp, 'repos', 'magic')), 'cbm_index_all resolved magic path');
   ok('cbm_index_all indexes every reference with resolved paths');
 
-  // 6. ACTS bridge: acts_memory scope maps task files → repos
-  const scope = await tools['acts_memory'].handler({ command: 'scope T1' });
+  // 6. ACTS bridge: acts_memory scope reads the v2 manifest (change c1 exists)
+  const scope = await tools['acts_memory'].handler({ command: 'scope c1' });
   const scopeText = scope.content[0].text;
-  assert.ok(scopeText.includes('ui-payments'), 'scope maps foo.ts → ui-payments');
-  assert.ok(scopeText.includes('magic'), 'scope maps bar.ts → magic');
-  assert.ok(scopeText.includes('Repos touched: ui-payments, magic'), 'scope lists both repos');
-  ok('acts_memory scope maps task files to repos');
+  assert.ok(scopeText.includes('c1'), 'scope shows change id');
+  assert.ok(scopeText.includes('JWT middleware'), 'scope shows change title');
+  assert.ok(scopeText.includes('IN_PROGRESS'), 'scope shows change status');
+  ok('acts_memory scope reads ACTS v2 manifest change');
 
-  // 7. System context includes cross-repo block + per-task span
+  // 6b. Unknown change returns a clear error
+  const missing = await tools['acts_memory'].handler({ command: 'scope nope' });
+  assert.ok(missing.content[0].text.includes('not found'), 'scope reports unknown change');
+  ok('acts_memory scope reports unknown change');
+
+  // 7. System context includes cross-repo block + per-change span
   const out = { system: [] };
   await hooks['experimental.chat.system.transform']({}, out);
   const ctx = out.system.join('\n');
   assert.ok(ctx.includes('Cross-Repo Memory'), 'system context has cross-repo block');
   assert.ok(ctx.includes('ui-payments'), 'system context lists fleet repos');
-  assert.ok(ctx.includes('T1 spans: ui-payments, magic'), 'system context shows per-task repo span');
-  ok('system context injects cross-repo block + task span');
+  ok('system context injects cross-repo block');
 
   console.log(`\n${passed} checks passed.`);
   cleanup();

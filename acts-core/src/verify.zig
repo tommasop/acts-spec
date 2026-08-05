@@ -130,7 +130,7 @@ pub fn runStage(allocator: std.mem.Allocator, stage: QualityStage, command: ?[]c
             .command = try allocator.dupe(u8, cmd),
             .status = .fail,
             .exit_code = -1,
-            .output = try std.fmt.allocPrint(allocator, "Failed to spawn: {}", .{err}),
+            .output = try std.fmt.allocPrint(allocator, "Failed to spawn: {s}", .{@errorName(err)}),
             .duration_ms = 0,
         };
     };
