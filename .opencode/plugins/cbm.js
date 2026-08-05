@@ -520,17 +520,18 @@ export const CbmPlugin = async ({ client, directory }) => {
       inputSchema: {
         type: 'object',
         properties: {
-          task_id: { type: 'string', description: 'ACTS change ID to analyze (e.g., c1)' },
+          change_id: { type: 'string', description: 'ACTS change ID to analyze (e.g., c1)' },
+          task_id: { type: 'string', description: 'Deprecated alias for change_id' },
           depth: { type: 'number', description: 'Call chain trace depth (default: 3)' },
           risk_threshold: {
             type: 'string',
             enum: ['CRITICAL', 'HIGH', 'MEDIUM', 'LOW'],
             description: 'Minimum risk level to include in report (default: MEDIUM)'
           }
-        },
-        required: ['task_id']
+        }
       },
-      handler: async ({ task_id, depth = 3, risk_threshold = 'MEDIUM' }) => {
+      handler: async ({ change_id, task_id, depth = 3, risk_threshold = 'MEDIUM' }) => {
+        const id = change_id || task_id;
         const err = (m) => ({ content: [{ type: 'text', text: m }], isError: true });
 
         const RISK_ORDER = { CRITICAL: 4, HIGH: 3, MEDIUM: 2, LOW: 1 };
@@ -541,17 +542,17 @@ export const CbmPlugin = async ({ client, directory }) => {
         }
 
         // ─── Step 1: Read ACTS v2 change context ──────
-        const change = changeById(task_id);
+        const change = changeById(id);
         if (!change) {
-          return err(`Change ${task_id} not found in .acts/stack.json. Run \`acts stack status\` to list changes.`);
+          return err(`Change ${id} not found in .acts/stack.json. Run \`acts stack status\` to list changes.`);
         }
 
-        const files = filesForChange(task_id);
+        const files = filesForChange(id);
         if (files.length === 0) {
           return {
             content: [{
               type: 'text',
-              text: `# Tech Lead Pre-Flight Report: ${task_id}\n\n` +
+              text: `# Tech Lead Pre-Flight Report: ${id}\n\n` +
                 `**Change:** ${change.title}\n` +
                 `**Status:** ${change.status || 'TODO'}\n\n` +
                 `No changed files detected for this change yet (git diff empty or branch not pushed).`
@@ -722,7 +723,7 @@ export const CbmPlugin = async ({ client, directory }) => {
 
         // ─── Step 7: Build markdown report ─────────
         const lines = [];
-        lines.push(`# Tech Lead Pre-Flight Report: ${task_id}`);
+        lines.push(`# Tech Lead Pre-Flight Report: ${id}`);
         lines.push('');
         lines.push(`**Change:** ${change.title}`);
         lines.push(`**Status:** ${change.status || 'TODO'}`);

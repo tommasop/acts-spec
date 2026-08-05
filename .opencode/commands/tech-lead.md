@@ -5,11 +5,11 @@ agent: build
 
 ---
 
-Run a tech lead pre-flight analysis on task $ARGUMENTS.
+Run a tech lead pre-flight analysis on change $ARGUMENTS.
 
-Use the `acts_tech_lead_analysis` tool with task_id "$ARGUMENTS".
+Use the `acts_tech_lead_analysis` tool with change_id "$ARGUMENTS".
 
-If no task ID is provided, first run `acts state read` to list active tasks, then ask which task to analyze.
+If no change ID is provided, first run `acts stack status` to list active changes, then ask which change to analyze.
 
 After receiving the report, interpret the results and provide actionable recommendations:
 - Highlight any CRITICAL cross-repo impacts that require deployment coordination

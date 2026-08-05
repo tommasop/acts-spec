@@ -104,6 +104,14 @@ try {
   assert.ok(missing.content[0].text.includes('not found'), 'scope reports unknown change');
   ok('acts_memory scope reports unknown change');
 
+  // 6c. acts_tech_lead_analysis accepts change_id (v2) and reports no files when
+  //     the git diff is empty in the offline test fixture.
+  const tla = await tools.acts_tech_lead_analysis.handler({ change_id: 'c1' });
+  const tlaText = tla.content[0].text;
+  assert.ok(tlaText.includes('Tech Lead Pre-Flight Report'), 'tech-lead report header');
+  assert.ok(tlaText.includes('JWT middleware'), 'tech-lead reads change from manifest');
+  ok('acts_tech_lead_analysis accepts change_id');
+
   // 7. System context includes cross-repo block + per-change span
   const out = { system: [] };
   await hooks['experimental.chat.system.transform']({}, out);
