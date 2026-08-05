@@ -17,7 +17,7 @@
         "v1->v2 migration: acts migrate imports SQLite story",
         "opencode integration: skill + plugin + slash commands"
       ],
-      "status": "IN_REVIEW",
+      "status": "MERGED",
       "verify": {
         "test": {
           "cmd": "npm test && cd acts-core && zig build test",
@@ -50,7 +50,7 @@
       "checkpoint": "all acceptance criteria implemented; verify passes; ready for PR review",
       "pr": {
         "url": "https://github.com/tommasop/acts-spec/pull/1",
-        "approved": false
+        "approved": true
       }
     }
   ]
