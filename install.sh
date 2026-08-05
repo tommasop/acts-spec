@@ -81,15 +81,15 @@ install_cbm() {
     echo ""
     echo "Installing codebase-memory-mcp (cbm) via its official installer..."
     # cbm picks its own canonical location; we just invoke its installer.
-    curl -fsSL "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh" | bash -s -- --skip-config || {
-        echo "Warning: cbm install did not complete cleanly. Run \`acts setup\` to retry."
-    }
+    # The installer may exit non-zero when it finds pre-existing agent config,
+    # so verify the binary landed rather than treating that as fatal.
+    curl -fsSL "https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh" | bash -s -- --skip-config >/dev/null 2>&1 || true
     local cbm
     cbm="$(command -v codebase-memory-mcp 2>/dev/null || true)"
     if [ -n "$cbm" ]; then
         echo "cbm installed at: $cbm"
     else
-        echo "cbm not found on PATH after install."
+        echo "Warning: cbm binary not found after install. Run \`acts setup\` to retry."
     fi
 }
 
