@@ -1,7 +1,7 @@
 const std = @import("std");
 const git = @import("git.zig");
 
-const RAW_BASE = "https://raw.githubusercontent.com/tommasop/acts-spec/main";
+const RAW_BASE = "https://raw.githubusercontent.com/tommasop/acts-spec/master";
 
 /// Files (relative to the acts-spec repo root) that make up the OpenCode
 /// integration. `acts setup` installs them into the target project so a user
@@ -269,8 +269,12 @@ fn installIntegrationFiles(allocator: std.mem.Allocator, opts: SetupOptions) !us
             const url = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ RAW_BASE, rel });
             defer allocator.free(url);
             curlDownload(allocator, url, dest) catch |e| switch (e) {
-                error.DownloadFailed, error.CurlMissing => {
-                    std.debug.print("note: could not fetch {s} (offline?) — skipping.\n", .{rel});
+                error.CurlMissing => {
+                    std.debug.print("note: `curl` not found — cannot fetch {s}. Install curl or use `--source <acts-spec-dir>`.\n", .{rel});
+                    continue;
+                },
+                error.DownloadFailed => {
+                    std.debug.print("note: could not fetch {s} from {s} — offline or file missing. Use `--source <acts-spec-dir>` to copy from a local checkout.\n", .{ rel, RAW_BASE });
                     continue;
                 },
                 else => return e,
