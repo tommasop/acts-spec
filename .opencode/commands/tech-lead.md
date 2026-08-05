@@ -1,6 +1,6 @@
 ---
 
-description: Pre-flight risk analysis for a task — traces call chains, identifies cross-repo impact, and classifies risk
+description: Pre-flight risk analysis for a change — traces call chains, identifies cross-repo impact, and classifies risk
 agent: build
 
 ---
