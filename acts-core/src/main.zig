@@ -1184,12 +1184,20 @@ fn resolveCurrentChange(allocator: std.mem.Allocator, v: std.json.Value) ?[]cons
     return null;
 }
 
+// Swallow broken-pipe errors: piping to `grep -q` / `head` closes stdout early,
+// and that should not make `acts` fail (exit code is already decided by then).
 fn stdout(comptime fmt: []const u8, args: anytype) !void {
-    try std.io.getStdOut().writer().print(fmt, args);
+    std.io.getStdOut().writer().print(fmt, args) catch |err| switch (err) {
+        error.BrokenPipe => return,
+        else => return err,
+    };
 }
 
 fn stderr(comptime fmt: []const u8, args: anytype) !void {
-    try std.io.getStdErr().writer().print(fmt, args);
+    std.io.getStdErr().writer().print(fmt, args) catch |err| switch (err) {
+        error.BrokenPipe => return,
+        else => return err,
+    };
 }
 
 test "validId rejects spaces and empty" {
