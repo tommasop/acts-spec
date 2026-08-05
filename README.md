@@ -1,63 +1,28 @@
 # ACTS v2.0.0
 
-**Agent Collaborative Tracking Standard** — A git-native coordination protocol for agent-aided development. A *stack* is a feature (base branch); a *change* is one unit of agent work (a stacked branch + PR). Verification is the gate; context is served on demand.
+**Agent Collaborative Tracking Standard** — A git-native coordination protocol for agent-aided development. Git is the system of record: a *stack* is a feature (base branch); a *change* is one unit of agent work (a stacked branch + PR). Verification is the gate; context is served on demand.
 
 [![CI](https://github.com/tommasop/acts-spec/actions/workflows/ci.yml/badge.svg)](https://github.com/tommasop/acts-spec/actions/workflows/ci.yml)
 [![Release](https://github.com/tommasop/acts-spec/actions/workflows/release.yml/badge.svg)](https://github.com/tommasop/acts-spec/releases)
 
 ## What is ACTS?
 
-ACTS is a protocol for coordinating AI-assisted software development across multiple sessions, developers, and tools. It prevents context loss, enforces code review gates, tracks file ownership, and maintains an audit trail of decisions.
+ACTS is a protocol for coordinating AI-assisted software development across multiple sessions, developers, and tools. It prevents context loss, enforces verification before review, tracks file ownership, and keeps a durable record of decisions.
 
 **Key features:**
 
-- **SQLite-backed state** — Structured data (stories, tasks, gates, decisions) in `.acts/acts.db`
-- **Gate enforcement at database level** — SQLite triggers prevent invalid state transitions
-- **WAL mode** — Concurrent multi-story access with queued writes
-- **Multi-story development** — Git worktrees with cross-story ownership enforcement
-- **Human Review Experience (HRE)** — Vim-navigable terminal review with quality gates, agent rationale, risk assessment, and multi-file diff navigation
-- **File override system** — Human-only approval to modify files owned by DONE tasks in other stories
-- **Maintenance mode** — Quick bug fixes without story ceremony
-- **Standalone binary** — Single Zig executable, no runtime dependencies (except libc)
+- **Git-native state** — A *stack* is a feature (a base branch off `main`); a *change* is one unit of agent work (a stacked branch + PR). Progress is the git ref state itself — there is no sidecar database to drift or bypass.
+- **Manifest**: `.acts/stack.json` — the durable coordination board. Human-readable, diffable, committed to the base branch.
+- **Verification is the gate** — `acts verify` runs quality gates (test/lint/typecheck/build), records evidence, and **blocks review until it passes**. No manual preflight ceremony.
+- **PR-native review** — `acts review` pushes the branch and submits a stacked PR via `gh` (or git-spice `gs`), with the body = agent rationale + verification evidence + acceptance criteria.
+- **Durable context** — `acts context` emits a scoped context pack (acceptance criteria, parent chain, verification status, notes, changed files) so an agent can resume work across sessions without re-explaining.
+- **Ownership derived from git** — `acts scope` checks whether a file belongs to a change's diff; no manual ownership tables.
+- **v1 → v2 migration** — `acts migrate` imports an existing v1 SQLite story into a v2 stack.
+- **Cross-repo orchestration** — the `cbm` OpenCode plugin wraps [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) to index OpenCode `references` into a shared knowledge graph; native tools (`trace_path`, `query_graph`, …) and `acts_memory scope` trace calls and map impact across repos (`CROSS_*` edges)
+- **Standalone binary** — single Zig executable, no runtime dependencies (except libc)
 - **Cross-platform** — Linux (x86_64, aarch64), macOS (x86_64, aarch64)
-- **Cross-repo orchestration** — The `cbm` OpenCode plugin wraps [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) to index OpenCode `references` into a shared knowledge graph; native tools (`trace_path`, `query_graph`, …) and `acts_memory scope` trace calls and map impact across repos (`CROSS_*` edges)
 
 ## Installation
-
-### One-Line Installer (Recommended)
-
-```bash
-# System-wide install
-bash <(curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/master/install.sh)
-
-# Project-local install (to ./.acts/bin/)
-bash <(curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/master/install.sh) --local
-
-# Update to latest (auto-migrates existing projects)
-bash <(curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/master/install.sh) --update
-```
-
-Or using Make:
-
-```bash
-make install        # System-wide
-make install-local  # Project-local
-make update         # Update existing
-```
-
-### Manual Install (Pre-built Binaries)
-
-Download from [GitHub Releases](https://github.com/tommasop/acts-spec/releases):
-
-```bash
-# Linux x86_64
-curl -L https://github.com/tommasop/acts-spec/releases/download/v1.3.0/acts-1.3.0-linux-x86_64.tar.gz | tar xz
-sudo mv acts/bin/acts /usr/local/bin/acts
-
-# macOS Apple Silicon
-curl -L https://github.com/tommasop/acts-spec/releases/download/v1.3.0/acts-1.3.0-macos-aarch64.tar.gz | tar xz
-sudo mv acts/bin/acts /usr/local/bin/acts
-```
 
 ### Build from Source
 
@@ -65,524 +30,245 @@ Requires [Zig 0.13.0](https://ziglang.org/download/):
 
 ```bash
 cd acts-core
-zig build release -Dversion=1.3.0
+zig build release -Dversion=2.0.0
 # Binary: zig-out/bin/acts
 ```
 
 ### Project Setup
 
 ```bash
-# Option 1: Use installer
-make install-local
-
-# Option 2: Manual copy
+# Option 1: Local copy (recommended for a single project)
 cp acts-core/zig-out/bin/acts .acts/bin/acts
 
-# Option 3: Install globally
-zig build release && sudo cp zig-out/bin/acts /usr/local/bin/
+# Option 2: Install globally
+sudo cp acts-core/zig-out/bin/acts /usr/local/bin/
 ```
+
+> Pre-built binaries for Linux/macOS are published to [GitHub Releases](https://github.com/tommasop/acts-spec/releases) once tagged.
 
 ## Quick Start
 
-### Initialize a Story
+### Start a Stack (a feature)
 
 ```bash
-acts init PROJ-42 --title "Add user authentication"
-# Creates:
-#   .acts/acts.db      (SQLite database, WAL mode)
-#   .story/plan.md     (plan template)
-#   .story/spec.md     (spec template)
-#   .story/sessions/   (session directory)
+# 1. Start a stack — creates the base branch + manifest
+acts stack create auth -t "Add user authentication"
+# → stack auth created on branch acts/auth/base
+
+# 2. Add a change (one unit of agent work) on top of the stack
+acts change add c1 -t "JWT middleware" --accept "token validated on /api/*
+unit tests"
+# → change c1 added on branch acts/auth/c1-jwt-middleware
 ```
 
-### Read State
+### Work a Change
 
 ```bash
-acts state read
-# Outputs JSON:
-# {
-#   "story_id": "PROJ-42",
-#   "status": "ANALYSIS",
-#   "type": "feature",
-#   "tasks": [...]
-# }
+# Load the durable context pack (acceptance criteria, notes, files, verification)
+acts context c1
+
+# ... agent writes code on the change branch ...
+
+# Run quality gates — records evidence; gates review
+acts verify c1
+#   test: PASS (npm test) [107ms]
+#   lint: PASS (npm run lint) [99ms]
+#   build: PASS (npm run build) [135ms]
 ```
 
-### Update State
+### Review (stacked PR)
 
 ```bash
-echo '{"status": "APPROVED", "spec_approved": true}' | acts state write --story PROJ-42
+# Submit a stacked PR (verify must pass; pushes branch, then gh/gs)
+acts review c1
+# → PR submitted: https://github.com/you/repo/pull/12
+
+# Human reviews on GitHub → approve
+acts approve c1
+
+# Merge approved changes bottom-up
+acts stack land
 ```
 
-### Manage Tasks
+### Track Status
 
 ```bash
-# Create task (auto-assigned to __maintenance__ story)
-acts task create BUG-1 --title "Fix null pointer" --labels '["bug","fix"]'
+acts stack status
+# Stack: auth — Add user authentication (base: acts/auth/base)
+#   └ VERIFIED  JWT middleware
 
-# Create task in a specific story
-acts task create T1 --title "Add login endpoint" --story PROJ-42
-
-# Start task (requires preflight gate)
-acts gate add --task T1 --type approve --status approved --by developer
-acts task update T1 --status IN_PROGRESS --assigned-to alice
-
-# Code review (enhanced HRE with vim navigation)
-acts review T1
-# → Auto-detects project type and runs quality gates (test, lint, typecheck, build)
-# → Shows agent rationale, risk assessment, previous rejections
-# → Multi-file diff with hunk navigation (]c/[c, ]f/[f, j/k, gg/G)
-# → Approve with 'a', reject with 'r', quit with 'q'
-
-# Approve or request changes:
-acts approve T1
-acts reject T1
-
-# Complete task
-acts task update T1 --status DONE
+acts change status c1
+# Change: c1 — JWT middleware
+#   status: VERIFIED
+#   branch: acts/auth/c1-jwt-middleware
+#   verified: yes
 ```
 
-### Multi-Story Development
+### Context Continuity
 
 ```bash
-# Create a new story with git worktree
-acts story create PROJ-43 --title "JWT refresh" --from master
-
-# List all stories
-acts story list
-
-# Switch active story
-acts story switch PROJ-43
-
-# Archive completed story
-acts story archive PROJ-42
-
-# Merge story (enforces all tasks DONE + reviews approved)
-acts story merge PROJ-43 --into master
-```
-
-### Check File Ownership
-
-```bash
-acts ownership map
-# Shows which DONE tasks own which files
-
-acts scope check --task T2 --file src/auth.ts
-# {
-#   "file_path": "src/auth.ts",
-#   "action": "error",
-#   "message": "File is owned by DONE task T1. Modifications require explicit approval."
-# }
-```
-
-### File Overrides (Human-Only)
-
-When a task needs to modify a file owned by a DONE task in another story:
-
-```bash
-# Agent requests override
-acts override request --file src/auth.ts --task T2 --reason "bugfix: null pointer in auth flow"
-
-# Human approves (AI agents CANNOT approve overrides)
-acts override approve 1 --by "alice"
-
-# Override expires after 24 hours automatically
-acts override list --pending
-```
-
-### Generate Changelog
-
-```bash
-acts changelog --story PROJ-42
-# Derives changelog from task labels, decisions, rejected approaches
-```
-
-### Validate Project
-
-```bash
-acts validate
-# Checks schema version, required files, session validity
-```
-
-## Workflow Guide
-
-### Full Developer Workflow
-
-```bash
-# 1. Initialize story
-acts init PROJ-42 --title "Add user authentication"
-
-# 2. Create tasks
-acts task create T1 --title "Add login endpoint" --story PROJ-42
-acts task create T2 --title "Add JWT middleware" --story PROJ-42
-
-# 3. Start work (requires preflight gate)
-acts gate add --task T1 --type approve --status approved --by alice
-acts task update T1 --status IN_PROGRESS --assigned-to alice
-
-# 4. Implement code
-# ... write code ...
-
-# 5. Code review (Human Review Experience)
-acts review T1
-#   → Auto-detects project type (npm, cargo, go, make, etc.)
-#   → Runs quality gates: test, lint, typecheck, build
-#   → Shows quality gate results with timing
-#   → Shows agent rationale (why the change was made)
-#   → Shows previous rejections (if any)
-#   → Shows file list with risk assessment (HIGH/MEDIUM/LOW)
-#   → Interactive vim-style navigation:
-#     j/k scroll, ]c/[c next/prev hunk, ]f/[f next/prev file
-#     gg/G go to top/bottom, a approve, r reject, q quit
-#     :qa/:cq ex-mode approve/reject, Ctrl-g show position
-#
-#   If approved:
-#     Task-review gate added by <user>
-#   If rejected:
-#     Gate marked as 'changes_requested'
-
-# 6. Complete task
-acts task update T1 --status DONE
-```
-
-### Quick Bug Fix (Maintenance Story)
-
-```bash
-# Create bug task (auto-assigned to __maintenance__)
-acts task create BUG-1 --title "Fix crash on startup" --labels '["bug","urgent"]'
-
-# No preflight gate needed for maintenance tasks
-acts task update BUG-1 --status IN_PROGRESS
-
-# ... fix the bug ...
-
-# Review and approve
-acts review BUG-1
-acts approve BUG-1
-acts task update BUG-1 --status DONE
-```
-
-### Updating ACTS
-
-```bash
-# Update system-wide installation (auto-migrates projects)
-bash <(curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/master/install.sh) --update
-
-# Or using Make
-make update
-
-# Verify version
-acts version
-```
-
-### Uninstalling
-
-```bash
-make uninstall
-# Or manually:
-rm -f /usr/local/bin/acts ~/.local/bin/acts ./.acts/bin/acts
+acts note c1 -m "Implemented middleware; needs token caching"
+acts checkpoint c1 -s "done: middleware core; blocked: caching; next: tests"
+acts redirect c1 --accept "token cached\nrefresh supported"
 ```
 
 ## Command Reference
 
-### Story Management
+### Stack Lifecycle
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `init <story-id>` | Initialize new story | `acts init PROJ-42` |
-| `story create <id>` | Create story with worktree | `acts story create PROJ-43 --title "..."` |
-| `story list` | List all stories | `acts story list --include-maintenance` |
-| `story switch <id>` | Switch active story | `acts story switch PROJ-43` |
-| `story archive <id>` | Archive completed story | `acts story archive PROJ-42` |
-| `story merge <id>` | Merge story into branch | `acts story merge PROJ-43 --into master` |
-| `story graph` | Show dependency graph | `acts story graph --format dot` |
+| Command | Description |
+|---------|-------------|
+| `stack create <id> [-t <title>]` | Start a new stack (base branch + manifest) |
+| `stack status [--json]` | Show stack tree + change statuses |
+| `stack land` | Merge APPROVED changes bottom-up |
 
-### State
+### Change Lifecycle
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `state read` | Read story state as JSON | `acts state read` |
-| `state write` | Write story state from JSON | `echo '{...}' \| acts state write --story PROJ-42` |
+| Command | Description |
+|---------|-------------|
+| `change add <id> -t <title> [--accept <criteria>]` | Add a change (branch) on top of the stack |
+| `change status [<id>]` | Show change details |
+| `verify [<id>] [--all]` | Run quality gates; record evidence (**gate for review**) |
+| `review <id>` | Submit stacked PR (requires verify to pass) |
+| `approve <id>` | Mark approved after human PR review |
+| `rework <id>` | Reopen for rework (clears approval) |
 
-### Tasks
+### Context Continuity
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `task create <id>` | Create a new task | `acts task create T1 --title "..." --story PROJ-42` |
-| `task get <id>` | Get task details | `acts task get T1` |
-| `task list` | List tasks | `acts task list --maintenance` |
-| `task update <id>` | Update task status | `acts task update T1 --status DONE` |
-| `task move <id>` | Move task to another story | `acts task move BUG-1 --to PROJ-42` |
+| Command | Description |
+|---------|-------------|
+| `context [<id>]` | Emit scoped context pack (durable task state) |
+| `note <id> -m <text>` | Append a session note |
+| `checkpoint <id> -s <summary>` | Record a status checkpoint |
+| `redirect <id> --accept <criteria>` | Update scope mid-flight without context loss |
 
-### Review
+### Coordination
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `review <id>` | Enhanced HRE review with vim navigation | `acts review T1` |
-| `approve <id>` | Approve task-review gate | `acts approve T1` |
-| `reject <id>` | Request changes | `acts reject T1` |
+| Command | Description |
+|---------|-------------|
+| `scope <id> <file>` | Check file ownership (derived from diffs) |
+| `validate` | Validate manifest + branch consistency |
+| `migrate [<story-id>]` | Import a v1 SQLite story into a v2 stack |
+| `version` / `help` | Show version / help |
 
-### Overrides (Human-Only)
+### Status Values
 
-| Command | Description | Example |
-|---------|-------------|---------|
-| `override request` | Request file override | `acts override request --file src/x.ts --task T2 --reason "..."` |
-| `override approve <id>` | Approve override (human only) | `acts override approve 1 --by "alice"` |
-| `override reject <id>` | Reject override | `acts override reject 1` |
-| `override list` | List overrides | `acts override list --pending` |
-
-### Gates
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `gate add` | Add gate checkpoint | `acts gate add --task T1 --type approve --status approved` |
-| `gate list` | List checkpoints | `acts gate list --task T1` |
-| `gate-sla` | Show gate SLA status | `acts gate-sla --breached` |
-
-### Decisions & Learnings
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `decision add` | Record decision | `echo '{...}' \| acts decision add` |
-| `decision list` | List decisions | `acts decision list --task T1` |
-| `approach add --rejected` | Record rejected approach | `echo '{...}' \| acts approach add --rejected` |
-| `question add` | Add open question | `echo '{...}' \| acts question add` |
-| `question resolve` | Resolve question | `acts question resolve 1 --resolution "..."` |
-
-### Ownership & Scope
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `ownership map` | Show file ownership | `acts ownership map` |
-| `scope check` | Check file scope | `acts scope check --task T1 --file src/auth.ts` |
-
-### Proactive Signals
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `presence set` | Set agent presence | `acts presence set --agent alice --task T1` |
-| `presence list` | Show active agents | `acts presence list` |
-| `unblock list` | Show unblock events | `acts unblock list` |
-| `unblock ack <id>` | Acknowledge unblock | `acts unblock ack 1` |
-| `review-queue` | Show review queue | `acts review-queue --story PROJ-42` |
-
-### Changelog
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `changelog` | Generate changelog | `acts changelog --story PROJ-42 --format md` |
-
-### Database
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `db checkpoint` | Run WAL checkpoint | `acts db checkpoint` |
-| `db status` | Show database status | `acts db status` |
-
-### Sessions
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `session parse` | Parse session markdown | `acts session parse file.md` |
-| `session validate` | Validate session | `acts session validate file.md` |
-| `session list` | List sessions for task | `acts session list --task T1` |
-
-### Operations
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `operation log` | Log operation | `echo '{...}' \| acts operation log --id op-1` |
-| `operation list` | List operations | `acts operation list` |
-| `operation show` | Show operation details | `acts operation show op-1` |
-
-### Validation
-
-| Command | Description | Example |
-|---------|-------------|---------|
-| `validate` | Full project validation | `acts validate` |
-| `migrate` | Force schema migration | `acts migrate` |
-| `version` | Show version | `acts version` |
+`TODO` → `IN_PROGRESS` → `VERIFIED` → `IN_REVIEW` → `APPROVED` → `MERGED`
 
 ## Architecture
 
 ### Data Model
 
-**SQLite** (`.acts/acts.db`) — Source of truth for structured data:
+**`.acts/stack.json`** — the coordination manifest (source of truth for coordination state):
 
-- `stories` — Story metadata, type, branch, worktree path, semver
-- `tasks` — Task definitions with status, assignments, labels
-- `task_files` — Many-to-many mapping of tasks to files
-- `task_dependencies` — Dependency graph
-- `gate_checkpoints` — Gate approvals with timestamps
-- `story_gates` — Story-level gates (story-approve, story-merge)
-- `decisions` — Recorded decisions with evidence
-- `rejected_approaches` — Cross-task learning
-- `open_questions` — Unresolved questions
-- `operation_log` — Audit trail
-- `active_story` — Current active story (singleton)
-- `unblock_events` — Dependency completion notifications
-- `review_queue` — Pending review tasks
-- `agent_presence` — Active agent tracking
-- `gate_sla` — Review deadline tracking
-- `file_conflicts` — Cross-story file conflict detection
-- `file_overrides` — Human-approved file override requests (24h expiry)
-
-**Markdown files** — Human-readable narratives:
-
-- `.story/plan.md` — Implementation plan
-- `.story/spec.md` — Specification and acceptance criteria
-- `.story/sessions/*.md` — Session summaries
-- `.story/tasks/<id>/notes.md` — Per-task notes
-
-### Gate Enforcement
-
-SQLite triggers enforce protocol gates at the database level:
-
-```sql
--- Cannot start task without preflight gate
-CREATE TRIGGER enforce_preflight_gate
-BEFORE UPDATE OF status ON tasks
-WHEN NEW.status = 'IN_PROGRESS' AND OLD.status = 'TODO'
-BEGIN
-  SELECT CASE WHEN (
-    SELECT COUNT(*) FROM gate_checkpoints
-    WHERE task_id = NEW.id AND gate_type = 'approve' AND status = 'approved'
-  ) = 0
-  THEN RAISE(ABORT, 'Cannot start task: preflight gate not approved')
-  END;
-END;
-
--- Cannot mark task DONE without task-review gate
-CREATE TRIGGER enforce_task_review_gate
-BEFORE UPDATE OF status ON tasks
-WHEN NEW.status = 'DONE' AND OLD.status != 'DONE'
-BEGIN
-  SELECT CASE WHEN (
-    SELECT COUNT(*) FROM gate_checkpoints
-    WHERE task_id = NEW.id AND gate_type = 'task-review' AND status = 'approved'
-  ) = 0
-  THEN RAISE(ABORT, 'Cannot mark task DONE: task-review gate not approved')
-  END;
-END;
-
--- Maintenance tasks auto-approve preflight gate
-CREATE TRIGGER auto_approve_maintenance_preflight
-BEFORE UPDATE OF status ON tasks
-WHEN NEW.status = 'IN_PROGRESS' AND OLD.status = 'TODO'
-BEGIN
-  INSERT OR IGNORE INTO gate_checkpoints (task_id, gate_type, status, approved_by)
-  SELECT NEW.id, 'approve', 'approved', '__system__'
-  FROM tasks t WHERE t.id = NEW.id AND t.story_id = '__maintenance__';
-END;
-
--- Cannot merge story with open tasks or unreviewed tasks
-CREATE TRIGGER enforce_story_merge
-BEFORE UPDATE OF status ON stories
-WHEN NEW.status = 'MERGED' AND OLD.status != 'MERGED'
-BEGIN
-  SELECT CASE WHEN EXISTS(
-    SELECT 1 FROM tasks WHERE story_id = NEW.id AND status != 'DONE'
-  ) THEN RAISE(ABORT, 'Cannot merge story: open tasks remain')
-  END;
-  SELECT CASE WHEN EXISTS(
-    SELECT 1 FROM tasks t WHERE t.story_id = NEW.id AND t.status = 'DONE'
-    AND NOT EXISTS (
-      SELECT 1 FROM gate_checkpoints gc WHERE gc.task_id = t.id
-      AND gc.gate_type = 'task-review' AND gc.status = 'approved'
-    )
-  ) THEN RAISE(ABORT, 'Cannot merge story: tasks without approved review')
-  END;
-END;
+```json
+{
+  "version": 2,
+  "id": "auth",
+  "title": "Add user authentication",
+  "base_branch": "acts/auth/base",
+  "changes": [
+    {
+      "id": "c1",
+      "title": "JWT middleware",
+      "branch": "acts/auth/c1-jwt-middleware",
+      "parent": null,
+      "status": "VERIFIED",
+      "acceptance": ["token validated on /api/*", "unit tests"],
+      "verify": {
+        "test": { "cmd": "npm test", "ok": true, "exit_code": 0, "duration_ms": 107 },
+        "lint": { "cmd": "npm run lint", "ok": true, "exit_code": 0, "duration_ms": 99 }
+      },
+      "notes": [".acts/changes/c1/notes/1785920187.md"],
+      "checkpoint": "done: middleware core; blocked: caching; next: tests",
+      "pr": { "url": "https://github.com/you/repo/pull/12", "approved": true }
+    }
+  ]
+}
 ```
 
-This means:
+- **Git branches** — the actual code truth. Each change is a stacked branch; landing merges it into the base branch.
+- **Session notes** — `.acts/changes/<id>/notes/*.md`, referenced from the manifest.
+- **Cross-repo knowledge graph** — `.acts/cbm/` (gitignored), built by the `cbm` OpenCode plugin.
 
-- An agent **cannot** bypass gates by editing files directly
-- Enforcement happens in SQLite, not in application code
-- Even if the binary is bypassed, the triggers still fire
+### Verification Gate
 
-### Proactive Triggers
+`acts verify` runs quality gates and records evidence into the manifest. A change **cannot be reviewed** until verification passes:
 
-In addition to enforcement triggers, ACTS uses proactive triggers that create useful state:
+- `review` refuses with `VerifyRequired` if any configured gate failed.
+- `verify --all` walks the stack bottom-up.
+- Quality gates are auto-detected from the repo (`Makefile`, `package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`, …) or configured explicitly via `.acts/acts.json`:
 
-- `notify_dependency_unblock` — Auto-creates unblock event when dependency completes
-- `auto_enqueue_review` — Auto-adds task to review queue when review gate is created
-- `cleanup_stale_presence` — Auto-removes agent presence entries older than 5 minutes
-- `set_review_sla` — Auto-sets 24-hour deadline for review gates
-- `detect_file_conflict` — Auto-detects when two stories claim the same file
+```json
+{
+  "quality_gate": {
+    "test": "npm test && cd acts-core && zig build test",
+    "lint": "node --check .opencode/plugins/acts.js",
+    "typecheck": null,
+    "build": "cd acts-core && zig build"
+  }
+}
+```
+
+Commands containing shell metacharacters (`&&`, `|`, `>`, `;`) are run via `sh -c`.
+
+### File Ownership
+
+Ownership is **derived from git diffs**, not stored:
+
+```bash
+acts scope c1 src/auth.ts
+# { "file_path": "src/auth.ts", "action": "ok", "message": "File is part of change c1's diff" }
+```
+
+If a file is not in the change's diff, `acts scope` returns `warn` — a signal to confirm it belongs to the task before editing.
 
 ## Integration Guides
 
-### OpenCode (Plugin)
+### OpenCode (Plugin + Skill)
 
-The OpenCode plugin provides seamless integration with automatic context injection and a native `acts` tool.
+The OpenCode plugin provides automatic context injection and native tools; a superpowers-style skill teaches agents the workflow.
 
-**Installation:**
+**Installation** — in `opencode.json`:
 
-```bash
-# In your project's opencode.json
+```json
 {
   "plugin": [
     "superpowers@git+https://github.com/obra/superpowers.git",
-    "acts-spec@git+https://github.com/tommasop/acts-spec.git"
-  ]
+    "./.opencode/plugins/acts.js",
+    "./.opencode/plugins/cbm.js"
+  ],
+  "permission": { "skill": { "acts": "allow" } }
 }
 ```
 
 **What the plugin does:**
 
-1. Injects ACTS bootstrap context into the first user message of every session
-2. Registers an `acts` tool that the agent can call directly
-3. Auto-discovers the binary at `.acts/bin/acts`
+1. Injects an ACTS v2 bootstrap + stack context into the first user message of every session
+2. Registers native tools: `acts`, `acts_context`, `acts_mode`, `acts_zeplin`
+3. Auto-discovers the binary at `.acts/bin/acts` (or `$PATH`)
+4. The `acts` skill (`.opencode/skills/acts/SKILL.md`) auto-activates so the agent loads context before coding
 
 **Agent usage:**
 
 ```
-# The agent automatically knows to:
-acts state read                           # Before writing code
-acts scope check --task T1 --file src/x   # Before modifying files
-acts gate add --task T1 --type task-review --status approved  # After review
+acts_context            # Load the context pack for the active change before coding
+acts "verify c1"        # Run quality gates (records evidence)
+acts "review c1"        # Submit the stacked PR
+acts "stack status"     # Show stack + change statuses
 ```
+
+**Zeplin design links** — when a design link is given, use `acts_zeplin <url>` (or `node acts-zeplin-contract.mjs --flow <url>` / `--scenario <url>`) to extract the inferred API contract and feed it into the change's acceptance criteria. Requires `ZEPLIN_ACCESS_TOKEN`.
 
 See [docs/INTEGRATION.md](docs/INTEGRATION.md) for details.
 
 ### Claude / Cursor / Other Editors (Manual)
 
-For editors without plugin support, agents use the binary via CLI commands.
+For editors without plugin support, agents use the binary via CLI commands described in this README. Add the ACTS v2 rules + commands to `AGENTS.md` (see [docs/templates/agents-minimal.md](docs/templates/agents-minimal.md)).
 
-**Setup:**
+## CI / CD
 
-1. Install the binary (pre-built or from source)
-2. Add to project `AGENTS.md`:
-
-   ```markdown
-   ## ACTS Commands
-   - Read state: `acts state read`
-   - Check ownership: `acts scope check --task <id> --file <path>`
-   - Add gate: `acts gate add --task <id> --type <type> --status approved`
-   ```
-
-**Agent workflow:**
-
-```bash
-# 1. Preflight
-acts state read
-acts gate add --task T1 --type approve --status approved --by developer
-acts task update T1 --status IN_PROGRESS
-
-# 2. Implementation
-# ... agent writes code ...
-
-# 3. Review
-acts review T1
-acts approve T1
-acts task update T1 --status DONE
-
-# 4. Session summary
-acts session validate .story/sessions/20260105-143022-alice.md
-```
-
-See [docs/INTEGRATION.md](docs/INTEGRATION.md) for platform-specific setup.
+ACTS ships with a CI workflow that builds the binary, runs unit + plugin tests, and exercises the full v2 lifecycle (stack create → change add → verify gate blocks review → verify → approve → land → validate). See [docs/ci-cd-examples.md](docs/ci-cd-examples.md) and [`.github/workflows/ci.yml`](.github/workflows/ci.yml).
 
 ## Development
 
@@ -594,60 +280,49 @@ acts-core/
 ├── build.zig.zon      # Package manifest
 ├── src/
 │   ├── main.zig       # CLI entrypoint and command dispatch
-│   ├── db.zig         # SQLite wrapper, CRUD, migrations
-│   ├── cli.zig        # Argument parsing
-│   ├── sessions.zig   # Markdown parser and validator
-│   └── schema.sql     # Embedded SQLite schema + triggers
-├── vendor/
-│   ├── sqlite3.c      # Vendored SQLite3 (amalgamation)
-│   └── sqlite3.h
-└── tests/             # Unit tests
+│   ├── stack.zig      # v2 manifest model + validation
+│   ├── git.zig        # git/gh/git-spice subprocess wrapper
+│   ├── verify.zig     # Quality-gate runner (detect + execute)
+│   └── context.zig    # Durable context pack builder
+└── tests/             # Zig unit tests
+.opencode/
+├── plugins/
+│   ├── acts.js        # ACTS v2 OpenCode plugin
+│   └── cbm.js         # codebase-memory-mcp plugin (cross-repo)
+├── skills/acts/       # superpowers-style skill
+└── commands/          # slash commands
+tests/                 # npm plugin tests (acts + cbm)
 ```
 
-### Build Commands
+### Build & Test Commands
 
 ```bash
 cd acts-core
-
-# Debug build
-zig build
-
-# Run tests
-zig build test
-
-# Release build (optimized)
-zig build release -Dversion=1.3.0
-
-# Cross-compile for all platforms
-zig build cross -Dversion=1.3.0
+zig build              # Debug build
+zig build test         # Zig unit tests
+zig build release -Dversion=2.0.0   # Optimized release
+cd ..
+npm test               # Plugin tests (acts-plugin + cbm-plugin)
 ```
 
 ### Adding a New Command
 
-1. Add command parser in `src/main.zig` (`handleXxx` function)
-2. Add database method in `src/db.zig`
-3. Update `printUsage()` with new command
-4. Register in command dispatch in `main()`
+1. Add a `cmd*` function in `src/main.zig`
+2. Register the dispatch in `runCommand`
+3. Add a helper in `src/stack.zig` / `src/git.zig` as needed
+4. Update the usage text and this README
 
-## Migration from v1.0.0
+## Migration from v1
 
-The installer automatically migrates existing projects when updating. Manual migration:
+ACTS v2 replaces the v1 SQLite-backed model (stories/tasks/gates) with a git-native model (stacks/changes). Import an existing v1 story:
 
 ```bash
-acts migrate
+# Requires the `sqlite3` CLI
+acts migrate LEGACY-42
+# → migrated v1 story LEGACY-42 → v2 stack (base branch acts/LEGACY-42/base, 3 changes)
 ```
 
-This adds:
-
-- WAL mode for concurrent access
-- Story type and labels columns
-- Maintenance story (`__maintenance__`)
-- Multi-story tables (story_gates, active_story, file_conflicts)
-- Proactive signal tables (unblock_events, review_queue, agent_presence, gate_sla)
-- New enforcement triggers (cross-story ownership, story merge)
-- New proactive triggers (unblock notifications, review queue, presence cleanup, SLA)
-- File override system (file_overrides table, human-only approval, 24h expiry)
-- Human Review Experience (quality gate auto-detection, vim navigation, risk assessment)
+`acts migrate` maps v1 tasks → v2 changes (preserving parent chains, statuses, and file ownership as session notes). See [docs/MIGRATION.md](docs/MIGRATION.md).
 
 ## License
 
@@ -656,9 +331,8 @@ MIT License — See [LICENSE](LICENSE)
 ## Contributing
 
 1. Run `acts validate` before committing
-2. Follow the ACTS protocol for your own contributions
-3. Ensure cross-compilation passes: `zig build cross`
-4. Run plugin tests: `npm test` (offline test for the `cbm` OpenCode plugin)
+2. Follow the ACTS v2 protocol for your own contributions
+3. Run plugin tests: `npm test` (offline tests for the `acts` and `cbm` OpenCode plugins)
 
 ## Version History
 

@@ -1,6 +1,6 @@
 # Minimal Viable ACTS
 
-The absolute minimum to try ACTS. One binary, one command.
+The absolute minimum to try ACTS v2. One binary, two commands.
 
 ---
 
@@ -9,28 +9,23 @@ The absolute minimum to try ACTS. One binary, one command.
 Install the `acts` binary:
 
 ```bash
-# Linux x86_64
-curl -L https://github.com/tommasop/acts-spec/releases/download/v1.0.0/acts-linux-x86_64.tar.gz | tar xz
-sudo mv acts-linux-x86_64 /usr/local/bin/acts
-
-# macOS Apple Silicon
-curl -L https://github.com/tommasop/acts-spec/releases/download/v1.0.0/acts-macos-aarch64.tar.gz | tar xz
-sudo mv acts-macos-aarch64 /usr/local/bin/acts
-```
-
-Or build from source (requires [Zig 0.13.0](https://ziglang.org/download/)):
-
-```bash
 cd acts-core
 zig build release
-sudo cp zig-out/bin/acts /usr/local/bin/
+sudo cp zig-out/bin/acts /usr/local/bin/acts
+```
+
+Or copy project-locally:
+
+```bash
+mkdir -p .acts/bin
+cp acts-core/zig-out/bin/acts .acts/bin/acts
 ```
 
 ---
 
-## The 2 Files You Need
+## The 1 File You Need
 
-### 1. AGENTS.md (Project Context + ACTS Rules)
+### AGENTS.md (Project Context + ACTS Rules)
 
 Create at repo root:
 
@@ -54,33 +49,36 @@ Create at repo root:
 
 ---
 
-## ACTS Integration
+## ACTS Integration (v2)
 
-This project uses ACTS (Agent Collaborative Tracking Standard) for multi-developer coordination.
+This project uses ACTS v2 — a git-native coordination protocol for agent-aided development.
 
 ### Rules
-- Agent MUST read state before writing code: `acts state read`
-- Agent MUST NOT modify files owned by completed tasks: `acts scope check --task <id> --file <path>`
-- Agent MUST record session summary before ending
-- Agent MUST stay within assigned task boundary
-- Agent MUST get developer approval before committing
-- Agent MUST run code review before task completion
+- Agent MUST load context before writing code: `acts context <change>`
+- Agent MUST NOT submit a change for review until `acts verify <change>` passes
+- Agent MUST record a session note + checkpoint before ending: `acts note` / `acts checkpoint`
+- Agent MUST stay within the change's scope: `acts scope <change> <file>`
+- Agent MUST get developer approval on the PR before `acts approve` / `acts stack land`
+- Agent MUST run `acts validate` before finishing
 
 ### ACTS Commands
-- `acts init <story-id>` — Initialize new ACTS story
-- `acts state read` — Read current story state
-- `acts state write --story <id>` — Update story state (JSON from stdin)
-- `acts task get <task-id>` — Get task details
-- `acts task update <id> --status <status>` — Update task status (enforces gates)
-- `acts gate add --task <id> --type <type> --status <status>` — Add gate checkpoint
-- `acts ownership map` — Show file ownership
-- `acts scope check --task <id> --file <path>` — Check if file is safe to modify
-- `acts validate` — Validate entire ACTS project
-- `acts migrate` — Force schema migration
+- `acts stack create <id> [-t <title>]` — Start a new stack (base branch + manifest)
+- `acts stack status` — Show stack tree + change statuses
+- `acts stack land` — Merge APPROVED changes bottom-up
+- `acts change add <id> -t <title> [--accept <criteria>]` — Add a change on top of the stack
+- `acts change status [<id>]` — Show change details
+- `acts verify [<id>] [--all]` — Run quality gates; record evidence (GATE for review)
+- `acts review <id>` — Submit stacked PR (requires verify to pass)
+- `acts approve <id>` — Mark approved after human PR review
+- `acts rework <id>` — Reopen for rework (clears approval)
+- `acts context [<id>]` — Emit scoped context pack (durable task state)
+- `acts note <id> -m <text>` — Append a session note
+- `acts checkpoint <id> -s <summary>` — Record a status checkpoint
+- `acts redirect <id> --accept <criteria>` — Update scope mid-flight
+- `acts scope <id> <file>` — Check file ownership (derived from diffs)
+- `acts validate` — Validate manifest + branch consistency
 
-### Gate Protocol
-1. Before starting task: `acts gate add --task <id> --type approve --status approved`
-2. Before completing task: `acts gate add --task <id> --type task-review --status approved`
+Status Values: TODO, IN_PROGRESS, VERIFIED, IN_REVIEW, APPROVED, MERGED
 
 ### Architecture
 [Your project architecture]
@@ -89,30 +87,22 @@ This project uses ACTS (Agent Collaborative Tracking Standard) for multi-develop
 [What your agent must never do]
 ```
 
-### 2. Initialize ACTS
-
-```bash
-acts init TEST-1 --title "My First ACTS Story"
-```
-
-This creates:
-- `.acts/acts.db` — SQLite database with schema and triggers
-- `.story/plan.md` — Plan template
-- `.story/spec.md` — Spec template
-- `.story/sessions/` — Session directory
-
 ---
 
 ## How to Test
 
 1. Create `AGENTS.md` at repo root
-2. Run `acts init TEST-1 --title "My First ACTS Story"`
+2. Start a stack:
+   ```bash
+   acts stack create demo -t "Demo"
+   acts change add c1 -t "First change" --accept "works"
+   ```
 3. Tell your AI agent:
 
-```
-Read AGENTS.md. Before writing any code, run `acts state read`.
-After writing code, record a session summary.
-```
+   ```
+   Read AGENTS.md. Run `acts context` before writing any code.
+   After writing code, run `acts verify`, then `acts review`.
+   ```
 
 4. See if the agent follows the rules
 
@@ -120,9 +110,9 @@ After writing code, record a session summary.
 
 ## What You Can Skip Initially
 
-- ❌ Review providers (skip for basic conformance)
-- ❌ Templates (write your own AGENTS.md)
-- ❌ Validation scripts (run `acts validate` later)
+- ❌ Stacked PRs (run `acts review` later; `acts verify` works locally)
+- ❌ OpenCode plugin (the CLI is enough)
+- ❌ Cross-repo memory (`cbm` plugin — add when you have multiple repos)
 
 ---
 
@@ -130,10 +120,10 @@ After writing code, record a session summary.
 
 Once basics work, add:
 
-1. **Session validation** — `acts session validate file.md`
-2. **Scope checking** — `acts scope check --task <id> --file <path>`
-3. **Decisions tracking** — `acts decision add` (JSON from stdin)
-4. **Strict mode** — Enable `conformance_level: "strict"` in `.acts/acts.json` for extra gates
+1. **Stacked PRs** — `acts review c1` (needs `gh` or git-spice)
+2. **Context continuity** — `acts note`, `acts checkpoint`, `acts redirect`
+3. **Cross-repo memory** — the `cbm` OpenCode plugin + `references`
+4. **Custom quality gates** — configure `.acts/acts.json`
 
 ---
 
@@ -143,21 +133,21 @@ Once basics work, add:
 - Agent writes code without checking what's been done
 - No record of what happened between sessions
 - No way to know what AI did vs what you did
-- No enforcement of review before completion
+- No verification before review
 
 **With ACTS:**
-- Agent reads state before coding (via `acts state read`)
-- SQLite triggers enforce gates (cannot bypass)
-- Session summaries capture decisions and context
-- File ownership prevents unauthorized modifications
+- Agent loads context before coding (`acts context`)
+- `acts verify` records quality-gate evidence; review is blocked until green
+- Session notes + checkpoints survive session boundaries
+- File ownership is derived from git diffs (`acts scope`)
 
 ---
 
 ## Next Steps
 
-Once you've tested with 2 files:
+Once you've tested with 1 file:
 
 1. Read the full [README](../README.md)
 2. Read the [Integration Guide](INTEGRATION.md) for your editor
-3. Install [superpowers](https://github.com/obra/superpowers) for agent workflow skills (TDD, planning, code review)
-4. Use [templates](./templates/) for team coordination
+3. Read the [FAQ](faq.md)
+4. Use [templates](./templates/) for AGENTS.md

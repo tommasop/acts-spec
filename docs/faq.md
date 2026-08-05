@@ -8,12 +8,13 @@ ACTS is a protocol that coordinates how developers use AI coding agents on share
 
 ACTS defines:
 
-1. **State** — A SQLite database (`.acts/acts.db`) tracking stories, tasks, and gates
-2. **Gates** — Points where humans must approve before proceeding (enforced at database level)
-3. **Sessions** — Records of what happened each time someone worked
-4. **Ownership** — Which completed tasks own which files
+1. **State** — A git-native manifest (`.acts/stack.json`) tracking stacks and changes
+2. **Verification** — `acts verify` runs quality gates and blocks review until they pass (the gate is evidence, not ceremony)
+3. **Context** — Scoped context packs (`acts context`) that survive session boundaries
+4. **Review** — Changes map to stacked PRs; review happens on GitHub/GitLab
+5. **Ownership** — Which change owns which files, derived from git diffs
 
-Your AI agent reads state and follows the rules. SQLite triggers enforce gates.
+Your AI agent reads the manifest and follows the rules. Git is the source of truth — there is no sidecar database to drift or bypass.
 
 ## What is AGENTS.md?
 
@@ -29,24 +30,24 @@ See the [AGENTS.md standard](https://agents.md/) for details.
 
 **Yes, for two reasons:**
 
-1. **Session summaries** — Remember what you did and why, even months later
-2. **Gate enforcement** — SQLite triggers prevent accidental state transitions
+1. **Context persistence** — `acts context` / `acts note` / `acts checkpoint` remember what you did and why, even across sessions
+2. **Verification gate** — agents can't claim "done" without quality-gate evidence
 
 ## Do I need ACTS if I already have agent rules (Cursor Rules, CLAUDE.md)?
 
 **Yes, because ACTS is above that layer:**
 
 - Cursor Rules tell your agent HOW to write code
-- ACTS tells your agent WHAT to check before writing, WHEN to stop, and HOW to hand off to others
+- ACTS tells your agent WHAT to check before writing, WHEN to stop (verify), and HOW to hand off (PRs)
 - ACTS uses AGENTS.md (the industry standard) while Cursor Rules use tool-specific formats
 
 ## Is this just for teams?
 
 No. Freelancers and open source maintainers benefit from:
 
-- Context persistence (session summaries)
-- Cost tracking (agent attribution)
-- Quality assurance (gate enforcement)
+- Context persistence (session notes + context packs)
+- Quality gates (verification before review)
+- Stacked PRs (small, reviewable slices of agent work)
 
 ## What AI tools does ACTS work with?
 
@@ -66,34 +67,33 @@ Any tool that can run CLI commands:
 ## How do I install ACTS?
 
 ```bash
-# Download pre-built binary
-curl -L https://github.com/tommasop/acts-spec/releases/download/v1.0.0/acts-linux-x86_64.tar.gz | tar xz
-sudo mv acts-linux-x86_64 /usr/local/bin/acts
+# Build from source (requires Zig 0.13.0)
+cd acts-core
+zig build release
+sudo cp zig-out/bin/acts /usr/local/bin/acts
 
-# Or build from source
-cd acts-core && zig build release
+# Or copy project-locally
+cp acts-core/zig-out/bin/acts .acts/bin/acts
 ```
 
 ## What's the minimum to try ACTS?
 
-3 things: the binary, `AGENTS.md`, and `acts init`:
+Two commands:
 
 ```bash
-acts init TEST-1 --title "My First ACTS Story"
-# Creates:
-#   .acts/acts.db      (SQLite database)
-#   .story/plan.md     (plan template)
-#   .story/spec.md     (spec template)
-#   .story/sessions/   (session directory)
+acts stack create demo -t "My First Stack"
+acts change add c1 -t "First change" --accept "works"
 ```
+
+Then work on the change branch, `acts verify c1`, `acts review c1`.
 
 See [Minimal Viable ACTS](minimal-viable-acts.md).
 
 ## Is this a framework I need to install?
 
 You install a single binary (`acts`). Everything else lives in your repo:
-- `.acts/acts.db` — SQLite state
-- `.story/` — Markdown narratives
+- `.acts/stack.json` — coordination manifest
+- `.acts/changes/<id>/notes/` — session notes
 - `AGENTS.md` — Project constitution
 
 ## How does ACTS compare to Cursor Rules / CLAUDE.md?
@@ -102,87 +102,59 @@ You install a single binary (`acts`). Everything else lives in your repo:
 |---|---|---|
 | Scope | One tool | Any tool |
 | Purpose | How to write code | How to coordinate work |
-| State | None | SQLite database |
-| Human oversight | None | Gates at key decisions |
+| State | None | `.acts/stack.json` manifest |
+| Human oversight | None | PR review + verification gate |
 | Multi-developer | Not addressed | First-class handoffs |
 | Industry standard | No (tool-specific) | Yes (AGENTS.md) |
 
 ## Can I use ACTS without git?
 
-No. ACTS is git-native. All state lives in the repository.
+No. ACTS is git-native. State lives in git branches and a manifest committed to the base branch.
 
 ## What happens if my agent doesn't follow ACTS?
 
-The agent will report non-compliance in the session summary's "Agent Compliance" section. This enables you to identify patterns and adjust agent configuration.
-
-SQLite triggers also prevent invalid state transitions even if the agent tries to bypass the binary.
+`acts verify` blocks `acts review` until quality gates pass, so an agent can't submit unreviewed work. Session notes record what actually happened, so you can identify compliance gaps.
 
 ## How much does ACTS cost?
 
 ACTS itself is free (MIT License).
 Your AI agent tool may have costs.
-ACTS tracks token usage in session summaries so you can see what you're spending.
 
-## What is strict mode?
+## What are stacks and changes?
 
-ACTS Strict adds extra gate types:
+- A **stack** is a feature: a base branch off `main` plus an ordered list of changes.
+- A **change** is one unit of agent work: a stacked branch + a PR.
 
-1. **commit-review** — Agent groups commits into batches and gets approval before continuing.
-2. **architecture-discuss** — Before making significant design decisions, agent presents reasoning and gets approval.
+The stack is like a PR stack (Graphite/git-spice style) — each change is a small, reviewable slice that CI and humans can verify independently.
 
-Enable in `.acts/acts.json`:
+## How does verification work?
+
+`acts verify` auto-detects your project's quality gates (npm/cargo/go/make/pytest/mix) or reads them from `.acts/acts.json`:
+
 ```json
-{
-  "conformance_level": "strict"
-}
+{ "quality_gate": { "test": "npm test", "lint": "npm run lint", "typecheck": null, "build": "npm run build" } }
 ```
 
-## Do I need superpowers?
+Results are recorded in the manifest. **`acts review` refuses to submit until verification passes.**
 
-No. ACTS works without superpowers. But superpowers improves the quality of individual agent sessions with TDD, systematic planning, subagent-driven development, and code review workflows.
+## What's the difference between v1 and v2?
 
-ACTS handles multi-developer coordination (state, handoffs, file ownership).
-Superpowers handles single-developer agent quality (TDD, planning, code review, debugging).
+v1 used a SQLite database with stories, tasks, and gates enforced by SQL triggers. v2 is **git-native**: stacks and changes are just branches and PRs; the manifest is a diffable file; verification is the gate. See [MIGRATION.md](MIGRATION.md).
 
-Install at: https://github.com/obra/superpowers
-
-## How do gates work?
-
-Gates are enforced by SQLite triggers in `.acts/acts.db`:
-
-```sql
--- Cannot start task without preflight gate
-CREATE TRIGGER enforce_preflight_gate
-BEFORE UPDATE OF status ON tasks
-WHEN NEW.status = 'IN_PROGRESS' AND OLD.status = 'TODO'
-BEGIN
-  SELECT CASE WHEN (
-    SELECT COUNT(*) FROM gate_checkpoints
-    WHERE task_id = NEW.id AND gate_type = 'approve' AND status = 'approved'
-  ) = 0
-  THEN RAISE(ABORT, 'Cannot start task: preflight gate not approved')
-  END;
-END;
-```
-
-This means an agent **cannot** bypass gates by editing files directly. The database enforces the rules.
-
-## Can I migrate from the old JSON-based ACTS?
-
-Yes. The binary can ingest old `.story/state.json`:
+## How do I migrate from v1?
 
 ```bash
-cat .story/state.json | acts state write --story <story-id>
+# Requires the sqlite3 CLI
+acts migrate LEGACY-42
 ```
 
-Then remove `.story/state.json` — SQLite is now the source of truth.
+Imports a v1 story into a v2 stack, mapping tasks→changes and preserving file ownership as notes. See [MIGRATION.md](MIGRATION.md).
 
 ## Where is the data stored?
 
 | Data | Location | Format |
 |------|----------|--------|
-| Story state, tasks, gates | `.acts/acts.db` | SQLite |
-| Decisions, approaches, questions | `.acts/acts.db` | SQLite |
-| Plan, spec | `.story/plan.md`, `.story/spec.md` | Markdown |
-| Session summaries | `.story/sessions/*.md` | Markdown |
-| Task notes | `.story/tasks/<id>/notes.md` | Markdown |
+| Stack/change coordination state | `.acts/stack.json` | JSON manifest (git-committed) |
+| Code truth | git branches / PRs | Git |
+| Session notes | `.acts/changes/<id>/notes/*.md` | Markdown |
+| Cross-repo knowledge graph | `.acts/cbm/` | Gitignored |

@@ -1,18 +1,23 @@
 # Migration Guide
 
-## Upgrading from v0.6.x to v1.x
+## Upgrading from v1.x to v2.0
 
-ACTS v1.0.0 replaced the JSON-based state backend with a SQLite database and consolidated all tooling into a single Zig binary. This guide covers the one-time migration steps.
+ACTS v2.0.0 replaced the SQLite-backed coordination model (stories, tasks, gates) with a **git-native** model (stacks, changes). This guide covers migrating an existing v1 project.
 
 ### What Changed
 
-| Legacy (v0.6.x) | New (v1.x) |
-|-----------------|------------|
-| `.story/state.json` | `.acts/acts.db` (SQLite) |
-| `.acts/lib/*.py` | `acts` binary |
-| `.acts/mcp-server/` | Removed (use binary directly) |
-| Python/TypeScript scripts | Single Zig executable |
-| Manual JSON edits | `acts state write` command |
+| v1.x | v2.0 |
+|------|------|
+| `.acts/acts.db` (SQLite) — stories, tasks, gates | `.acts/stack.json` (manifest) — stacks, changes |
+| `acts init <story>` — create story | `acts stack create <id>` — create stack (base branch) |
+| `acts state read` / `acts state write` | `acts stack status` / `acts change status` |
+| `acts task create/update` | `acts change add/status` |
+| `acts gate add` (preflight, task-review) | `acts verify` (quality gates; evidence is the gate) |
+| `acts review` (terminal HRE) | `acts review` (stacked PR via `gh`/git-spice) |
+| `acts scope check --task T1 --file X` | `acts scope c1 src/x.ts` |
+| `acts override request/approve` | Removed — ownership derived from git diffs |
+| Story worktrees | Stacked branches |
+| `acts story merge --into master` | `acts stack land` |
 
 ### Migration Steps
 
@@ -20,144 +25,86 @@ ACTS v1.0.0 replaced the JSON-based state backend with a SQLite database and con
 
 ```bash
 cp -r .acts/ .acts.backup/
-cp -r .story/ .story.backup/
 ```
 
-#### 2. Install the v1.x Binary
-
-```bash
-# Linux
-curl -L https://github.com/tommasop/acts-spec/releases/download/v1.2.0/acts-1.2.0-linux-x86_64.tar.gz | tar xz
-sudo mv acts/bin/acts /usr/local/bin/
-
-# macOS (aarch64)
-curl -L https://github.com/tommasop/acts-spec/releases/download/v1.2.0/acts-1.2.0-macos-aarch64.tar.gz | tar xz
-sudo mv acts/bin/acts /usr/local/bin/
-```
-
-Or build from source:
+#### 2. Install the v2 Binary
 
 ```bash
 cd acts-core
-zig build -Doptimize=ReleaseSafe -Dversion=1.2.0
+zig build release -Dversion=2.0.0
 sudo cp zig-out/bin/acts /usr/local/bin/
 ```
 
-#### 3. Migrate State from state.json to SQLite
+#### 3. Import a v1 Story
 
-If you have a `.story/state.json` file, import it into the database:
-
-```bash
-# Initialize ACTS first (creates the SQLite database)
-acts init <story-id> --title "Your Story Title"
-
-# Import old state
-cat .story/state.json | acts state write --story <story-id>
-```
-
-Verify the migration worked:
+Requires the `sqlite3` CLI:
 
 ```bash
-acts state read
+# Import the first migratable story
+acts migrate
+
+# Or import a specific story
+acts migrate LEGACY-42
 ```
 
-#### 4. Remove Legacy Files
+`acts migrate` reads `.acts/acts.db` and:
 
-After confirming the migration succeeded:
+- Creates a v2 stack whose base branch is `acts/<story-id>/base`
+- Maps each v1 task → a v2 change (preserving parent chains and ordering)
+- Maps statuses:
+  - v1 `DONE` + `approved` review → v2 `APPROVED`
+  - v1 `DONE` + no approval → v2 `VERIFIED`
+  - v1 `IN_PROGRESS` / `BLOCKED` → v2 `IN_PROGRESS`
+  - v1 `TODO` → v2 `TODO`
+- Preserves v1 file ownership as a session note (`.acts/changes/<id>/notes/v1-files.md`)
+
+Verify:
 
 ```bash
-# Remove old state file (now in SQLite)
-rm .story/state.json
-
-# Remove legacy Python library
-rm -rf .acts/lib/
-
-# Remove legacy MCP server
-rm -rf .acts/mcp-server/
-```
-
-#### 5. Update .acts/acts.json Manifest
-
-Update the `manifest_version` to reflect the current version:
-
-```json
-{
-  "manifest_version": "1.2.0",
-  ...
-}
-```
-
-#### 6. Validate
-
-```bash
+acts stack status
 acts validate
 ```
 
-Expected output:
-```
-Schema version: 7
-Found: .story/plan.md
-Found: .story/spec.md
-Found: .story/sessions/
+> Only one v1 story is imported per invocation (the `__maintenance__` story is skipped). Run `acts migrate <story-id>` for each story you want to move.
 
-Validation PASSED
-```
+#### 4. Remove v1 State (optional)
 
-### What Stays the Same
-
-| File | Status |
-|------|--------|
-| `.story/plan.md` | Unchanged |
-| `.story/spec.md` | Unchanged |
-| `.story/sessions/*.md` | Unchanged |
-| `.story/tasks/<id>/notes.md` | Unchanged |
-| `.acts/acts.json` | Unchanged (config manifest) |
-
-### Troubleshooting
-
-#### "state.json not found"
-
-You may have scripts or docs referencing `.story/state.json`. Update them to use:
+After confirming the migration, you can delete the v1 database:
 
 ```bash
-acts state read              # Human-readable
-acts state read --format json  # Machine-readable (for agents)
+rm .acts/acts.db
 ```
 
-#### Schema migration failed
+#### 5. Update AGENTS.md
 
-Force a schema migration:
+Replace the v1 ACTS section with the v2 rules + commands (see [docs/templates/agents-minimal.md](templates/agents-minimal.md)).
 
-```bash
-acts migrate
-```
+---
 
-#### Restore from backup
+## Upgrading Between v2.x Versions
 
-If something goes wrong:
+Minor version upgrades within v2.x only require replacing the binary:
 
 ```bash
-rm -rf .acts/ .story/
-cp -r .acts.backup/ .acts/
-cp -r .story.backup/ .story/
+# Replace binary
+cp acts-core/zig-out/bin/acts /usr/local/bin/acts
+
+# Verify
+acts validate
 ```
 
 ---
 
-## Upgrading Between v1.x Versions
+## FAQ on Migration
 
-Minor version upgrades within v1.x only require replacing the binary. The SQLite schema auto-migrates on first run:
+### Do I have to migrate?
 
-```bash
-# Replace binary
-acts migrate  # optional, happens automatically on next command
+No. You can start fresh with `acts stack create`. Migration is only needed if you want to preserve v1 story/task history.
 
-acts validate  # verify
-```
+### What happens to my v1 decisions and rejected approaches?
 
-Check schema version:
+They are not imported into v2. The v2 model keeps coordination state minimal (in `.acts/stack.json`) and durable narrative in session notes. If you need the history, keep the `.acts.backup/` copy.
 
-```bash
-acts validate | head -1
-# Schema version: 7
-```
+### Why was SQLite removed?
+
+The v1 sidecar database could drift from the repo and be bypassed. In v2, git branches/PRs are the system of record — a stack is just branches, and the manifest is a diffable file committed to the base branch.

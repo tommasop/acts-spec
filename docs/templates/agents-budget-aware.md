@@ -19,76 +19,79 @@
 
 ---
 
-## ACTS Integration
+## ACTS Integration (v2)
 
-This project uses ACTS (Agent Collaborative Tracking Standard) v1.0.0 for multi-developer coordination.
+This project uses ACTS v2 — a **git-native coordination protocol** for agent-aided development. Git is the system of record: a *stack* is a feature (base branch), a *change* is one unit of agent work (a stacked branch + PR). Verification is the gate; context is served on demand.
 
 ### Rules
-- Agent MUST read state before writing code: `acts state read`
-- Agent MUST NOT modify files owned by completed tasks: `acts scope check --task <id> --file <path>`
-- Agent MUST record session summary before ending
-- Agent MUST stay within assigned task boundary
-- Agent MUST run code review before task completion
+- Agent MUST load context before writing code: `acts context <change>`
+- Agent MUST NOT submit a change for review until `acts verify <change>` passes
+- Agent MUST record a session note + checkpoint before ending: `acts note` / `acts checkpoint`
+- Agent MUST stay within the change's scope: `acts scope <change> <file>`
+- Agent MUST get developer approval on the PR before `acts approve` / `acts stack land`
+- Agent MUST run `acts validate` before finishing
 - Agent SHOULD use cost-effective models for routine tasks
 
 ### ACTS Commands
-- `acts init <story-id>` — Initialize new ACTS story
-- `acts state read` — Read current story state
-- `acts state write --story <id>` — Update story state (JSON from stdin)
-- `acts task get <task-id>` — Get task details
-- `acts task update <id> --status <status>` — Update task status (enforces gates)
-- `acts gate add --task <id> --type <type> --status <status>` — Add gate checkpoint
-- `acts ownership map` — Show file ownership
-- `acts scope check --task <id> --file <path>` — Check if file is safe to modify
-- `acts validate` — Validate entire ACTS project
-- `acts migrate` — Force schema migration
+- `acts stack create <id> [-t <title>]` — Start a new stack (base branch + manifest)
+- `acts stack status` — Show stack tree + change statuses
+- `acts stack land` — Merge APPROVED changes bottom-up
+- `acts change add <id> -t <title> [--accept <criteria>]` — Add a change on top of the stack
+- `acts change status [<id>]` — Show change details
+- `acts verify [<id>] [--all]` — Run quality gates; record evidence (**GATE for review**)
+- `acts review <id>` — Submit stacked PR (requires verify to pass)
+- `acts approve <id>` — Mark approved after human PR review
+- `acts rework <id>` — Reopen for rework (clears approval)
+- `acts context [<id>]` — Emit scoped context pack (durable task state)
+- `acts note <id> -m <text>` — Append a session note
+- `acts checkpoint <id> -s <summary>` — Record a status checkpoint
+- `acts redirect <id> --accept <criteria>` — Update scope mid-flight without context loss
+- `acts scope <id> <file>` — Check file ownership (derived from diffs)
+- `acts validate` — Validate manifest + branch consistency
 
-### Gate Protocol
-1. Before starting task: `acts gate add --task <id> --type approve --status approved`
-2. Before completing task: `acts gate add --task <id> --type task-review --status approved`
-
-### File Override Protocol
-Files owned by DONE tasks are locked. To override:
-1. Request: `acts_override request --file <path> --task <id> --reason "..."`
-2. Human approves: `acts_override approve --override_id <id>`
-3. Verify: `acts_override check --override_id <id>`
-- AI agents MUST NEVER approve their own overrides.
-- Approvals expire after 24 hours.
+### Review Workflow
+1. Implement on the change branch (loaded via `acts context`).
+2. `acts verify <change>` runs quality gates; a change CANNOT be reviewed until verify passes.
+3. `acts review <change>` submits a stacked PR (via `gh`), body = rationale + verification evidence + acceptance criteria.
+4. Human reviews on GitHub PR UI → `acts approve <change>`.
+5. `acts stack land` merges approved changes bottom-up.
+6. Record `acts note` + `acts checkpoint`, then `acts validate`.
 
 ### Data Storage
-- Structured state: SQLite at `.acts/acts.db`
-- Narratives: Markdown files in `.story/`
+- Coordination state: `.acts/stack.json` (git-committed manifest, diffable)
+- Code truth: git branches/PRs (no sidecar database)
+- Session notes: `.acts/changes/<id>/notes/*.md`
 
-### Agent Configuration
-```json
-{
-  "tool": "Cursor",
-  "version": "0.45.0",
-  "primary_model": "claude-3.5-sonnet",
-  "fallback_model": "gpt-4o-mini",
-  "cost_limit_per_session": 5.00,
-  "config_preset": "efficient-ruleset"
-}
-```
+### Model Budgeting
 
-### Budget Rules
-1. **Simple tasks** (docs, chore, test-only): Use fallback model
-2. **Complex tasks** (architecture, new features): Use primary model
-3. **Code review**: Use primary model (quality matters)
-4. **Preflight/Status**: Read-only, minimal tokens
+#### Cost Tiers
+| Tier | Model | Use For |
+|------|-------|---------|
+| **Cheap** | Claude Haiku / GPT-mini | Routine tasks, boilerplate, refactors |
+| **Standard** | Claude Sonnet / GPT-4o | Default coding |
+| **Expensive** | Claude Opus / GPT-4.5 | Complex architecture, tricky bugs, cross-repo changes |
 
-### Session Budgets
-- $2.00 for simple tasks (docs, chore)
-- $5.00 for standard tasks
-- $10.00 for complex tasks (new features, architecture)
-- Alert at 80% of budget
+#### Budget Rules
+- Use the **cheapest** model that can reliably complete the task
+- Escalate to a higher tier only after two failed attempts
+- Every session records cost in its `acts note`
+- If a change is estimated to cost > $10, split it into smaller changes
+
+#### Decision Guide
+| Task Type | Recommended Tier |
+|-----------|------------------|
+| Add a field to an existing schema | Cheap |
+| New endpoint following existing patterns | Cheap |
+| Feature with cross-cutting changes | Standard |
+| Debugging flaky tests / race conditions | Standard |
+| Cross-repo impact analysis | Expensive |
+| Architecture/design work | Expensive |
 
 ### Architecture
-- Next.js 15 + TypeScript
-- Supabase for DB
-- Read full: `.architecture/overview.md`
+[Reference to project architecture docs]
 
 ### Forbidden
 - Never commit `.env` files
-- Never use `eval()`
-- Never store API keys in code
+- Never use `eval()` or `Function()`
+- Never store secrets in code
+- Never bypass the verification gate (`acts verify` before `acts review`)

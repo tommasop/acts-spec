@@ -1,92 +1,78 @@
-# Example: Working on an Existing Project with ACTS
+# Example: Working on an Existing Project with ACTS v2
 
-This document shows a complete agent interaction for joining an existing ACTS project and continuing work.
+This document shows a complete agent interaction for joining an existing ACTS v2 project and continuing work.
 
 ---
 
 ## Scenario
 
-**Project:** E-commerce platform (existing ACTS project)
-**Story:** PROJ-305 — "Add shopping cart"
-**Previous work:** T1 (Setup cart model) and T2 (Add cart API) are DONE
-**Current task:** T3 — "Add cart frontend component"
+**Project:** E-commerce platform (existing ACTS v2 project)
+**Stack:** `cart` — "Add shopping cart"
+**Previous work:** c1 (Cart model) and c2 (Cart API) are MERGED
+**Current change:** c3 — "Add cart frontend component"
 **Developer:** bob
 **Tool:** Cursor (manual CLI approach)
 
 ---
 
-## Step 1: Read Project State
+## Step 1: Read Stack State
 
-**User:** "Continue work on the shopping cart story. I'm taking over from alice."
+**User:** "Continue work on the shopping cart stack. I'm taking over from alice."
 
 **Agent:**
 ```
-Let me read the current project state to understand what's been done.
+Let me read the current stack state to understand what's been done.
 
-> acts state read
+> acts stack status
 
-{
-  "story_id": "PROJ-305",
-  "title": "Add shopping cart",
-  "status": "IN_PROGRESS",
-  "tasks": [
-    {
-      "id": "T1",
-      "title": "Setup cart model",
-      "status": "DONE",
-      "assigned_to": "alice",
-      "files_touched": ["src/models/cart.js", "src/models/cart.test.js"]
-    },
-    {
-      "id": "T2",
-      "title": "Add cart API endpoints",
-      "status": "DONE",
-      "assigned_to": "alice",
-      "files_touched": ["src/routes/cart.js", "src/routes/cart.test.js"]
-    },
-    {
-      "id": "T3",
-      "title": "Add cart frontend component",
-      "status": "TODO",
-      "assigned_to": null,
-      "files_touched": [],
-      "depends_on": ["T1", "T2"]
-    }
-  ]
-}
+Stack: cart — Add shopping cart (base: acts/cart/base)
+  └ MERGED  Cart model
+  ├ MERGED  Cart API endpoints
+  ├ IN_PROGRESS  Cart frontend component
 ```
 
 ---
 
-## Step 2: Check Ownership
+## Step 2: Load the Context Pack
 
 **Agent:**
 ```
-Let me check which files are owned by completed tasks:
+Let me load the durable context pack for c3.
 
-> acts ownership map
+> acts context c3
 
-{
-  "T1": {
-    "status": "DONE",
-    "files": ["src/models/cart.js", "src/models/cart.test.js"]
-  },
-  "T2": {
-    "status": "DONE",
-    "files": ["src/routes/cart.js", "src/routes/cart.test.js"]
-  }
-}
+# ACTS Context Pack
+
+## Stack
+- id: cart
+- title: Add shopping cart
+- base branch: acts/cart/base
+
+## Change: c3
+- title: Cart frontend component
+- status: IN_PROGRESS
+- branch: acts/cart/c3-cart-frontend-component
+
+## Acceptance Criteria
+- Cart.jsx renders cart items with quantities
+- Add/remove item buttons call existing API
+- Show total price
+
+## Parent Chain
+- c1: Cart model (MERGED)
+- c2: Cart API endpoints (MERGED)
+
+## Session Notes
+- .acts/changes/c3/notes/1785920000.md
+
+## Changed Files
+- src/components/Cart.jsx
+- src/components/Cart.test.jsx
 ```
 
 **Agent:**
 ```
-I'll read the completed tasks' files to understand the existing code:
-
-> Read src/models/cart.js
-> Read src/routes/cart.js
-> Read .story/sessions/20260104-100000-alice.md
-
-From alice's last session:
+From alice's notes:
 - Cart model supports: addItem, removeItem, getCart, clearCart
 - API endpoints: POST /cart/items, DELETE /cart/items/:id, GET /cart
 - All tests passing
@@ -94,81 +80,41 @@ From alice's last session:
 
 ---
 
-## Step 3: Start T3
+## Step 3: Check Scope
 
 **Agent:**
 ```
-Let me check the scope for T3 before starting:
+Let me verify the files I'll touch belong to this change's diff.
 
-> acts scope check --task T3 --file src/components/Cart.jsx
+> acts scope c3 src/components/Cart.jsx
 
 {
   "file_path": "src/components/Cart.jsx",
   "action": "ok",
-  "message": "File is not owned by any other task. Safe to modify."
+  "message": "File is part of change c3's diff"
 }
+```
 
-Good, I can create this file. Let me also check other files I might need:
+**Agent:**
+```
+I should NOT modify c1's model files or c2's route files — those belong to
+their own diffs. If I need to touch them, I'd coordinate with their owners
+or open a new change.
 
-> acts scope check --task T3 --file src/models/cart.js
+> acts scope c3 src/models/cart.js
 
 {
   "file_path": "src/models/cart.js",
-  "action": "error",
-  "message": "File is owned by DONE task T1. Modifications require explicit approval."
+  "action": "warn",
+  "message": "File not in change c3's diff — verify it belongs to this task before editing"
 }
 ```
 
-**Agent:**
-```
-I need to be careful — I can create new frontend files but should not modify T1's model files without approval. Let me add the preflight gate:
-
-> acts gate add --task T3 --type approve --status approved --by bob
-> acts task update T3 --status IN_PROGRESS --assigned-to bob
-
-Task T3 is now IN_PROGRESS.
-```
-
 ---
 
-## Step 4: Read Plan Entry
+## Step 4: Implement c3
 
-**Agent:**
-```
-Let me read the plan to understand what T3 should do:
-
-> Read .story/plan.md
-
-### T3: Add cart frontend component
-- Create Cart.jsx React component
-- Display cart items with quantities
-- Add/remove item buttons
-- Show total price
-- Files: src/components/Cart.jsx, src/components/Cart.test.jsx
-```
-
----
-
-## Step 5: Check Dependencies
-
-**Agent:**
-```
-T3 depends on T1 and T2. Let me verify they're DONE:
-
-> acts task get T1
-{ "id": "T1", "status": "DONE", ... }
-
-> acts task get T2
-{ "id": "T2", "status": "DONE", ... }
-
-Both dependencies are complete. I can proceed.
-```
-
----
-
-## Step 6: Implement T3
-
-**Agent:** [Implements code]
+**Agent:** [Implements code on the c3 branch]
 
 ```
 Creating src/components/Cart.jsx...
@@ -180,122 +126,62 @@ Tests passing: 8/8
 
 ---
 
-## Step 7: Complete T3
+## Step 5: Verify
 
 **Agent:**
 ```
-Task T3 is complete. Let me run validation and update state:
+> acts verify c3
 
-> Bash: npm test
-All tests passing: 24/24
-
-> Bash: npm run lint
-Lint clean
-
-> acts gate add --task T3 --type task-review --status approved --by bob
-> acts task update T3 --status DONE
-
-Task T3 is now DONE.
+  test: PASS (npm test) [107ms]
+  lint: PASS (npm run lint) [99ms]
+  build: PASS (npm run build) [135ms]
+change c3 verified
 ```
 
 ---
 
-## Step 8: Record Session Summary
+## Step 6: Review (Stacked PR)
+
+**Agent:**
+```
+> acts review c3
+
+PR submitted: https://github.com/you/ecommerce/pull/21
+```
+
+The PR body includes the context pack: acceptance criteria, verification evidence, and notes. Bob (or a reviewer) reviews on GitHub.
+
+---
+
+## Step 7: Record Session State
 
 **Agent:**
 ```
 Recording session summary:
 
-> Write .story/sessions/20260105-160000-bob.md
+> acts note c3 -m "Created Cart.jsx + tests; used existing cart API from c2; did not modify model files (c1)"
+note appended to c3
 
-# Session Summary
-- **Developer:** bob
-- **Agent:** Cursor (Claude-3.5-Sonnet)
-- **Date:** 2026-01-05T16:00:00Z
-- **Task:** T3 — Add cart frontend component
+> acts checkpoint c3 -s "done: cart component; blocked: none; next: PR review"
+checkpoint recorded for c3
 
-## What was done
-- Created Cart.jsx React component with:
-  - Display cart items with quantities
-  - Add/remove item buttons
-  - Total price calculation
-- Created Cart.test.jsx with 8 tests
-- All tests passing (24/24 total)
-- Lint clean
-
-## Decisions made
-- Used React hooks (useState, useEffect) for state management
-- Called existing cart API endpoints (from T2)
-- Did NOT modify cart model (T1) — used existing API instead
-
-## What was NOT done (and why)
-- No checkout flow (out of scope for this story)
-- No persistent cart across sessions (deferred to future story)
-
-## Approaches tried and rejected
-- Considered modifying cart model to add frontend-specific fields
-- Rejected: Would violate ownership (T1 is DONE)
-- Instead: Added needed data to API response (coordinated with alice)
-
-## Open questions
-- Should cart persist for logged-out users?
-- Do we need optimistic updates for better UX?
-
-## Current state
-- Compiles: ✅
-- Tests pass: ✅ 24/24
-- Uncommitted work: ✅
-
-## Files touched this session
-- src/components/Cart.jsx — new cart component
-- src/components/Cart.test.jsx — component tests
-
-## Suggested next step
-Start T4: Add checkout flow (if it exists) or create new story for checkout
-
-## Agent Compliance
-- Read state before writing code: ✅ (acts state read)
-- Did not modify files owned by DONE tasks: ✅
-  - Checked scope: src/models/cart.js is owned by T1
-  - Used existing API instead of modifying model
-- Stayed within assigned task boundary: ✅
-- Followed context protocol: ✅
-  - Read completed task files (T1, T2)
-  - Read previous session summary
-  - Read plan entry for T3
+> acts validate
+manifest OK
 ```
 
 ---
 
-## Step 9: Validate and Verify
+## Step 8: Approve & Land (after human review)
+
+**User:** "Approved on GitHub."
 
 **Agent:**
 ```
-> acts session validate .story/sessions/20260105-160000-bob.md
-Session validation passed
+> acts approve c3
+change c3 approved
 
-> acts validate
-Schema version: 1
-Found: .story/plan.md
-Found: .story/spec.md
-Session files: 2
-Validation PASSED
-
-> acts ownership map
-{
-  "T1": {
-    "status": "DONE",
-    "files": ["src/models/cart.js", "src/models/cart.test.js"]
-  },
-  "T2": {
-    "status": "DONE",
-    "files": ["src/routes/cart.js", "src/routes/cart.test.js"]
-  },
-  "T3": {
-    "status": "DONE",
-    "files": ["src/components/Cart.jsx", "src/components/Cart.test.jsx"]
-  }
-}
+> acts stack land
+landed c3 onto acts/cart/base
 ```
 
 ---
@@ -303,32 +189,29 @@ Validation PASSED
 ## Key Points for Existing Projects
 
 ### What the agent did right:
-1. ✅ Read state first (`acts state read`)
-2. ✅ Checked file ownership (`acts ownership map`)
-3. ✅ Verified dependencies are DONE before starting
-4. ✅ Checked scope before modifying files (`acts scope check`)
-5. ✅ Respected DONE task ownership (didn't modify T1's files)
-6. ✅ Read previous session summaries for context
-7. ✅ Read completed task files to understand existing code
-8. ✅ Added preflight gate before starting task
-9. ✅ Added task-review gate before marking DONE
+1. ✅ Read stack state first (`acts stack status`)
+2. ✅ Loaded the context pack (`acts context c3`) — acceptance criteria, parent chain, notes
+3. ✅ Checked file ownership (`acts scope c3 <file>`)
+4. ✅ Respected merged-change boundaries (didn't modify c1/c2 files)
+5. ✅ Verified quality gates before review (`acts verify c3`)
+6. ✅ Submitted a stacked PR (`acts review c3`)
+7. ✅ Recorded note + checkpoint (`acts note` / `acts checkpoint`)
 
 ### What could have gone wrong:
-- Without `acts state read`: Agent might not know T1/T2 are DONE
-- Without `acts ownership map`: Agent might modify T1's model files
-- Without `acts scope check`: Agent might unknowingly violate ownership
-- Without gates: Task status could be changed without approval
+- Without `acts stack status`: Agent might not know c1/c2 are merged
+- Without `acts context c3`: Agent might miss acceptance criteria or prior session notes
+- Without `acts scope`: Agent might modify files owned by other changes' diffs
 
 ---
 
 ## Summary
 
 In this session:
-1. ✅ Read current project state
-2. ✅ Checked file ownership before making changes
-3. ✅ Verified dependencies (T1, T2) are DONE
-4. ✅ Completed T3 while respecting existing ownership
-5. ✅ Recorded and validated session summary
-6. ✅ All gates enforced correctly
+1. ✅ Read current stack state
+2. ✅ Loaded the c3 context pack (durable task state)
+3. ✅ Checked file ownership via `acts scope`
+4. ✅ Implemented c3 while respecting existing change boundaries
+5. ✅ Verified quality gates → submitted stacked PR
+6. ✅ Recorded note + checkpoint, ran `acts validate`
 
-**Next:** Story is now 3/3 tasks DONE. Can proceed to story review or start new story.
+**Next:** After PR approval, `acts approve c3` + `acts stack land`.
