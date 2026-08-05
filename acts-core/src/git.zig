@@ -165,3 +165,26 @@ pub fn gitLogOneline(arena: std.mem.Allocator, base: []const u8, max: usize) ![]
     if (res.exit_code != 0) return "";
     return std.mem.trim(u8, res.stdout, " \n\r");
 }
+
+/// Full SHA of a branch/ref (e.g. the base branch). Empty on failure.
+pub fn refSha(arena: std.mem.Allocator, ref: []const u8) ![]const u8 {
+    const res = try run(arena, &.{ "git", "rev-parse", ref }, 512);
+    if (res.exit_code != 0) return "";
+    return std.mem.trim(u8, res.stdout, " \n\r");
+}
+
+/// Count of added lines between base and HEAD (for risk heuristics).
+pub fn diffAdditions(arena: std.mem.Allocator, base: []const u8) !usize {
+    const res = try run(arena, &.{ "git", "diff", "--numstat", base, "HEAD" }, 65536);
+    if (res.exit_code != 0) return 0;
+    var total: usize = 0;
+    var it = std.mem.tokenizeAny(u8, res.stdout, "\n");
+    while (it.next()) |line| {
+        var f = std.mem.tokenizeAny(u8, line, "\t ");
+        if (f.next()) |add| {
+            if (std.mem.eql(u8, add, "-")) continue;
+            total += std.fmt.parseInt(usize, add, 10) catch 0;
+        }
+    }
+    return total;
+}

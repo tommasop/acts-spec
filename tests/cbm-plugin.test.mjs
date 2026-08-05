@@ -71,10 +71,10 @@ try {
   ok(`all 14 native CBM tools registered (${native.length})`);
 
   // 3. Fleet helpers + ACTS bridge
-  for (const n of ['cbm_repos', 'cbm_index_all', 'cbm_changes', 'cbm_install', 'acts_memory']) {
+  for (const n of ['cbm_repos', 'cbm_index_all', 'cbm_changes', 'cbm_bootstrap', 'cbm_install', 'acts_memory']) {
     assert.ok(tools[n] && typeof tools[n].handler === 'function', `missing tool: ${n}`);
   }
-  ok('fleet helpers + acts_memory bridge registered');
+  ok('fleet helpers (incl. cbm_bootstrap) + acts_memory bridge registered');
 
   // 4. cbm_repos lists references with resolved paths
   const repos = await tools.cbm_repos.handler({});

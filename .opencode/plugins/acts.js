@@ -69,6 +69,16 @@ export const ActsPlugin = async ({ directory }) => {
   };
   const pluginState = loadPluginState();
 
+  // ─── Manifest reader ────────────────────────
+  const readStackManifest = () => {
+    try {
+      if (fs.existsSync(path.join(directory, '.acts', 'stack.json'))) {
+        return JSON.parse(fs.readFileSync(path.join(directory, '.acts', 'stack.json'), 'utf8'));
+      }
+    } catch { /* ignore */ }
+    return null;
+  };
+
   // ─── Cached stack status ────────────────────
   let cachedStatus = null;
   let cachedStatusTime = 0;
@@ -95,12 +105,132 @@ export const ActsPlugin = async ({ directory }) => {
   }
 
   // ─── Active change resolution ───────────────
+  // The active change is the change whose branch matches the current git HEAD.
   const resolveActiveChange = () => {
     const status = refreshStackStatus();
     if (!status || !Array.isArray(status.changes)) return null;
-    // The active change is the change whose branch matches HEAD (agent resolves via acts context).
-    // We expose `acts context` with no args which auto-resolves to the current branch's change.
+    let branch = null;
+    try {
+      branch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8', cwd: directory, stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+    } catch { /* not a git repo or no HEAD */ }
+    if (!branch) {
+      // Fall back to the first non-terminal change (IN_PROGRESS preferred).
+      return status.changes.find(c => !['MERGED', 'APPROVED'].includes(c.status || ''))?.id || null;
+    }
+    const match = status.changes.find(c => c.branch === branch);
+    return match ? match.id : null;
+  };
+
+  // Auto-inject the active change's scoped context pack into the system prompt
+  // so the agent starts with acceptance criteria + verification + notes, bounded
+  // to the change (not the whole repo). Falls back gracefully when binary missing.
+  const buildActiveChangeContext = () => {
+    if (!actsBinary) return [];
+    const id = resolveActiveChange();
+    if (!id) return [];
+    try {
+      const raw = execFileSync(actsBinary, ['context', id], {
+        encoding: 'utf8', cwd: directory, timeout: 30000, stdio: ['pipe', 'pipe', 'ignore']
+      });
+      return [`# ACTS Active Change: ${id}\n${raw}`];
+    } catch {
+      return [];
+    }
+  };
+
+  // ─── CBM blast radius (best-effort, self-contained) ──
+  // Reads the change's files from .acts/stack.json + git diff, then — if a CBM
+  // binary is discoverable — traces cross-repo callers/callees per file and
+  // stores the edge counts on the change (risk_cbm) for `acts risk`.
+  const findCbmBin = () => {
+    const globalBin = path.join(process.env.HOME || '~', '.cache', 'codebase-memory-mcp', 'bin', process.platform === 'win32' ? 'codebase-memory-mcp.exe' : 'codebase-memory-mcp');
+    const candidates = [globalBin, path.join(directory, '.acts', 'bin', 'codebase-memory-mcp')];
+    for (const c of candidates) if (fs.existsSync(c)) return c;
+    try {
+      const p = execSync('which codebase-memory-mcp', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
+      if (p && fs.existsSync(p)) return p;
+    } catch { /* none */ }
     return null;
+  };
+
+  const computeBlastRadius = async (changeId) => {
+    const manifest = readStackManifest();
+    if (!manifest) return null;
+    const change = (manifest.changes || []).find(c => c.id === changeId);
+    if (!change || !change.branch) return null;
+    const base = manifest.base_branch || '';
+    let files = [];
+    try {
+      files = execFileSync('git', ['diff', '--name-only', base, change.branch], {
+        encoding: 'utf8', cwd: directory, stdio: ['pipe', 'pipe', 'pipe']
+      }).split('\n').map(s => s.trim()).filter(Boolean);
+    } catch { /* fall through */ }
+    if (files.length === 0) return null;
+
+    const cbmBin = findCbmBin();
+    const out = ['## CBM Blast Radius', `Files: ${files.length}`];
+    let crossEdges = 0;
+
+    if (!cbmBin) {
+      out.push('(CBM binary not installed — run `cbm_install` for cross-repo trace data; git-level risk computed locally.)');
+      return out.join('\n');
+    }
+
+    const cacheDir = path.join(process.env.HOME || '~', '.cache', 'codebase-memory-mcp');
+    try {
+      const projectsRaw = execFileSync(cbmBin, ['cli', 'list_projects', '{}'], {
+        encoding: 'utf8', cwd: directory, timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'],
+        env: { ...process.env, CBM_CACHE_DIR: cacheDir }
+      });
+      const projects = (JSON.parse(projectsRaw).projects || []).map(p => p.name);
+      for (const f of files.slice(0, 20)) {
+        // Find a project by matching the file's top-level dir to a reference alias is
+        // complex; trace within each project is not file-scoped, so keep it simple:
+        // for each project, search functions in this file, then trace each.
+        for (const proj of projects) {
+          try {
+            const searchRaw = execFileSync(cbmBin, ['cli', 'search_graph', JSON.stringify({ project: proj, file_path: f, label: 'Function', limit: 5 })], {
+              encoding: 'utf8', cwd: directory, timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'],
+              env: { ...process.env, CBM_CACHE_DIR: cacheDir }
+            });
+            const syms = JSON.parse(searchRaw).results || [];
+            for (const sym of syms.slice(0, 3)) {
+              try {
+                const traceRaw = execFileSync(cbmBin, ['cli', 'trace_path', JSON.stringify({ project: proj, function_name: sym.name, direction: 'both', depth: 2, mode: 'cross_service' })], {
+                  encoding: 'utf8', cwd: directory, timeout: 60000, stdio: ['pipe', 'pipe', 'pipe'],
+                  env: { ...process.env, CBM_CACHE_DIR: cacheDir }
+                });
+                const trace = JSON.parse(traceRaw);
+                const callers = (trace.callers || []).length;
+                const callees = (trace.callees || []).length;
+                const cross = (trace.cross_repo_callers || trace.cross_repo_edges || 0);
+                crossEdges += typeof cross === 'number' ? cross : 0;
+                if (callers + callees > 0) {
+                  out.push(`- ${f}: ${sym.name} (callers: ${callers}, callees: ${callees})`);
+                }
+              } catch { /* skip trace */ }
+            }
+          } catch { /* skip search */ }
+        }
+      }
+      // Persist the edge count so `acts risk` reflects it.
+      if (crossEdges > 0) {
+        try {
+          const metaPath = path.join(directory, '.acts', 'stack.json');
+          const manifest2 = JSON.parse(fs.readFileSync(metaPath, 'utf8'));
+          const ch = (manifest2.changes || []).find(c => c.id === changeId);
+          if (ch) {
+            ch.risk_cbm = { cross_repo_edges: crossEdges, high_complexity_symbols: 0 };
+            fs.writeFileSync(metaPath, JSON.stringify(manifest2, null, 2) + '\n');
+          }
+        } catch { /* ignore */ }
+      }
+    } catch {
+      out.push('(CBM trace failed — git-level risk computed locally.)');
+    }
+
+    out.push(`Cross-repo edges detected: ${crossEdges}`);
+    return out.join('\n');
   };
 
   // ─── Context Builders ───────────────────────
@@ -167,8 +297,9 @@ verify -> review (PR) -> approve -> stack land -> note + checkpoint + validate.
     'experimental.chat.system.transform': async (_input, output) => {
       if (pluginState.mode === 'off' || !actsProject) return;
       const context = buildSystemContext();
-      if (context.length > 0) {
-        output.system = [...output.system, ...context];
+      const active = buildActiveChangeContext();
+      if (context.length > 0 || active.length > 0) {
+        output.system = [...output.system, ...context, ...active];
       }
     },
 
@@ -251,21 +382,32 @@ verify -> review (PR) -> approve -> stack land -> note + checkpoint + validate.
         acts_context: {
           description: 'Load the ACTS v2 scoped context pack for a change (or the current branch\'s change). ' +
             'ALWAYS call this before writing code on a change. Surfaces acceptance criteria, parent chain, ' +
-            'verification status, checkpoint, session notes, and changed files.',
+            'verification status, checkpoint, session notes, and changed files. With blast_radius=true, ' +
+            'also appends CBM cross-repo callers/callees for each changed file.',
           inputSchema: {
             type: 'object',
             properties: {
               change_id: {
                 type: 'string',
                 description: 'Change ID (e.g., c1). Omit to auto-resolve from the current git branch.'
+              },
+              blast_radius: {
+                type: 'boolean',
+                description: 'Append CBM cross-repo blast radius for the change\'s files (default: true)'
               }
             }
           },
-          handler: async ({ change_id }) => {
+          handler: async ({ change_id, blast_radius = true }) => {
             try {
-              const args = change_id ? ['context', change_id] : ['context'];
+              const id = change_id || resolveActiveChange() || '';
+              const args = id ? ['context', id] : ['context'];
               const result = runActs(args);
-              return { content: [{ type: 'text', text: result }] };
+              let text = result;
+              if (blast_radius && id) {
+                const br = await computeBlastRadius(id);
+                if (br) text += '\n' + br;
+              }
+              return { content: [{ type: 'text', text }] };
             } catch (error) {
               return {
                 content: [{ type: 'text', text: `ACTS error: ${error.stderr || error.message}\n\nRun \`acts stack status\` to see active changes.` }],

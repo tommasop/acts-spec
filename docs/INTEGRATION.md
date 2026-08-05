@@ -114,7 +114,7 @@ Commands:
 | Tool | Purpose |
 |------|---------|
 | `acts` | Run any ACTS command (`acts "verify c1"`, `acts "stack status"`) |
-| `acts_context` | Load the scoped context pack for a change (auto-resolves from current branch) |
+| `acts_context` | Load the scoped context pack for a change (auto-resolves from current branch); `blast_radius: true` appends CBM cross-repo trace data |
 | `acts_mode` | Control plugin mode: `enter` / `exit` / `status` |
 | `acts_zeplin` | Extract an API contract from a Zeplin flow/scenario link for planning |
 
@@ -250,7 +250,7 @@ Unlike a hand-rolled ACTS MCP server, codebase-memory-mcp gives ACTS:
 - **Cross-repo intelligence** — repos indexed into one shared store are linked by `CROSS_*` edges, so a call from `ui-payments` into `magic` is traversable.
 - **Token efficiency** — structural graph queries replace thousands of grep/read cycles.
 - **158-language parsing** + Hybrid LSP semantic type resolution.
-- **Self-contained delivery** — the `cbm` plugin auto-installs the binary into `.acts/bin/` and registers the tools itself.
+- **Centralized operation** — the binary is installed **once per machine** into `~/.cache/codebase-memory-mcp/bin` (not per project), and the whole fleet shares **one** knowledge graph store at `~/.cache/codebase-memory-mcp`. The `cbm` plugin auto-installs it; `cbm_bootstrap` idempotently rebuilds the graph on CI/fresh machines.
 
 ### Configuration
 
@@ -283,8 +283,9 @@ Plus fleet helpers and the ACTS bridge:
 |------|---------|
 | `cbm_repos` | List configured `references` |
 | `cbm_index_all` | Index every referenced repo into the shared graph |
+| `cbm_bootstrap` | Idempotently install the shared binary + index all refs if the graph is empty (CI / fresh machines) |
 | `cbm_changes` | Map uncommitted diffs to symbols + repos across the fleet (blast radius) |
-| `cbm_install` | (Re)download the CBM binary into `.acts/bin/` |
+| `cbm_install` | (Re)install the shared CBM binary once per machine |
 | `acts_memory scope <change_id>` | Map an ACTS v2 change's changed files to the repos it spans |
 
 The plugin also injects a `## Cross-Repo Memory` block into the system context (fleet repos + per-change repo spans) so the agent sees cross-repo scope at a glance.

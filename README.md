@@ -14,11 +14,12 @@ ACTS is a protocol for coordinating AI-assisted software development across mult
 - **Git-native state** — A *stack* is a feature (a base branch off `main`); a *change* is one unit of agent work (a stacked branch + PR). Progress is the git ref state itself — there is no sidecar database to drift or bypass.
 - **Manifest**: `.acts/stack.json` — the durable coordination board. Human-readable, diffable, committed to the base branch.
 - **Verification is the gate** — `acts verify` runs quality gates (test/lint/typecheck/build), records evidence, and **blocks review until it passes**. No manual preflight ceremony.
-- **PR-native review** — `acts review` pushes the branch and submits a stacked PR via `gh` (or git-spice `gs`), with the body = agent rationale + verification evidence + acceptance criteria.
-- **Durable context** — `acts context` emits a scoped context pack (acceptance criteria, parent chain, verification status, notes, changed files) so an agent can resume work across sessions without re-explaining.
+- **Risk-based human-in-the-loop** — `acts risk` classifies each change (LOW/MEDIUM/HIGH/CRITICAL) from diff size + cross-repo blast radius. LOW-risk verified changes **auto-approve and auto-land**; HIGH/CRITICAL require mandatory human review with an escalation checklist. Every approval/rework is audited in the manifest.
+- **PR-native review** — `acts review` pushes the branch and submits a stacked PR via `gh` (or git-spice `gs`), with the body = agent rationale + verification evidence + acceptance criteria + risk tier.
+- **Durable context** — `acts context` emits a scoped context pack (acceptance criteria, parent chain, verification status, notes, changed files); the OpenCode plugin **auto-injects** the active change's pack at session start, with optional CBM blast-radius.
 - **Ownership derived from git** — `acts scope` checks whether a file belongs to a change's diff; no manual ownership tables.
 - **v1 → v2 migration** — `acts migrate` imports an existing v1 SQLite story into a v2 stack.
-- **Cross-repo orchestration** — the `cbm` OpenCode plugin wraps [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) to index OpenCode `references` into a shared knowledge graph; native tools (`trace_path`, `query_graph`, …) and `acts_memory scope` trace calls and map impact across repos (`CROSS_*` edges)
+- **Cross-repo orchestration** — the `cbm` OpenCode plugin wraps [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp): the 258MB binary is installed **once per machine** (`~/.cache/codebase-memory-mcp/bin`), the fleet shares **one knowledge graph**, and `cbm_bootstrap` idempotently rebuilds it on CI/fresh machines. Native tools (`trace_path`, `query_graph`, …) and `acts_memory scope` trace calls and map impact across repos (`CROSS_*` edges)
 - **Standalone binary** — single Zig executable, no runtime dependencies (except libc)
 - **Cross-platform** — Linux (x86_64, aarch64), macOS (x86_64, aarch64)
 
@@ -108,9 +109,12 @@ acts change status c1
 
 ```bash
 acts note c1 -m "Implemented middleware; needs token caching"
+acts note c1 -m "reviewed" --cost 4.25          # record per-change cost
 acts checkpoint c1 -s "done: middleware core; blocked: caching; next: tests"
 acts redirect c1 --accept "token cached\nrefresh supported"
 ```
+
+In OpenCode, the active change's context pack (plus optional CBM blast radius) is **auto-injected** at session start — `acts_context` with `blast_radius: true` appends cross-repo callers/callees for the change's files.
 
 ## Command Reference
 
@@ -129,9 +133,10 @@ acts redirect c1 --accept "token cached\nrefresh supported"
 | `change add <id> -t <title> [--accept <criteria>]` | Add a change (branch) on top of the stack |
 | `change status [<id>]` | Show change details |
 | `verify [<id>] [--all]` | Run quality gates; record evidence (**gate for review**) |
-| `review <id>` | Submit stacked PR (requires verify to pass) |
+| `review <id>` | Submit stacked PR (requires verify to pass); auto-lands LOW-risk |
 | `approve <id>` | Mark approved after human PR review |
 | `rework <id>` | Reopen for rework (clears approval) |
+| `risk <id>` | Compute + show the change's risk tier (LOW/MEDIUM/HIGH/CRITICAL) |
 
 ### Context Continuity
 
@@ -211,6 +216,28 @@ acts redirect c1 --accept "token cached\nrefresh supported"
 ```
 
 Commands containing shell metacharacters (`&&`, `|`, `>`, `;`) are run via `sh -c`.
+
+### Risk-Based Human-in-the-Loop
+
+`acts risk <id>` classifies a change by how much damage it can do:
+
+| Tier | Trigger | Control |
+|------|---------|---------|
+| **LOW** | small diff, no cross-repo edges, verified | **Auto-approve + auto-land** after verify |
+| **MEDIUM** | moderate diff (≥8 files) or 1–2 complex symbols | Standard PR review |
+| **HIGH** | 1 cross-repo edge, ≥30 files, or ≥5 complex symbols | Mandatory human review |
+| **CRITICAL** | ≥2 cross-repo edges | Mandatory human review + escalation checklist |
+
+- Tier is computed by `acts verify` / `acts review` and stored in the manifest.
+- The CBM plugin can feed real cross-repo edge counts (`risk_cbm`), making the tier precise.
+- Auto-land is gated by `.acts/acts.json`:
+
+```json
+{ "hilt": { "auto_land_low": false } }
+```
+
+- Every approve/rework (human or `__auto__`) is recorded in the change's `approvals[]` audit log with its tier.
+- **Stale-verification guard**: if the base branch moves after a change was verified, `stack land` requires `acts verify` again.
 
 ### File Ownership
 
@@ -338,6 +365,7 @@ MIT License — See [LICENSE](LICENSE)
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
+| 2.1.0 | 2026-08 | **Risk-based HITL + centralized CBM**: `acts risk` tiering (LOW/MEDIUM/HIGH/CRITICAL), auto-land LOW-risk verified changes, escalation checklist for HIGH/CRITICAL, approval audit log, stale-verification guard; CBM binary installed once per machine with one shared graph + `cbm_bootstrap` for CI; plugin auto-injects the active change's context pack with optional CBM blast-radius; per-change cost tracking (`acts note --cost`) |
 | 2.0.0 | 2026-08 | **Git-native redesign**: SQLite replaced by `.acts/stack.json` manifest; story/task/gate model replaced by **stack** (base branch) + **change** (stacked branch + PR); verification gates (`acts verify`) replace preflight/review ceremony; review via standard stacked PRs (gh/git-spice); durable context packs (`acts context`) with notes/checkpoint/redirect; ownership derived from git diffs; OpenCode skill + slash commands; greenfield Zig core |
 | 1.3.1 | 2026-07 | Cross-repo memory delivered as a dedicated `cbm` OpenCode plugin: auto-installs the codebase-memory-mcp binary, exposes its 14 native tools + fleet helpers (`cbm_repos`/`cbm_index_all`/`cbm_changes`/`cbm_install`), `acts_memory scope` ACTS bridge; removed the separate `mcp` server entry; offline `npm test` added |
 | 1.3.0 | 2026-07 | Cross-repo orchestration via codebase-memory-mcp: OpenCode `references` indexed into a shared knowledge graph, `acts_memory` plugin tool (index, scope, trace, query, changes), cross-repo system context |

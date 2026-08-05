@@ -38,39 +38,65 @@ const CBM_TOOLS = [
 ];
 
 export const CbmPlugin = async ({ client, directory }) => {
-  // ─── Binary Discovery ───────────────────────
+  // ─── Centralized install root ───────────────
+  // The 258MB CBM binary is installed ONCE per machine (not per project).
+  // Canonical homes, in priority order:
+  //   1. ~/.cache/codebase-memory-mcp/bin/  (CBM's own install root)
+  //   2. ~/.local/bin / $PATH
+  //   3. project .acts/bin/ (legacy fallback)
+  const cbmGlobalCacheDir = path.join(process.env.HOME || '~', '.cache', 'codebase-memory-mcp');
+  const cbmGlobalBinDir = path.join(cbmGlobalCacheDir, 'bin');
+  const cbmBinName = process.platform === 'win32' ? 'codebase-memory-mcp.exe' : 'codebase-memory-mcp';
+
   const findCbmBinary = () => {
-    const localPath = path.join(directory, '.acts', 'bin', 'codebase-memory-mcp');
-    if (fs.existsSync(localPath)) return localPath;
+    const candidates = [
+      path.join(cbmGlobalBinDir, cbmBinName),
+      path.join(cbmGlobalCacheDir, cbmBinName),
+      path.join(directory, '.acts', 'bin', cbmBinName),
+    ];
+    for (const c of candidates) {
+      if (fs.existsSync(c)) return c;
+    }
     try {
       const which = execSync('which codebase-memory-mcp', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
-      return which.trim();
+      const p = which.trim();
+      if (p && fs.existsSync(p)) return p;
     } catch {
-      return null;
+      // fall through
     }
+    return null;
   };
 
-  // CBM cache directory: prefer .acts/cbm if indexed there, else fall back to default
-  const defaultCacheDir = path.join(process.env.HOME || '~', '.cache', 'codebase-memory-mcp');
-  const localCacheDir = path.join(directory, '.acts', 'cbm');
-  const cbmCacheDir = fs.existsSync(localCacheDir) ? localCacheDir : defaultCacheDir;
+  // ─── Single shared cache root ───────────────
+  // The whole fleet shares one knowledge graph store at CBM's canonical
+  // location (~/.cache/codebase-memory-mcp). No per-project .acts/cbm split.
+  const cbmCacheDir = cbmGlobalCacheDir;
 
-  // ─── Auto-install ───────────────────────────
-  // Downloads the CBM binary into .acts/bin on first use. Best-effort and
-  // non-fatal: if it fails (offline, no curl) the tools still register and
-  // report a clear install hint.
+  // ─── Auto-install (global, once per machine) ─
+  // Downloads the CBM binary into ~/.cache/codebase-memory-mcp/bin on first
+  // use. Best-effort and non-fatal: if it fails (offline, no curl) the tools
+  // still register and report a clear install hint. Falls back to the project
+  // .acts/bin only when the global install is impossible.
   const ensureCbm = () => {
     const existing = findCbmBinary();
     if (existing) return { ok: true, path: existing };
     try {
+      fs.mkdirSync(cbmGlobalBinDir, { recursive: true });
+      execSync(
+        `bash -c "curl -fsSL ${CBM_INSTALL_URL} | bash -s -- --dir '${cbmGlobalBinDir}' --skip-config"`,
+        { encoding: 'utf8', stdio: 'ignore', timeout: 180000, cwd: directory }
+      );
+      const installed = path.join(cbmGlobalBinDir, cbmBinName);
+      if (fs.existsSync(installed)) return { ok: true, path: installed };
+      // Fallback: project-local install
       const binDir = path.join(directory, '.acts', 'bin');
       fs.mkdirSync(binDir, { recursive: true });
       execSync(
         `bash -c "curl -fsSL ${CBM_INSTALL_URL} | bash -s -- --dir '${binDir}' --skip-config"`,
         { encoding: 'utf8', stdio: 'ignore', timeout: 180000, cwd: directory }
       );
-      const installed = path.join(binDir, 'codebase-memory-mcp');
-      if (fs.existsSync(installed)) return { ok: true, path: installed };
+      const local = path.join(binDir, cbmBinName);
+      if (fs.existsSync(local)) return { ok: true, path: local };
     } catch { /* fall through */ }
     return { ok: false, path: null };
   };
@@ -259,7 +285,8 @@ export const CbmPlugin = async ({ client, directory }) => {
     lines.push(`# Cross-Repo Memory (codebase-memory-mcp plugin)`);
     lines.push(`- Fleet repos (OpenCode references): ${Object.keys(references).join(', ')}`);
     lines.push(`- Native tools available: index_repository, search_graph, trace_path, query_graph, get_architecture, detect_changes, …`);
-    lines.push(`- Fleet helpers: cbm_repos, cbm_index_all, cbm_changes, cbm_install`);
+    lines.push(`- Fleet helpers: cbm_repos, cbm_index_all, cbm_changes, cbm_bootstrap, cbm_install`);
+    lines.push(`- Shared graph store: ${cbmCacheDir} (one binary + one cache, fleet-wide)`);
     lines.push(`- ACTS bridge: acts_memory scope <change_id> maps a change's files to its repos`);
 
     // Per active-change repo span (read ACTS v2 manifest if present)
@@ -314,9 +341,9 @@ export const CbmPlugin = async ({ client, directory }) => {
   }
 
   const fleetTools = {
-    // Force (re)install the CBM binary into .acts/bin
+    // Force (re)install the CBM binary (once per machine, globally)
     cbm_install: {
-      description: 'Download/install the codebase-memory-mcp binary into .acts/bin (auto-run on first use).',
+      description: 'Install the codebase-memory-mcp binary once per machine into ~/.cache/codebase-memory-mcp/bin (auto-run on first use; shared fleet-wide).',
       inputSchema: { type: 'object', properties: {} },
       handler: async () => {
         const r = ensureCbm();
@@ -352,8 +379,9 @@ export const CbmPlugin = async ({ client, directory }) => {
           lines.push(`- ${a}: ${ref.path || ref.repository}${ref.description ? ' — ' + ref.description : ''}`);
           if (rp) lines.push(`  resolved: ${rp}`);
         }
-        lines.push(`\nKnowledge graph store: ${cbmCacheDir}`);
-        lines.push('Index with: cbm_index_all');
+        lines.push(`\nShared knowledge graph store: ${cbmCacheDir}`);
+        lines.push(`CBM binary: ${cbmBinary ? cbmBinary : '(not installed — run cbm_install)'}`);
+        lines.push('Index with: cbm_index_all  |  Rebuild on a fresh machine with: cbm_bootstrap');
         return { content: [{ type: 'text', text: lines.join('\n') }] };
       }
     },
@@ -377,6 +405,47 @@ export const CbmPlugin = async ({ client, directory }) => {
           }
         }
         return { content: [{ type: 'text', text: results.join('\n\n') }] };
+      }
+    },
+
+    // Bootstrap: ensure the shared graph is built (idempotent). For CI / fresh
+    // machines — installs the shared binary + indexes every reference if the
+    // shared cache has no projects yet.
+    cbm_bootstrap: {
+      description: 'Idempotently install the shared CBM binary and index every reference repo if the shared graph is empty. Use in CI / on fresh machines.',
+      inputSchema: { type: 'object', properties: {} },
+      handler: async () => {
+        const r = ensureCbm();
+        if (!r.ok) {
+          return { content: [{ type: 'text', text: 'CBM install failed. Run `cbm_install` manually.' }], isError: true };
+        }
+        // Check whether the shared store already has projects
+        let haveProjects = false;
+        try {
+          const out = runCbm(['list_projects', '{}']);
+          const data = JSON.parse(out);
+          haveProjects = (data.projects || []).length > 0;
+        } catch { /* treat as empty */ }
+
+        if (haveProjects) {
+          return { content: [{ type: 'text', text: `Shared graph already built at ${cbmCacheDir} — nothing to do.\nBinary: ${r.path}` }] };
+        }
+        const aliases = Object.keys(references);
+        if (aliases.length === 0) {
+          return { content: [{ type: 'text', text: `Shared binary installed at ${r.path}. No references configured — add a "references" block to opencode.json to index repos.` }] };
+        }
+        const results = [`Bootstrap: shared graph at ${cbmCacheDir}`];
+        for (const a of aliases) {
+          const rp = resolveRefPath(a);
+          if (!rp) { results.push(`⚠️ ${a}: git repository reference (not indexed locally)`); continue; }
+          try {
+            const out = runCbm(['index_repository', JSON.stringify({ repo_path: rp })]);
+            results.push(`✅ ${a} (${rp})`);
+          } catch (e) {
+            results.push(`❌ ${a}: ${e.stderr || e.message}`);
+          }
+        }
+        return { content: [{ type: 'text', text: results.join('\n') }] };
       }
     },
 

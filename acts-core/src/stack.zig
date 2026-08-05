@@ -144,6 +144,112 @@ pub fn verifyAllPassed(v: std.json.Value, id: []const u8) bool {
     return any;
 }
 
+/// Store the base branch SHA at the time verification ran, so callers can
+/// detect a stale verification (base moved since verify).
+pub fn setVerifyBaseSha(allocator: std.mem.Allocator, v: std.json.Value, id: []const u8, sha: []const u8) !bool {
+    const m = getChange(v, id) orelse return false;
+    const vgop = try m.getOrPut("verify");
+    if (!vgop.found_existing) vgop.value_ptr.* = .{ .object = std.json.ObjectMap.init(allocator) };
+    try vgop.value_ptr.*.object.put("base_sha", .{ .string = sha });
+    return true;
+}
+
+pub fn getVerifyBaseSha(v: std.json.Value, id: []const u8) ?[]const u8 {
+    const m = getChange(v, id) orelse return null;
+    const verify = m.get("verify") orelse return null;
+    if (verify != .object) return null;
+    if (verify.object.get("base_sha")) |s| {
+        if (s == .string) return s.string;
+    }
+    return null;
+}
+
+/// Set the computed risk tier for a change.
+pub fn setRisk(v: std.json.Value, id: []const u8, tier: []const u8) !bool {
+    const m = getChange(v, id) orelse return false;
+    try m.put("risk", .{ .string = tier });
+    return true;
+}
+
+pub fn getRisk(v: std.json.Value, id: []const u8) ?[]const u8 {
+    const m = getChange(v, id) orelse return null;
+    if (m.get("risk")) |r| {
+        if (r == .string) return r.string;
+    }
+    return null;
+}
+
+/// Store CBM-derived risk detail for a change (cross-repo edges, complexity).
+pub const RiskMeta = struct {
+    cross_repo_edges: usize = 0,
+    high_complexity_symbols: usize = 0,
+};
+
+pub fn setRiskMeta(allocator: std.mem.Allocator, v: std.json.Value, id: []const u8, cross_repo_edges: usize, high_complexity_symbols: usize) !bool {
+    const m = getChange(v, id) orelse return false;
+    const gop = try m.getOrPut("risk_cbm");
+    if (!gop.found_existing) gop.value_ptr.* = .{ .object = std.json.ObjectMap.init(allocator) };
+    try gop.value_ptr.*.object.put("cross_repo_edges", .{ .integer = @intCast(cross_repo_edges) });
+    try gop.value_ptr.*.object.put("high_complexity_symbols", .{ .integer = @intCast(high_complexity_symbols) });
+    return true;
+}
+
+pub fn getRiskMeta(v: std.json.Value, id: []const u8) RiskMeta {
+    var out = RiskMeta{};
+    const m = getChange(v, id) orelse return out;
+    const r = m.get("risk_cbm") orelse return out;
+    if (r != .object) return out;
+    if (r.object.get("cross_repo_edges")) |c| {
+        if (c == .integer) out.cross_repo_edges = @intCast(c.integer);
+    }
+    if (r.object.get("high_complexity_symbols")) |c| {
+        if (c == .integer) out.high_complexity_symbols = @intCast(c.integer);
+    }
+    return out;
+}
+
+/// Append an approval/rework record to the change's `approvals` audit log.
+pub fn appendApproval(
+    allocator: std.mem.Allocator,
+    v: std.json.Value,
+    id: []const u8,
+    action: []const u8,
+    by: []const u8,
+    tier: []const u8,
+    note: []const u8,
+) !bool {
+    const m = getChange(v, id) orelse return false;
+    const gop = try m.getOrPut("approvals");
+    if (!gop.found_existing) gop.value_ptr.* = .{ .array = std.json.Array.init(allocator) };
+
+    const ts = std.time.timestamp();
+    var entry = std.json.ObjectMap.init(allocator);
+    try entry.put("action", .{ .string = action });
+    try entry.put("by", .{ .string = by });
+    try entry.put("tier", .{ .string = tier });
+    try entry.put("ts", .{ .integer = @intCast(ts) });
+    if (note.len > 0) try entry.put("note", .{ .string = note });
+
+    try gop.value_ptr.*.array.append(.{ .object = entry });
+    return true;
+}
+
+/// Record a per-change cost (from `acts note --cost`).
+pub fn setCost(v: std.json.Value, id: []const u8, cost: f64) !bool {
+    const m = getChange(v, id) orelse return false;
+    try m.put("cost", .{ .float = cost });
+    return true;
+}
+
+pub fn getCost(v: std.json.Value, id: []const u8) ?f64 {
+    const m = getChange(v, id) orelse return null;
+    if (m.get("cost")) |c| {
+        if (c == .float) return c.float;
+        if (c == .integer) return @floatFromInt(c.integer);
+    }
+    return null;
+}
+
 pub fn setPrUrl(allocator: std.mem.Allocator, v: std.json.Value, id: []const u8, url: []const u8) !bool {
     const m = getChange(v, id) orelse return false;
     const gop = try m.getOrPut("pr");

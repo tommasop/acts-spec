@@ -5,6 +5,7 @@ const stack = @import("stack.zig");
 const git = @import("git.zig");
 const context = @import("context.zig");
 const verify = @import("verify.zig");
+const risk = @import("risk.zig");
 
 const version_str = build_options.version;
 
@@ -26,6 +27,7 @@ const usage_text =
     \\  review <id>                             Submit stacked PR (requires verify to pass)
     \\  approve <id>                            Mark change approved (after human PR review)
     \\  rework <id>                             Reopen for rework (clears approval)
+    \\  risk <id>                               Compute + show the change's risk tier
     \\
     \\Context continuity:
     \\  context [<id>]                          Emit scoped context pack for a change
@@ -76,7 +78,7 @@ fn parseArgs(allocator: std.mem.Allocator, argv: []const []const u8) !Args {
     var args = Args.init(allocator);
     errdefer args.deinit();
 
-    const long_value_flags = [_][]const u8{ "--title", "--accept", "--message", "-t", "-m" };
+    const long_value_flags = [_][]const u8{ "--title", "--accept", "--message", "--cost", "-t", "-m" };
     var i: usize = 0;
     while (i < argv.len) : (i += 1) {
         const a = argv[i];
@@ -187,6 +189,10 @@ fn runCommand(allocator: std.mem.Allocator, cmd: []const u8, args: *const Args) 
         if (args.positional.items.len < 1) return error.MissingChangeId;
         return cmdRework(allocator, args.positional.items[0]);
     }
+    if (std.mem.eql(u8, cmd, "risk")) {
+        if (args.positional.items.len < 1) return error.MissingChangeId;
+        return cmdRisk(allocator, args.positional.items[0]);
+    }
     if (std.mem.eql(u8, cmd, "context")) {
         const id = if (args.positional.items.len >= 1) args.positional.items[0] else null;
         return cmdContext(allocator, id);
@@ -194,7 +200,7 @@ fn runCommand(allocator: std.mem.Allocator, cmd: []const u8, args: *const Args) 
     if (std.mem.eql(u8, cmd, "note")) {
         if (args.positional.items.len < 1) return error.MissingChangeId;
         const msg = args.flag("-m") orelse return error.MissingMessage;
-        return cmdNote(allocator, args.positional.items[0], msg);
+        return cmdNote(allocator, args.positional.items[0], msg, args);
     }
     if (std.mem.eql(u8, cmd, "checkpoint")) {
         if (args.positional.items.len < 1) return error.MissingChangeId;
@@ -308,6 +314,15 @@ fn cmdStackLand(allocator: std.mem.Allocator) !void {
         if (std.mem.eql(u8, cstatus, stack.status_merged)) continue;
         if (!std.mem.eql(u8, cstatus, stack.status_approved)) {
             try stdout("skip {s}: status is {s} (need APPROVED)\n", .{ cid, cstatus });
+            continue;
+        }
+
+        // Stale-verification guard: if the base branch moved since this change
+        // was verified, require re-verification before landing.
+        const verified_sha = stack.getVerifyBaseSha(v, cid);
+        const cur_base_sha = try git.refSha(allocator, base);
+        if (verified_sha != null and cur_base_sha.len > 0 and !std.mem.eql(u8, verified_sha.?, cur_base_sha)) {
+            try stdout("skip {s}: base moved since verify — run `acts verify {s}` before landing\n", .{ cid, cid });
             continue;
         }
 
@@ -460,6 +475,12 @@ fn cmdChangeStatus(allocator: std.mem.Allocator, id_arg: ?[]const u8) !void {
     }
     const verified = stack.verifyAllPassed(v, id);
     try stdout("  verified: {s}\n", .{if (verified) "yes" else "no"});
+    if (stack.getRisk(v, id)) |tier| {
+        try stdout("  risk: {s}\n", .{tier});
+    }
+    if (stack.getCost(v, id)) |cost| {
+        try stdout("  cost: ${d:.2}\n", .{cost});
+    }
     if (m.get("pr")) |pr| {
         if (pr == .object) {
             if (pr.object.get("url")) |u| {
@@ -511,7 +532,6 @@ fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []con
     if (branch.len > 0) {
         _ = try git.checkoutBranch(allocator, branch);
     }
-    _ = base;
 
     const results = try verify.runAllQualityGates(allocator);
     defer verify.freeQualityResults(allocator, results);
@@ -540,6 +560,17 @@ fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []con
 
     const new_status: []const u8 = if (all_ok) stack.status_verified else stack.status_in_progress;
     _ = try stack.setChangeString(v, id, "status", new_status);
+
+    // Record the base SHA verification ran against, so stale verification can
+    // be detected later, and (re)compute the risk tier from the final diff.
+    const base_sha = try git.refSha(allocator, base);
+    if (base_sha.len > 0) {
+        _ = try stack.setVerifyBaseSha(allocator, v, id, base_sha);
+    }
+    const tier = try computeRiskForChange(allocator, v, id, "", base);
+    _ = try stack.setRisk(v, id, tier.label());
+    try stdout("  risk: {s}\n", .{tier.label()});
+
     return all_ok;
 }
 
@@ -562,27 +593,46 @@ fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
         _ = try git.checkoutBranch(allocator, branch);
     }
 
-    // Push the branch (and, when using git-spice, the rest of the stack).
-    const remote = git.defaultRemote(allocator) orelse {
-        try stdout("note: no git remote configured — cannot submit PR. Commit and push manually.\n", .{});
-        _ = try stack.setChangeString(v, id, "status", stack.status_in_review);
-        try stack.save(allocator, v);
-        return;
-    };
+    // Compute risk tier early (used for the PR body and auto-land).
+    const tier = try computeRiskForChange(allocator, v, id, branch, base);
+    _ = try stack.setRisk(v, id, tier.label());
 
-    const push_res = try git.pushBranch(allocator, remote, branch);
-    if (push_res.exit_code != 0) {
-        try stderr("git push: {s}\n", .{std.mem.trim(u8, push_res.stderr, " \n\r")});
-        return error.PushFailed;
+    // Push the branch (and, when using git-spice, the rest of the stack).
+    var pr_submitted = false;
+    const remote = git.defaultRemote(allocator) orelse blk: {
+        try stdout("note: no git remote configured — cannot submit PR. Commit and push manually.\n", .{});
+        break :blk "";
+    };
+    if (remote.len > 0) {
+        const push_res = try git.pushBranch(allocator, remote, branch);
+        if (push_res.exit_code != 0) {
+            try stderr("git push: {s}\n", .{std.mem.trim(u8, push_res.stderr, " \n\r")});
+            return error.PushFailed;
+        }
+        pr_submitted = true;
     }
 
-    // Build PR body from the context pack
-    const body = try context.buildContextPack(allocator, v, id);
+    // Build PR body from the context pack, plus risk tier + escalation notes.
+    var body_buf = std.ArrayList(u8).init(allocator);
+    const pack = try context.buildContextPack(allocator, v, id);
+    try body_buf.appendSlice(pack);
+    try body_buf.writer().print("\n## Risk Tier: {s}\n", .{tier.label()});
+    if (tier == .HIGH or tier == .CRITICAL) {
+        try body_buf.appendSlice(
+            "\n## ⚠️ Escalation Checklist (mandatory human review)\n" ++
+            "- [ ] Deployment coordination across services\n" ++
+            "- [ ] Backward compatibility verified for high-caller-count symbols\n" ++
+            "- [ ] Rollback plan confirmed\n",
+        );
+    } else if (tier == .LOW) {
+        try body_buf.appendSlice("\n> LOW risk — eligible for auto-land once CI passes.\n");
+    }
+    const body = body_buf.items;
 
     const tools = git.detectTools(allocator);
     var pr_url: ?[]const u8 = null;
 
-    if (tools.git_spice) {
+    if (pr_submitted and tools.git_spice) {
         // git-spice handles the full stack of PRs bottom-up.
         const res = try git.run(allocator, &.{ "gs", "stack", "submit" }, 16384);
         if (res.exit_code == 0) {
@@ -604,7 +654,7 @@ fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
         }
     }
 
-    if (pr_url == null and tools.gh) {
+    if (pr_url == null and pr_submitted and tools.gh) {
         const res = try git.run(allocator, &.{
             "gh",
             "pr",
@@ -624,7 +674,7 @@ fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
         } else {
             try stderr("gh pr create: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
         }
-    } else if (pr_url == null and !tools.gh and !tools.git_spice) {
+    } else if (pr_url == null and pr_submitted and !tools.gh and !tools.git_spice) {
         try stdout("note: neither gh nor gs CLI found — branch pushed to {s}; submit PR manually.\n", .{remote});
     }
 
@@ -634,6 +684,35 @@ fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
     }
     _ = try stack.setChangeString(v, id, "status", stack.status_in_review);
     try stack.save(allocator, v);
+
+    // Risk-based HITL: LOW-risk verified changes are eligible for auto-land.
+    // gated by .acts/acts.json `hilt.auto_land_low` (default true).
+    if (tier == .LOW and autoLandLowEnabled(allocator)) {
+        try stdout("LOW risk + verified — auto-landing.\n", .{});
+        _ = try stack.appendApproval(allocator, v, id, "approve", "__auto__", "LOW", "auto-land: low risk, verified");
+        _ = try stack.setPrApproved(allocator, v, id, true);
+        _ = try stack.setChangeString(v, id, "status", stack.status_approved);
+        try stack.save(allocator, v);
+        try stdout("change {s} auto-approved (LOW risk)\n", .{id});
+    }
+}
+
+/// Read `.acts/acts.json` `hilt.auto_land_low` (default true).
+fn autoLandLowEnabled(allocator: std.mem.Allocator) bool {
+    const file = std.fs.cwd().openFile(".acts/acts.json", .{}) catch return true;
+    defer file.close();
+    const content = file.readToEndAlloc(allocator, 65536) catch return true;
+    defer allocator.free(content);
+    const parsed = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch return true;
+    defer parsed.deinit();
+    const v = parsed.value;
+    if (v != .object) return true;
+    const hilt = v.object.get("hilt") orelse return true;
+    if (hilt != .object) return true;
+    if (hilt.object.get("auto_land_low")) |a| {
+        if (a == .bool) return a.bool;
+    }
+    return true;
 }
 
 fn cmdApprove(allocator: std.mem.Allocator, id: []const u8) !void {
@@ -642,10 +721,12 @@ fn cmdApprove(allocator: std.mem.Allocator, id: []const u8) !void {
     const v = parsed.value;
 
     if (stack.getChange(v, id) == null) return error.ChangeNotFound;
+    const tier = stack.getRisk(v, id) orelse "UNKNOWN";
+    _ = try stack.appendApproval(allocator, v, id, "approve", "developer", tier, "human PR approval");
     _ = try stack.setPrApproved(allocator, v, id, true);
     _ = try stack.setChangeString(v, id, "status", stack.status_approved);
     try stack.save(allocator, v);
-    try stdout("change {s} approved\n", .{id});
+    try stdout("change {s} approved (risk: {s})\n", .{ id, tier });
 }
 
 fn cmdRework(allocator: std.mem.Allocator, id: []const u8) !void {
@@ -654,10 +735,76 @@ fn cmdRework(allocator: std.mem.Allocator, id: []const u8) !void {
     const v = parsed.value;
 
     if (stack.getChange(v, id) == null) return error.ChangeNotFound;
+    const tier = stack.getRisk(v, id) orelse "UNKNOWN";
+    _ = try stack.appendApproval(allocator, v, id, "rework", "developer", tier, "reopened for rework");
     _ = try stack.setPrApproved(allocator, v, id, false);
     _ = try stack.setChangeString(v, id, "status", stack.status_in_progress);
     try stack.save(allocator, v);
     try stdout("change {s} reopened for rework\n", .{id});
+}
+
+fn cmdRisk(allocator: std.mem.Allocator, id: []const u8) !void {
+    var parsed = try stack.load(allocator);
+    defer parsed.deinit();
+    const v = parsed.value;
+    const root = &v.object;
+
+    const m = stack.getChange(v, id) orelse return error.ChangeNotFound;
+    const branch = if (m.get("branch")) |b| if (b == .string) b.string else "" else "";
+    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
+
+    const tier = try computeRiskForChange(allocator, v, id, branch, base);
+    _ = try stack.setRisk(v, id, tier.label());
+    try stack.save(allocator, v);
+
+    const cross = try crossRepoEdgeCount(allocator, branch, base);
+    const files = try git.changedFilesSince(allocator, base);
+    const adds = try git.diffAdditions(allocator, base);
+    const verified = stack.verifyAllPassed(v, id);
+
+    try stdout("risk for {s}: {s}\n", .{ id, tier.label() });
+    try stdout("  files: {d} | additions: {d} | cross-repo edges: {d} | verified: {s}\n", .{ files.len, adds, cross, if (verified) "yes" else "no" });
+    if (tier == .LOW) {
+        try stdout("  → LOW: eligible for auto-land after verification\n", .{});
+    } else if (tier == .HIGH or tier == .CRITICAL) {
+        try stdout("  → {s}: requires human review + escalation checklist\n", .{tier.label()});
+    }
+}
+
+/// Compute the risk tier for a change from git-derived heuristics plus any
+/// cross-repo data the CBM plugin has stored on the change under `risk`
+/// (object with `cross_repo_edges`, `high_complexity_symbols`).
+fn computeRiskForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []const u8, branch: []const u8, base: []const u8) !risk.RiskTier {
+    const files = try git.changedFilesSince(allocator, base);
+    const adds = try git.diffAdditions(allocator, base);
+
+    var cross: usize = try crossRepoEdgeCount(allocator, branch, base);
+    var high_complexity: usize = 0;
+    const meta = stack.getRiskMeta(v, id);
+    if (meta.cross_repo_edges > 0) cross = meta.cross_repo_edges;
+    high_complexity = meta.high_complexity_symbols;
+
+    return risk.classify(.{
+        .file_count = files.len,
+        .diff_additions = adds,
+        .cross_repo_edges = cross,
+        .high_complexity_symbols = high_complexity,
+        .verified = stack.verifyAllPassed(v, id),
+    });
+}
+
+/// Number of files in this change that live in a repo outside the current one.
+/// For a single-repo stack this is always 0; the CBM plugin can supply the
+/// true cross-repo edge count via `acts risk <id> --cross-repo <n>`. We detect
+/// files under a sibling repo layout heuristically (paths under ../*).
+fn crossRepoEdgeCount(allocator: std.mem.Allocator, branch: []const u8, base: []const u8) !usize {
+    _ = branch;
+    const files = try git.changedFilesSince(allocator, base);
+    var count: usize = 0;
+    for (files) |f| {
+        if (std.mem.startsWith(u8, f, "../")) count += 1;
+    }
+    return count;
 }
 
 fn cmdContext(allocator: std.mem.Allocator, id_arg: ?[]const u8) !void {
@@ -670,12 +817,19 @@ fn cmdContext(allocator: std.mem.Allocator, id_arg: ?[]const u8) !void {
     try stdout("{s}\n", .{pack});
 }
 
-fn cmdNote(allocator: std.mem.Allocator, id: []const u8, msg: []const u8) !void {
+fn cmdNote(allocator: std.mem.Allocator, id: []const u8, msg: []const u8, args: *const Args) !void {
     var parsed = try stack.load(allocator);
     defer parsed.deinit();
     const v = parsed.value;
 
     if (stack.getChange(v, id) == null) return error.ChangeNotFound;
+
+    // Optional cost tracking: `acts note <id> -m "..." --cost <$>`
+    if (args.flag("--cost")) |cost_str| {
+        const cost = std.fmt.parseFloat(f64, cost_str) catch 0;
+        _ = try stack.setCost(v, id, cost);
+        try stdout("  cost: ${d:.2}\n", .{cost});
+    }
 
     // Write the note to .acts/changes/<id>/notes/<ts>.md
     const ts = std.time.timestamp();

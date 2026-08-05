@@ -80,13 +80,19 @@ try {
   assert.ok(zp.content[0].text.includes('acts-zeplin-contract.mjs'), 'acts_zeplin references the contract script');
   ok('acts_zeplin handles missing script gracefully offline');
 
-  // 6. System context includes stack info from manifest
+  // 6. System context includes stack info from manifest + auto-injects active change pack
   const out = { system: [] };
   await hooks['experimental.chat.system.transform']({}, out);
   const sys = out.system.join('\n');
   assert.ok(sys.includes('auth'), 'system context has stack id');
   assert.ok(sys.includes('JWT middleware'), 'system context lists changes');
-  ok('system transform injects v2 stack context');
+  assert.ok(sys.includes('Active Change'), 'system context auto-injects the active change pack');
+  ok('system transform injects v2 stack context + auto-injects active change');
+
+  // 6b. acts_context with blast_radius falls back gracefully when no CBM binary
+  const ctxBr = await tools.acts_context.handler({ change_id: 'c1', blast_radius: true });
+  assert.ok(ctxBr.content[0].text.includes('ACTS_CALLED:context c1'), 'acts_context still returns the context pack');
+  ok('acts_context with blast_radius degrades gracefully offline');
 
   // 7. Bootstrap injected into first user message
   const msg = { messages: [{ info: { role: 'user' }, parts: [{ type: 'text', text: 'hello' }] }] };
