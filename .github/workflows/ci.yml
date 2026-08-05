@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [ master, main, 'acts-core-v*' ]
+    branches: [ master, main, 'acts-core-v*', 'v*' ]
   pull_request:
     branches: [ master, main ]
 
@@ -22,28 +22,80 @@ jobs:
         working-directory: ./acts-core
         run: zig build
 
-      - name: Run tests
+      - name: Run unit tests
         working-directory: ./acts-core
         run: zig build test
 
-      - name: Test init command
-        run: |
-          ./acts-core/zig-out/bin/acts init CI-TEST --title "CI Test Story"
+      - name: Run plugin tests (npm)
+        run: npm test
 
-      - name: Test gate enforcement
+      - name: Smoke test — full v2 stack lifecycle
         run: |
-          sqlite3 .acts/acts.db "INSERT INTO tasks (id, story_id, title, description, status) VALUES ('T1', 'CI-TEST', 'Test', 'Desc', 'TODO');"
-          # Should fail without preflight gate
-          if ./acts-core/zig-out/bin/acts task update T1 --status IN_PROGRESS; then
-            echo "ERROR: Should have failed without preflight gate"
+          set -euo pipefail
+          BIN="$(pwd)/acts-core/zig-out/bin/acts"
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+
+          # Initialize a scratch repo so ACTS v2 can create branches
+          mkdir -p /tmp/acts-ci && cd /tmp/acts-ci
+          git init -q -b main
+          echo "# ci" > README.md
+          git add . && git commit -qm init
+
+          # Minimal package.json so quality gates auto-detect
+          mkdir -p .acts
+          cat > package.json <<'EOF'
+          { "name":"ci","scripts":{"test":"node -e 'process.exit(0)'","lint":"node -e 'process.exit(0)'","build":"node -e 'process.exit(0)'"} }
+          EOF
+          cat > .acts/acts.json <<'EOF'
+          { "quality_gate": { "test":"npm test", "lint":"npm run lint", "typecheck":null, "build":"npm run build" } }
+          EOF
+          git add -A && git commit -qm "setup"
+
+          "$BIN" version
+          "$BIN" stack create ci -t "CI stack"
+          git add .acts && git commit -qm "stack manifest"
+          "$BIN" change add c1 -t "Feature" --accept "works"
+          git add . && git commit -qm "c1"
+
+          # Gate: review must fail before verify
+          if "$BIN" review c1 2>/dev/null; then
+            echo "ERROR: review should have been blocked before verify"
             exit 1
           fi
-          # Add preflight gate and succeed
-          ./acts-core/zig-out/bin/acts gate add --task T1 --type approve --status approved --by ci
-          ./acts-core/zig-out/bin/acts task update T1 --status IN_PROGRESS
 
-      - name: Test validate
-        run: ./acts-core/zig-out/bin/acts validate
+          "$BIN" verify c1
+          "$BIN" approve c1
+          "$BIN" stack land
+
+          "$BIN" stack status
+          "$BIN" validate
+
+      - name: Smoke test — v1 → v2 migration
+        run: |
+          set -euo pipefail
+          BIN="$(pwd)/acts-core/zig-out/bin/acts"
+          git config --global user.email "ci@example.com"
+          git config --global user.name "CI"
+
+          mkdir -p /tmp/acts-ci-migrate && cd /tmp/acts-ci-migrate
+          git init -q -b main
+          echo "# migrate" > README.md
+          git add . && git commit -qm init
+
+          # Create a minimal v1-style SQLite DB
+          mkdir -p .acts
+          sqlite3 .acts/acts.db "
+            CREATE TABLE stories (id TEXT PRIMARY KEY, title TEXT, status TEXT, type TEXT);
+            CREATE TABLE tasks (id TEXT PRIMARY KEY, story_id TEXT, title TEXT, status TEXT, review_status TEXT);
+            INSERT INTO stories VALUES ('LEGACY', 'Legacy Story', 'IN_PROGRESS', 'feature');
+            INSERT INTO tasks VALUES ('t1', 'LEGACY', 'Task One', 'DONE', 'approved');
+            INSERT INTO tasks VALUES ('t2', 'LEGACY', 'Task Two', 'IN_PROGRESS', 'pending');
+          "
+
+          "$BIN" migrate LEGACY
+          "$BIN" stack status
+          "$BIN" validate
 
   build:
     name: Build Release
