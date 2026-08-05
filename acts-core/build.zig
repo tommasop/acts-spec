@@ -14,6 +14,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    exe.linkLibC();
     exe.root_module.addOptions("build_options", options);
     b.installArtifact(exe);
 
@@ -28,6 +29,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    unit_tests.linkLibC();
     unit_tests.root_module.addOptions("build_options", options);
     const run_unit_tests = b.addRunArtifact(unit_tests);
     const test_step = b.step("test", "Run unit tests");
@@ -40,6 +42,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = .ReleaseSafe,
     });
+    release_exe.linkLibC();
     release_exe.root_module.addOptions("build_options", options);
     const install_release = b.addInstallArtifact(release_exe, .{});
     release_step.dependOn(&install_release.step);
