@@ -310,19 +310,56 @@ fn cmdStackLand(allocator: std.mem.Allocator) !void {
             try stdout("skip {s}: status is {s} (need APPROVED)\n", .{ cid, cstatus });
             continue;
         }
+
+        // Commit any pending manifest/note changes on the change branch first, so
+        // switching to the base branch isn't blocked by a dirty tracked `.acts/`.
+        const cur = (try git.currentBranch(allocator)) orelse "";
+        if (!std.mem.eql(u8, cur, cbranch)) {
+            _ = try git.checkoutBranch(allocator, cbranch);
+        }
+        const status_res = try git.run(allocator, &.{ "git", "status", "--porcelain", "--", ".acts" }, 8192);
+        if (status_res.exit_code == 0 and std.mem.trim(u8, status_res.stdout, " \n\r").len > 0) {
+            _ = try git.run(allocator, &.{ "git", "add", ".acts" }, 8192);
+            const cres = try git.gitCommit(allocator, try std.fmt.allocPrint(allocator, "chore(acts): record {s} state", .{cid}));
+            if (cres.exit_code != 0) {
+                try stderr("commit .acts failed for {s}: {s}\n", .{ cid, std.mem.trim(u8, cres.stderr, " \n\r") });
+                return error.CommitFailed;
+            }
+        }
+
         // Merge the change branch into the base branch
-        _ = try git.checkoutBranch(allocator, base);
+        const co = try git.checkoutBranch(allocator, base);
+        if (co.exit_code != 0) {
+            try stderr("checkout {s} failed: {s}\n", .{ base, std.mem.trim(u8, co.stderr, " \n\r") });
+            return error.CheckoutFailed;
+        }
         const mr = try git.run(allocator, &.{ "git", "merge", "--no-ff", cbranch, "-m", try std.fmt.allocPrint(allocator, "acts: land {s}", .{cid}) }, 8192);
         if (mr.exit_code != 0) {
             try stderr("merge failed for {s}: {s}\n", .{ cid, std.mem.trim(u8, mr.stderr, " \n\r") });
             return error.MergeFailed;
         }
-        _ = try stack.setChangeString(v, cid, "status", stack.status_merged);
-        try stdout("landed {s}\n", .{cid});
+        try stdout("landed {s} onto {s}\n", .{ cid, base });
         landed_any = true;
     }
+
+    // Update the manifest: mark landed changes MERGED. Note: we are on the base
+    // branch now, so save the manifest there and commit it.
     if (landed_any) {
+        for (changes.array.items) |*c| {
+            if (c.* != .object) continue;
+            const m = &c.*.object;
+            const cid = if (m.get("id")) |s| if (s == .string) s.string else "" else "";
+            const cstatus = if (m.get("status")) |s| if (s == .string) s.string else "" else "";
+            if (!std.mem.eql(u8, cstatus, stack.status_merged)) {
+                _ = try stack.setChangeString(v, cid, "status", stack.status_merged);
+            }
+        }
         try stack.save(allocator, v);
+        const status_res = try git.run(allocator, &.{ "git", "status", "--porcelain", "--", ".acts" }, 8192);
+        if (status_res.exit_code == 0 and std.mem.trim(u8, status_res.stdout, " \n\r").len > 0) {
+            _ = try git.run(allocator, &.{ "git", "add", ".acts" }, 8192);
+            _ = try git.gitCommit(allocator, "chore(acts): mark landed changes MERGED");
+        }
     } else {
         try stdout("nothing to land (no APPROVED changes)\n", .{});
     }
