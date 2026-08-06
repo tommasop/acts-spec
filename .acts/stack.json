@@ -115,19 +115,55 @@
       "title": "Fix stale v1 acts binary shadowing v2",
       "branch": "acts/acts-v2/c3-fix-stale-v1-acts-binary-shadowing-v2",
       "parent": null,
-      "status": "TODO",
+      "status": "APPROVED",
       "acceptance": [
         "acts state read shows v2 hint (not StoryNotFound); install.sh + setup warn on shadow; plugin skips stale v1 binary; tests pass"
       ],
-      "verify": {},
+      "verify": {
+        "test": {
+          "cmd": "npm test && cd acts-core && zig build test",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 226
+        },
+        "lint": {
+          "cmd": "node --check .opencode/plugins/acts.js",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 20
+        },
+        "typecheck": {
+          "cmd": "skipped",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 0
+        },
+        "build": {
+          "cmd": "cd acts-core && zig build",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 30
+        },
+        "base_sha": "0f3030d865e205b91ee9d0070d99c9a2719501d3"
+      },
       "notes": [
         ".acts/changes/fix-v1-shadow/notes/1786023124.md"
       ],
       "checkpoint": null,
       "pr": {
-        "url": null,
-        "approved": false
-      }
+        "url": "https://github.com/tommasop/acts-spec/pull/3",
+        "approved": true
+      },
+      "risk": "LOW",
+      "approvals": [
+        {
+          "action": "approve",
+          "by": "__auto__",
+          "tier": "LOW",
+          "ts": 1786023139,
+          "note": "auto-land: low risk, verified"
+        }
+      ]
     }
   ]
 }
