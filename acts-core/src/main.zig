@@ -24,7 +24,12 @@ const usage_text =
     \\  change add <id> -t <title> [--accept <criteria>]
     \\                                          Add a change (branch) on top of the stack
     \\  change status [<id>]                    Show change details
-    \\  verify [<id>] [--all]                   Run quality gates, record evidence
+    \\  verify [<id>] [--all] [--force -m <reason> | --manual <evidence>]
+    \\                                          Run quality gates, record evidence
+    \\                                          --force: override when failures are
+    \\                                            outside this change (refused if a
+    \\                                            change-owned file fails)
+    \\                                          --manual: skip gates, record evidence
     \\  review <id>                             Submit stacked PR (requires verify to pass)
     \\  approve <id>                            Mark change approved (after human PR review)
     \\  rework <id>                             Reopen for rework (clears approval)
@@ -81,7 +86,7 @@ fn parseArgs(allocator: std.mem.Allocator, argv: []const []const u8) !Args {
     var args = Args.init(allocator);
     errdefer args.deinit();
 
-    const long_value_flags = [_][]const u8{ "--title", "--accept", "--message", "--cost", "--source", "--bin-dir", "-t", "-m" };
+    const long_value_flags = [_][]const u8{ "--title", "--accept", "--message", "--cost", "--source", "--bin-dir", "--manual", "--reason", "-t", "-m" };
     const bool_flags = [_][]const u8{ "--all", "--json", "--github", "--force", "--no-install" };
     var i: usize = 0;
     while (i < argv.len) : (i += 1) {
@@ -219,7 +224,11 @@ fn runCommand(allocator: std.mem.Allocator, cmd: []const u8, args: *const Args) 
     }
     if (std.mem.eql(u8, cmd, "verify")) {
         const id = if (args.positional.items.len >= 1) args.positional.items[0] else null;
-        return cmdVerify(allocator, id, args.has("--all"));
+        const force = args.has("--force");
+        const manual = args.flag("--manual") orelse null;
+        const reason = args.flag("-m") orelse args.flag("--reason") orelse null;
+        if (force and reason == null) return error.MissingReason;
+        return cmdVerify(allocator, id, args.has("--all"), force, manual, reason);
     }
     if (std.mem.eql(u8, cmd, "review")) {
         if (args.positional.items.len < 1) return error.MissingChangeId;
@@ -537,7 +546,7 @@ fn cmdChangeStatus(allocator: std.mem.Allocator, id_arg: ?[]const u8) !void {
     }
 }
 
-fn cmdVerify(allocator: std.mem.Allocator, id_arg: ?[]const u8, all: bool) !void {
+fn cmdVerify(allocator: std.mem.Allocator, id_arg: ?[]const u8, all: bool, force: bool, manual: ?[]const u8, reason: ?[]const u8) !void {
     var parsed = try stack.load(allocator);
     defer parsed.deinit();
     const v = parsed.value;
@@ -554,7 +563,7 @@ fn cmdVerify(allocator: std.mem.Allocator, id_arg: ?[]const u8, all: bool) !void
             const cid = if (m.get("id")) |s| if (s == .string) s.string else "" else "";
             const cstatus = if (m.get("status")) |s| if (s == .string) s.string else "" else "";
             if (std.mem.eql(u8, cstatus, stack.status_merged)) continue;
-            const ok = try runVerifyForChange(allocator, v, cid, base);
+            const ok = try runVerifyForChange(allocator, v, cid, base, force, manual, reason);
             if (!ok) total_pass = false;
         }
         try stack.save(allocator, v);
@@ -566,13 +575,13 @@ fn cmdVerify(allocator: std.mem.Allocator, id_arg: ?[]const u8, all: bool) !void
     const id = id_arg orelse (resolveCurrentChange(allocator, v) orelse return error.NoActiveChange);
     if (stack.getChange(v, id) == null) return error.ChangeNotFound;
 
-    const ok = try runVerifyForChange(allocator, v, id, base);
+    const ok = try runVerifyForChange(allocator, v, id, base, force, manual, reason);
     try stack.save(allocator, v);
     if (!ok) return error.VerifyFailed;
     try stdout("change {s} verified\n", .{id});
 }
 
-fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []const u8, base: []const u8) !bool {
+fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []const u8, base: []const u8, force: bool, manual: ?[]const u8, reason: ?[]const u8) !bool {
     // Check out the change branch so tests run against its code
     const m = stack.getChange(v, id).?;
     const branch = if (m.get("branch")) |b| if (b == .string) b.string else "" else "";
@@ -580,10 +589,28 @@ fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []con
         _ = try git.checkoutBranch(allocator, branch);
     }
 
+    var all_ok = true;
+
+    // ── Manual verification: skip gates entirely, record evidence ──
+    if (manual) |evidence| {
+        _ = try stack.setVerifyForced(allocator, v, id, "manual", evidence);
+        _ = try stack.setChangeString(v, id, "status", stack.status_verified);
+        const base_sha = try git.refSha(allocator, base);
+        if (base_sha.len > 0) _ = try stack.setVerifyBaseSha(allocator, v, id, base_sha);
+        const tier = try computeRiskForChange(allocator, v, id, branch, base);
+        _ = try stack.setRisk(v, id, tier.label());
+        try stdout("  manual verification recorded: {s}\n", .{evidence});
+        try stdout("  risk: {s}\n", .{tier.label()});
+        return true;
+    }
+
+    // ── Normal: run all quality gates ──
     const results = try verify.runAllQualityGates(allocator);
     defer verify.freeQualityResults(allocator, results);
 
-    var all_ok = true;
+    var failing_outputs = std.ArrayList(u8).init(allocator);
+    defer failing_outputs.deinit();
+
     for (results) |r| {
         const stage_name = switch (r.stage) {
             .Test => "test",
@@ -602,11 +629,30 @@ fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []con
             } else if (trimmed.len > 0) {
                 try stdout("      {s}\n", .{trimmed});
             }
+            if (!ok) try failing_outputs.writer().writeAll(r.output);
         }
     }
 
-    const new_status: []const u8 = if (all_ok) stack.status_verified else stack.status_in_progress;
-    _ = try stack.setChangeString(v, id, "status", new_status);
+    // ── Force override with enforcement ──
+    // Force is only allowed when the failures are attributable to files OUTSIDE
+    // this change's diff (e.g. pre-existing files owned by another change), or
+    // when no file can be attributed (broken/wrong gate tooling). If a failing
+    // file is owned by THIS change, force is refused — the code must be fixed.
+    if (!all_ok and force) {
+        const fail_owned = try failingFilesOwnedByChange(allocator, base, branch, failing_outputs.items);
+        if (fail_owned) {
+            try stderr("force denied: the failing gate output includes files this change owns.\n", .{});
+            try stderr("  Fix the code or correct the gate config (`.acts/acts.json` quality_gate), then re-verify.\n", .{});
+            _ = try stack.setChangeString(v, id, "status", stack.status_in_progress);
+            return false;
+        }
+        _ = try stack.setVerifyForced(allocator, v, id, "force", reason orelse "failures outside this change");
+        _ = try stack.setChangeString(v, id, "status", stack.status_verified);
+        try stdout("  forced: yes — failures attributed outside this change. Reason: {s}\n", .{ reason orelse "" });
+    } else {
+        const new_status: []const u8 = if (all_ok) stack.status_verified else stack.status_in_progress;
+        _ = try stack.setChangeString(v, id, "status", new_status);
+    }
 
     // Record the base SHA verification ran against, so stale verification can
     // be detected later, and (re)compute the risk tier from the final diff.
@@ -614,11 +660,48 @@ fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []con
     if (base_sha.len > 0) {
         _ = try stack.setVerifyBaseSha(allocator, v, id, base_sha);
     }
-    const tier = try computeRiskForChange(allocator, v, id, "", base);
+    const tier = try computeRiskForChange(allocator, v, id, branch, base);
     _ = try stack.setRisk(v, id, tier.label());
     try stdout("  risk: {s}\n", .{tier.label()});
 
-    return all_ok;
+    return all_ok or (force and stack.isVerifyForced(v, id));
+}
+
+/// Return true if any failing file (path:line tokens in the gate output) is
+/// owned by this change (i.e. present in `git diff --name-only base branch`).
+fn failingFilesOwnedByChange(allocator: std.mem.Allocator, base: []const u8, branch: []const u8, output: []const u8) !bool {
+    const owned = try git.diffNameOnly(allocator, base, branch);
+    return failingFilesOwnedByChangeWithOwned(output, owned);
+}
+
+/// Core attribution check (pure, testable): does the failing output reference
+/// any of the given owned files?
+fn failingFilesOwnedByChangeWithOwned(output: []const u8, owned: []const []const u8) bool {
+    if (output.len == 0) return false; // no files attributable → force allowed
+    if (owned.len == 0) return false;
+
+    // Extract candidate file paths from output: "path:line:col: message",
+    // "path:line", or a bare path that matches a change-owned file.
+    var it = std.mem.tokenizeAny(u8, output, " \t\n\r");
+    while (it.next()) |tok| {
+        // Strip trailing ":<digits>" suffixes (line[:col]) to recover the path.
+        var path = tok;
+        while (std.mem.lastIndexOfScalar(u8, path, ':')) |colon| {
+            const suffix = path[colon + 1 ..];
+            if (suffix.len == 0) break;
+            const all_digits = for (suffix) |ch| {
+                if (!std.ascii.isDigit(ch)) break false;
+            } else true;
+            if (!all_digits) break;
+            path = path[0..colon];
+        }
+        for (owned) |f| {
+            if (std.mem.eql(u8, path, f)) return true;
+            // Also match if the failing path ends with the owned relative path.
+            if (std.mem.endsWith(u8, path, f)) return true;
+        }
+    }
+    return false;
 }
 
 fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
@@ -1362,4 +1445,62 @@ test "statusFromV1 maps v1 task statuses to v2 change statuses" {
     try std.testing.expectEqualStrings(stack.status_in_progress, statusFromV1("IN_PROGRESS", "pending"));
     try std.testing.expectEqualStrings(stack.status_in_progress, statusFromV1("BLOCKED", "changes_requested"));
     try std.testing.expectEqualStrings(stack.status_todo, statusFromV1("TODO", "pending"));
+}
+
+test "verifyAllPassed honors forced verification" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var root = std.json.ObjectMap.init(a);
+    try root.put("version", .{ .integer = 2 });
+    try root.put("id", .{ .string = "auth" });
+    try root.put("title", .{ .string = "Auth" });
+    try root.put("base_branch", .{ .string = "acts/auth/base" });
+    var changes = std.json.Array.init(a);
+    var entry = std.json.ObjectMap.init(a);
+    try entry.put("id", .{ .string = "c1" });
+    try entry.put("title", .{ .string = "JWT" });
+    try entry.put("status", .{ .string = stack.status_in_progress });
+    try entry.put("branch", .{ .string = "acts/auth/c1-jwt" });
+    try entry.put("parent", .null);
+    try changes.append(.{ .object = entry });
+    try root.put("changes", .{ .array = changes });
+    const v: std.json.Value = .{ .object = root };
+
+    // No verify yet → not passed
+    try std.testing.expect(!stack.verifyAllPassed(v, "c1"));
+
+    // A failing stage → not passed
+    _ = try stack.recordVerify(a, v, "c1", "test", "npm test", false, 1, 10);
+    try std.testing.expect(!stack.verifyAllPassed(v, "c1"));
+
+    // Force it → passed, and flagged forced
+    _ = try stack.setVerifyForced(a, v, "c1", "force", "lint fails outside change");
+    try std.testing.expect(stack.verifyAllPassed(v, "c1"));
+    try std.testing.expect(stack.isVerifyForced(v, "c1"));
+    try std.testing.expectEqualStrings("lint fails outside change", stack.getVerifyForcedReason(v, "c1").?);
+}
+
+test "failingFilesOwnedByChange detects owned vs external files" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    _ = a;
+
+    const owned = [_][]const u8{ "src/auth.ts", "src/routes.ts" };
+
+    // Output mentions an external file → not owned by the change.
+    const ext_output = "src/generated/foo.js:1:1 error: not formatted\nmake: *** [lint] Error 1\n";
+    try std.testing.expect(!failingFilesOwnedByChangeWithOwned(ext_output, &owned));
+
+    // Output mentions a file owned by the change → owned.
+    const owned_output = "src/auth.ts:3:5 error: unused var\n";
+    try std.testing.expect(failingFilesOwnedByChangeWithOwned(owned_output, &owned));
+
+    // A bare path with no line suffix, plus trailing colon form.
+    try std.testing.expect(failingFilesOwnedByChangeWithOwned("src/routes.ts error", &owned));
+
+    // Empty output (broken tooling) → not owned, so force is allowed.
+    try std.testing.expect(!failingFilesOwnedByChangeWithOwned("", &owned));
 }

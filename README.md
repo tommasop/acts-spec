@@ -169,7 +169,7 @@ In OpenCode, the active change's context pack (plus optional CBM blast radius) i
 |---------|-------------|
 | `change add <id> -t <title> [--accept <criteria>]` | Add a change (branch) on top of the stack |
 | `change status [<id>]` | Show change details |
-| `verify [<id>] [--all]` | Run quality gates; record evidence (**gate for review**) |
+| `verify [<id>] [--all] [--force -m <reason> \| --manual <evidence>]` | Run quality gates; record evidence (**gate for review**). `--force` overrides failures outside the change; `--manual` skips gates |
 | `review <id>` | Submit stacked PR (requires verify to pass); auto-lands LOW-risk |
 | `approve <id>` | Mark approved after human PR review |
 | `rework <id>` | Reopen for rework (clears approval) |
@@ -254,6 +254,41 @@ In OpenCode, the active change's context pack (plus optional CBM blast radius) i
 ```
 
 Commands containing shell metacharacters (`&&`, `|`, `>`, `;`) are run via `sh -c`.
+
+#### Forcing verification
+
+Sometimes gates fail for reasons **outside the change** — e.g. a repo-wide `make lint` flags pre-existing files owned by another change, or the gate tooling itself is broken in the environment. ACTS lets you override, but **only when the failure is provably outside this change**:
+
+```bash
+# Run gates; override failures attributed to files OUTSIDE this change's diff.
+acts verify c1 --force -m "lint fails on pre-existing files owned by BACKEND-AS-SERVICE"
+
+# Skip gates entirely and record evidence (e.g. tooling hangs in this env).
+acts verify c1 --manual "gates hang in this environment; verified manually"
+```
+
+**Enforcement:** `--force` refuses to override if the failing gate output references a file this change owns (via `git diff`):
+
+```
+force denied: the failing gate output includes files this change owns.
+  Fix the code or correct the gate config (`.acts/acts.json` quality_gate), then re-verify.
+```
+
+So force covers:
+- **A** — failing files are outside the change's diff (another change's files), or
+- **B** — no files can be attributed (broken/wrong gate tooling).
+
+It can never hide a regression in code you touched. A forced verification is recorded in the manifest (`verify.forced`, `verify.force_reason`), appended to the change's `approvals[]` audit log, and surfaced as **"⚠️ forced verification"** in `acts context` and the PR body. Manual verification is the `verify.force_kind = "manual"` variant.
+
+To override manually (e.g. to unblock review when tooling can't run), add to the change's `verify` object in `.acts/stack.json`:
+
+```json
+"verify": {
+  "lint": { "cmd": "make lint", "ok": false, "exit_code": 1 },
+  "forced": true,
+  "force_reason": "lint fails on pre-existing files owned by BACKEND-AS-SERVICE; none in this change's diff"
+}
+```
 
 ### Risk-Based Human-in-the-Loop
 

@@ -76,6 +76,19 @@ pub fn checkoutBranch(arena: std.mem.Allocator, name: []const u8) !CmdResult {
     return run(arena, &.{ "git", "checkout", name }, 4096);
 }
 
+/// Committed-only files changed between two refs (e.g. base branch and a change
+/// branch). Unlike `changedFilesSince`, this ignores uncommitted/untracked files
+/// so ownership can be attributed precisely to committed work.
+pub fn diffNameOnly(arena: std.mem.Allocator, from: []const u8, to: []const u8) ![][]const u8 {
+    var out = std.ArrayList([]const u8).init(arena);
+    const res = try run(arena, &.{ "git", "diff", "--name-only", from, to }, 65536);
+    if (res.exit_code == 0) {
+        var it = std.mem.tokenizeAny(u8, res.stdout, " \n\r");
+        while (it.next()) |f| try out.append(f);
+    }
+    return out.toOwnedSlice();
+}
+
 /// Files changed between `base` and the current working tree (uncommitted + committed since base).
 pub fn changedFilesSince(arena: std.mem.Allocator, base: []const u8) ![][]const u8 {
     var out = std.ArrayList([]const u8).init(arena);

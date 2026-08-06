@@ -131,6 +131,12 @@ pub fn verifyAllPassed(v: std.json.Value, id: []const u8) bool {
     const m = getChange(v, id) orelse return false;
     const verify = m.get("verify") orelse return false;
     if (verify != .object) return false;
+    // A forced verification (e.g. failures attributed to files outside this
+    // change, or manual evidence recorded when tooling is broken) counts as
+    // passed, but is always surfaced via `verify.forced`/`verify.force_reason`.
+    if (verify.object.get("forced")) |f| {
+        if (f == .bool and f.bool) return true;
+    }
     var any = false;
     for (verify_stages) |stage| {
         const r = verify.object.get(stage) orelse continue;
@@ -142,6 +148,41 @@ pub fn verifyAllPassed(v: std.json.Value, id: []const u8) bool {
         }
     }
     return any;
+}
+
+/// True if this change's verification was forced (overridden) or manual.
+pub fn isVerifyForced(v: std.json.Value, id: []const u8) bool {
+    const m = getChange(v, id) orelse return false;
+    const verify = m.get("verify") orelse return false;
+    if (verify != .object) return false;
+    if (verify.object.get("forced")) |f| {
+        if (f == .bool and f.bool) return true;
+    }
+    return false;
+}
+
+pub fn getVerifyForcedReason(v: std.json.Value, id: []const u8) ?[]const u8 {
+    const m = getChange(v, id) orelse return null;
+    const verify = m.get("verify") orelse return null;
+    if (verify != .object) return null;
+    if (verify.object.get("force_reason")) |r| {
+        if (r == .string) return r.string;
+    }
+    return null;
+}
+
+/// Mark a change's verification as forced, recording why. `kind` is
+/// "force" (gates ran, failures outside the change) or "manual" (gates skipped).
+pub fn setVerifyForced(allocator: std.mem.Allocator, v: std.json.Value, id: []const u8, kind: []const u8, reason: []const u8) !bool {
+    const m = getChange(v, id) orelse return false;
+    const vgop = try m.getOrPut("verify");
+    if (!vgop.found_existing) vgop.value_ptr.* = .{ .object = std.json.ObjectMap.init(allocator) };
+    const vm = &vgop.value_ptr.*.object;
+    try vm.put("forced", .{ .bool = true });
+    try vm.put("force_kind", .{ .string = kind });
+    try vm.put("force_reason", .{ .string = reason });
+    try vm.put("forced_at", .{ .integer = @intCast(std.time.timestamp()) });
+    return true;
 }
 
 /// Store the base branch SHA at the time verification ran, so callers can

@@ -73,6 +73,12 @@ pub fn buildContextPack(
 
     // Verification status
     try out.appendSlice("\n## Verification\n");
+    if (stack.isVerifyForced(v, change_id)) {
+        try out.appendSlice("> ⚠️ FORCED verification (overridden)\n");
+        if (stack.getVerifyForcedReason(v, change_id)) |reason| {
+            try out.writer().print("> Reason: {s}\n", .{reason});
+        }
+    }
     if (m.get("verify")) |ver| {
         if (ver == .object) {
             for (stack.verify_stages) |stage| {
