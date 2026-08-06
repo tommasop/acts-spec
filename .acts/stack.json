@@ -59,7 +59,7 @@
       "title": "Remove cbm plugin: CBM via MCP + acts graph/tech-lead/doc-risk",
       "branch": "acts/acts-v2/c2-remove-cbm-plugin-cbm-via-mcp-acts-graph-tech-lead-doc-risk",
       "parent": null,
-      "status": "APPROVED",
+      "status": "MERGED",
       "acceptance": [
         "CBM tools available via MCP; cbm.js deleted; acts graph/tech-lead/doc-risk work; setup wires MCP; tests green"
       ],
