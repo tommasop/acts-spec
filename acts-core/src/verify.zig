@@ -20,13 +20,16 @@ pub const QualityConfig = struct {
     build: ?[]const u8 = null,
 };
 
-/// Detect project type and return quality gate commands
+/// Detect project type and return quality gate commands.
+/// Order matters: more specific language indicators (package.json, Cargo.toml,
+/// go.mod, …) are checked BEFORE a bare Makefile, because a Makefile often
+/// contains unrelated targets. If the project has both, we prefer the language
+/// toolchain's conventions.
 pub fn detectQualityGate(allocator: std.mem.Allocator) !QualityConfig {
     const indicators = [_]struct {
         file: []const u8,
         config: QualityConfig,
     }{
-        .{ .file = "Makefile", .config = QualityConfig{ .test_cmd = "make test", .lint = "make lint", .typecheck = "make check", .build = "make build" } },
         .{ .file = "package.json", .config = QualityConfig{ .test_cmd = "npm test", .lint = "npm run lint", .typecheck = "npx tsc --noEmit", .build = "npm run build" } },
         .{ .file = "Cargo.toml", .config = QualityConfig{ .test_cmd = "cargo test", .lint = "cargo clippy", .typecheck = "cargo check", .build = "cargo build" } },
         .{ .file = "go.mod", .config = QualityConfig{ .test_cmd = "go test ./...", .lint = "golangci-lint run", .typecheck = null, .build = "go build ./..." } },
@@ -35,6 +38,7 @@ pub fn detectQualityGate(allocator: std.mem.Allocator) !QualityConfig {
         .{ .file = "pom.xml", .config = QualityConfig{ .test_cmd = "mvn test", .lint = "mvn checkstyle:check", .typecheck = null, .build = "mvn compile" } },
         .{ .file = "build.gradle", .config = QualityConfig{ .test_cmd = "gradle test", .lint = "gradle check", .typecheck = null, .build = "gradle build" } },
         .{ .file = "mix.exs", .config = QualityConfig{ .test_cmd = "mix test", .lint = "mix credo", .typecheck = null, .build = "mix compile" } },
+        .{ .file = "Makefile", .config = QualityConfig{ .test_cmd = "make test", .lint = "make lint", .typecheck = "make check", .build = "make build" } },
     };
 
     for (indicators) |ind| {
@@ -83,8 +87,35 @@ pub fn loadQualityConfig(allocator: std.mem.Allocator) !?QualityConfig {
     return config;
 }
 
-/// Run a single quality gate command, return result
+/// Run a single quality gate command, return result.
+/// Uses a poll-based reader with a deadline so commands that spawn background
+/// processes (which inherit the stdout/stderr pipe and keep it open) cannot
+/// hang ACTS forever. On timeout the child is killed and a failure is returned.
 pub fn runStage(allocator: std.mem.Allocator, stage: QualityStage, command: ?[]const u8) !QualityResult {
+    const stage_timeout_ms = stageTimeoutMs();
+    return runStageTimeout(allocator, stage, command, stage_timeout_ms);
+}
+
+fn stageTimeoutMs() u64 {
+    // Allow override via ACTS_VERIFY_TIMEOUT_MS; default 5 minutes per stage.
+    if (std.posix.getenv("ACTS_VERIFY_TIMEOUT_MS")) |s| {
+        return std.fmt.parseInt(u64, s, 10) catch default_verify_timeout_ms;
+    }
+    return default_verify_timeout_ms;
+}
+
+const default_verify_timeout_ms: u64 = 300_000; // 5 minutes
+
+/// Set O_NONBLOCK on a file descriptor so a pipe read returns error.WouldBlock
+/// instead of blocking when the pipe is open but empty (e.g. a background
+/// process inherited the write end).
+fn setNonBlocking(fd: std.posix.fd_t) !void {
+    const flags = try std.posix.fcntl(fd, std.posix.F.GETFL, 0);
+    const nonblock_bit = @as(usize, 1) << @bitOffsetOf(std.posix.O, "NONBLOCK");
+    _ = try std.posix.fcntl(fd, std.posix.F.SETFL, flags | nonblock_bit);
+}
+
+fn runStageTimeout(allocator: std.mem.Allocator, stage: QualityStage, command: ?[]const u8, timeout_ms: u64) !QualityResult {
     if (command == null) {
         return QualityResult{
             .stage = stage,
@@ -144,45 +175,184 @@ pub fn runStage(allocator: std.mem.Allocator, stage: QualityStage, command: ?[]c
         };
     };
 
-    // Read stdout/stderr BEFORE wait to avoid pipe deadlock
-    var output_buf = std.ArrayList(u8).init(allocator);
-    errdefer output_buf.deinit();
-
+    // Make the pipe read-ends non-blocking so `read` never hangs. This is
+    // critical for commands that spawn background processes which inherit the
+    // pipe and keep it open after the child exits: without O_NONBLOCK, a read
+    // on an open-but-empty pipe would block forever.
     if (child.stdout) |out| {
-        const stdout_data = out.reader().readAllAlloc(allocator, 32768) catch "";
-        defer allocator.free(stdout_data);
-        try output_buf.writer().writeAll(stdout_data);
+        setNonBlocking(out.handle) catch {};
     }
     if (child.stderr) |err_pipe| {
-        const stderr_data = err_pipe.reader().readAllAlloc(allocator, 32768) catch "";
-        defer allocator.free(stderr_data);
-        try output_buf.writer().writeAll(stderr_data);
+        setNonBlocking(err_pipe.handle) catch {};
     }
 
-    const wait_result = child.wait() catch {
-        const output = output_buf.toOwnedSlice() catch "";
-        return QualityResult{
-            .stage = stage,
-            .command = try allocator.dupe(u8, cmd),
-            .status = .warn,
-            .exit_code = -1,
-            .output = output,
-            .duration_ms = 0,
+    const deadline_ns = (try std.time.Instant.now()).since(start) + timeout_ms * std.time.ns_per_ms;
+
+    var stdout_buf = std.ArrayList(u8).init(allocator);
+    defer stdout_buf.deinit();
+    var stderr_buf = std.ArrayList(u8).init(allocator);
+    defer stderr_buf.deinit();
+
+    var stdout_done = false;
+    var stderr_done = false;
+    var exited = false;
+    var exit_status: u32 = 0;
+    var timed_out = false;
+
+    while (true) {
+        // Reap the child if it has exited (non-blocking).
+        if (!exited) {
+            const wr = std.posix.waitpid(child.id, std.posix.W.NOHANG);
+            if (wr.pid != 0) {
+                exited = true;
+                exit_status = wr.status;
+            }
+        }
+
+        // Build the pollfd set from whichever pipes are still open.
+        var fds: [2]std.posix.pollfd = undefined;
+        var nfds: usize = 0;
+        var stdout_idx: ?usize = null;
+        var stderr_idx: ?usize = null;
+        if (child.stdout) |out| {
+            if (!stdout_done) {
+                fds[nfds] = .{ .fd = out.handle, .events = std.posix.POLL.IN, .revents = 0 };
+                stdout_idx = nfds;
+                nfds += 1;
+            }
+        }
+        if (child.stderr) |err_pipe| {
+            if (!stderr_done) {
+                fds[nfds] = .{ .fd = err_pipe.handle, .events = std.posix.POLL.IN, .revents = 0 };
+                stderr_idx = nfds;
+                nfds += 1;
+            }
+        }
+
+        // If the child has exited, drain what's buffered with a short grace
+        // period, then finish. We do NOT wait for EOF: background processes
+        // spawned by the command may inherit the pipe and keep it open forever.
+        if (exited) {
+            // One last short poll (200ms) to pick up trailing output.
+            var grace_fds: [2]std.posix.pollfd = undefined;
+            var gnfds: usize = 0;
+            if (child.stdout) |out| {
+                if (!stdout_done) {
+                    grace_fds[gnfds] = .{ .fd = out.handle, .events = std.posix.POLL.IN, .revents = 0 };
+                    gnfds += 1;
+                }
+            }
+            if (child.stderr) |err_pipe| {
+                if (!stderr_done) {
+                    grace_fds[gnfds] = .{ .fd = err_pipe.handle, .events = std.posix.POLL.IN, .revents = 0 };
+                    gnfds += 1;
+                }
+            }
+            if (gnfds > 0) {
+                _ = std.posix.poll(grace_fds[0..gnfds], 200) catch 0;
+                if (child.stdout) |out| {
+                    if (!stdout_done) {
+                        var buf: [8192]u8 = undefined;
+                        const n = out.read(&buf) catch 0;
+                        if (n > 0) try stdout_buf.appendSlice(buf[0..n]);
+                    }
+                }
+                if (child.stderr) |err_pipe| {
+                    if (!stderr_done) {
+                        var buf: [8192]u8 = undefined;
+                        const n = err_pipe.read(&buf) catch 0;
+                        if (n > 0) try stderr_buf.appendSlice(buf[0..n]);
+                    }
+                }
+            }
+            break;
+        }
+
+        // Check timeout before blocking on poll.
+        const now = try std.time.Instant.now();
+        if (now.since(start) >= deadline_ns) {
+            timed_out = true;
+            break;
+        }
+
+        if (nfds == 0) {
+            // No pipes left but child hasn't exited yet — wait briefly.
+            std.time.sleep(10 * std.time.ns_per_ms);
+            continue;
+        }
+
+        const remaining_ms: i32 = @intCast(@min((deadline_ns - now.since(start)) / std.time.ns_per_ms, 1000));
+        const nready = std.posix.poll(fds[0..nfds], remaining_ms) catch 0;
+        if (nready == 0) continue;
+
+        // Read available data from each ready pipe (poll said readable).
+        if (!stdout_done) if (child.stdout) |out| {
+            if (stdout_idx) |idx| {
+                const rev = fds[idx].revents;
+                if (rev & (std.posix.POLL.IN | std.posix.POLL.HUP | std.posix.POLL.ERR) != 0) {
+                    var buf: [8192]u8 = undefined;
+                    const n = out.read(&buf) catch blk: {
+                        stdout_done = true;
+                        break :blk 0;
+                    };
+                    if (n > 0) {
+                        try stdout_buf.appendSlice(buf[0..n]);
+                    } else {
+                        stdout_done = true;
+                    }
+                }
+            }
         };
-    };
+        if (!stderr_done) if (child.stderr) |err_pipe| {
+            if (stderr_idx) |idx| {
+                const rev = fds[idx].revents;
+                if (rev & (std.posix.POLL.IN | std.posix.POLL.HUP | std.posix.POLL.ERR) != 0) {
+                    var buf: [8192]u8 = undefined;
+                    const n = err_pipe.read(&buf) catch blk: {
+                        stderr_done = true;
+                        break :blk 0;
+                    };
+                    if (n > 0) {
+                        try stderr_buf.appendSlice(buf[0..n]);
+                    } else {
+                        stderr_done = true;
+                    }
+                }
+            }
+        };
+    }
+
+    // If timed out, kill the child so nothing keeps running.
+    if (timed_out and !exited) {
+        std.posix.kill(child.id, std.posix.SIG.KILL) catch {};
+        // Give it a moment to die, then reap.
+        const wr = std.posix.waitpid(child.id, std.posix.W.NOHANG);
+        if (wr.pid != 0) {
+            exited = true;
+            exit_status = wr.status;
+        }
+    }
 
     const elapsed = (try std.time.Instant.now()).since(start) / std.time.ns_per_ms;
 
-    const exit_code: i32 = switch (wait_result) {
-        .Exited => |code| @as(i32, @intCast(code)),
-        else => -1,
-    };
-    const status: QualityStatus = if (exit_code == 0) .pass else if (exit_code >= 100) .warn else .fail;
+    var output_buf = std.ArrayList(u8).init(allocator);
+    defer output_buf.deinit();
+    try output_buf.appendSlice(stdout_buf.items);
+    if (stderr_buf.items.len > 0) {
+        try output_buf.writer().print("\n[stderr]\n{s}\n", .{stderr_buf.items});
+    }
+    if (timed_out) {
+        try output_buf.writer().print("\n[timed out after {d}s]\n", .{timeout_ms / 1000});
+    }
+
+    const exit_code: i32 = if (timed_out) -1 else if (exited and std.posix.W.IFEXITED(exit_status))
+        std.posix.W.EXITSTATUS(exit_status)
+    else
+        -1;
+    const status: QualityStatus = if (timed_out) .fail else if (exit_code == 0) .pass else if (exit_code >= 100) .warn else .fail;
 
     const out_str = try allocator.alloc(u8, output_buf.items.len);
     @memcpy(out_str, output_buf.items);
-    allocator.free(output_buf.items.ptr[0..output_buf.capacity]);
-    output_buf = std.ArrayList(u8).init(allocator);
     return QualityResult{
         .stage = stage,
         .command = try allocator.dupe(u8, cmd),
