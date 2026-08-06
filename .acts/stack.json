@@ -91,9 +91,10 @@
         "base_sha": "5bccfe9f064f6e816efd3c33a2f4fd9406f2b0b6"
       },
       "notes": [
-        ".acts/changes/cbm-mcp/notes/1786016251.md"
+        ".acts/changes/cbm-mcp/notes/1786016251.md",
+        ".acts/changes/cbm-mcp/notes/1786018924.md"
       ],
-      "checkpoint": "VERIFIED+REVIEWED: cbm.js removed, CBM via native MCP (setup wires mcp.codebase-memory-mcp); acts graph repos/index/bootstrap/span + tech-lead + doc-risk live in Zig via shared cbm.zig client; docs/AGENTS/CI updated; 2.1.6. PR #2 awaiting human approval.",
+      "checkpoint": "MERGED: cbm plugin removed; CBM via native MCP + acts graph/tech-lead/doc-risk landed on master. Ready to tag 2.1.6.",
       "pr": {
         "url": "https://github.com/tommasop/acts-spec/pull/2",
         "approved": true
