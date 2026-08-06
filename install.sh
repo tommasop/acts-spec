@@ -62,18 +62,34 @@ download() {
     curl -fsSL "$url" -o "${tmpdir}/acts.tar.gz"
     tar xzf "${tmpdir}/acts.tar.gz" -C "$tmpdir"
 
+    # Locate the binary inside the archive (release archives ship it at the
+    # tar root named `acts-<platform>`; older archives used acts/bin/acts).
+    local src
     if [ -f "${tmpdir}/acts/bin/acts" ]; then
-        mkdir -p "$(dirname "$dest")"
-        cp "${tmpdir}/acts/bin/acts" "$dest"
-        chmod +x "$dest"
+        src="${tmpdir}/acts/bin/acts"
     elif [ -f "${tmpdir}/${platform}" ]; then
-        mkdir -p "$(dirname "$dest")"
-        cp "${tmpdir}/${platform}" "$dest"
-        chmod +x "$dest"
+        src="${tmpdir}/${platform}"
     else
         echo "Error: Downloaded archive has unexpected structure"
         echo "Contents: $(ls "$tmpdir")"
         exit 1
+    fi
+
+    # Install atomically: copy to a temp file in the destination dir, then
+    # rename over the target. rename() replaces the directory entry even when
+    # the target is currently running (unlike cp, which fails with ETXTBSY on
+    # a running executable), and never leaves a partial binary on failure.
+    mkdir -p "$(dirname "$dest")"
+    local tmp="${dest}.tmp.$$"
+    cp "$src" "$tmp"
+    chmod +x "$tmp"
+    mv -f "$tmp" "$dest"
+
+    # Verify the installed binary actually reports the requested version.
+    local installed
+    installed=$("$dest" version 2>/dev/null | awk '{print $2}' || true)
+    if [ -n "$installed" ] && [ "$installed" != "$version" ]; then
+        echo "Warning: expected ${version} but installed binary reports ${installed}"
     fi
 }
 
@@ -103,8 +119,8 @@ Options:
   --with-cbm       Also install codebase-memory-mcp (cross-repo graph engine)
   --bin-dir PATH   Install acts to PATH (default: ~/.local/bin or /usr/local/bin)
   --version V      Install specific acts version (default: latest)
-  --force          Overwrite existing acts binary
-  --update         Update acts (and cbm with --with-cbm)
+  --force          Always reinstall, even if already on the requested version
+  --update         Update acts to the requested version (replaces even if running)
   --help           Show this help
 
 Examples:
@@ -147,9 +163,14 @@ main() {
 
     if [ -f "$dest" ] && [ "$FORCE" = false ]; then
         local current_version
-        current_version=$("$dest" version 2>/dev/null || echo "unknown")
-        echo "acts is already installed: ${current_version}"
-        echo "Use --update or --force to reinstall"
+        current_version=$("$dest" version 2>/dev/null | awk '{print $2}' || echo "unknown")
+        if [ "$current_version" = "$VERSION" ]; then
+            echo "acts is already up to date: ${current_version}"
+        else
+            echo "acts installed: ${current_version} (requested ${VERSION}) — updating"
+            download "$platform" "$VERSION" "$dest"
+            echo "acts ${VERSION} installed to ${dest}"
+        fi
     else
         download "$platform" "$VERSION" "$dest"
         echo "acts ${VERSION} installed to ${dest}"
