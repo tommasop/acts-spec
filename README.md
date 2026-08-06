@@ -19,7 +19,7 @@ ACTS is a protocol for coordinating AI-assisted software development across mult
 - **Durable context** — `acts context` emits a scoped context pack (acceptance criteria, parent chain, verification status, notes, changed files); the OpenCode plugin **auto-injects** the active change's pack at session start, with optional CBM blast-radius.
 - **Ownership derived from git** — `acts scope` checks whether a file belongs to a change's diff; no manual ownership tables.
 - **v1 → v2 migration** — `acts migrate` imports an existing v1 SQLite story into a v2 stack.
-- **Cross-repo orchestration** — the `cbm` OpenCode plugin wraps [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp): the 258MB binary is installed **once per machine** (`~/.cache/codebase-memory-mcp/bin`), the fleet shares **one knowledge graph**, and `cbm_bootstrap` idempotently rebuilds it on CI/fresh machines. Native tools (`trace_path`, `query_graph`, …) and `acts_memory scope` trace calls and map impact across repos (`CROSS_*` edges)
+- **Cross-repo orchestration** — [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) is a **native OpenCode MCP server** (no plugin): the binary is installed **once per machine** (`~/.local/bin` / `~/.cache/codebase-memory-mcp`), the fleet shares **one knowledge graph**, and `acts graph bootstrap` idempotently rebuilds it on CI/fresh machines. Native tools (`trace_path`, `query_graph`, …) trace calls across repos (`CROSS_*` edges); `acts graph span` maps a change to its repos, `acts tech-lead` runs pre-flight risk, `acts doc-risk` evaluates a spec against the code.
 - **Standalone binary** — single Zig executable, no runtime dependencies (except libc)
 - **Cross-platform** — Linux (x86_64, aarch64), macOS (x86_64, aarch64)
 
@@ -61,8 +61,8 @@ You do **not** need to clone `acts-spec` to use ACTS. Once `acts` is installed, 
 
 ```bash
 acts setup . --github
-# → installs .opencode/plugins/{acts,cbm}.js + skill + slash commands
-# → merges opencode.json (superpowers + acts + cbm plugins, skill permission)
+# → installs .opencode/plugins/acts.js + skill + slash commands
+# → wires opencode.json (acts plugin + codebase-memory-mcp MCP server, skill permission)
 # → injects the ACTS v2 section into AGENTS.md (idempotent)
 # → writes .github/workflows/opencode.yml (OpenCode GitHub integration)
 ```
@@ -335,9 +335,15 @@ The OpenCode plugin provides automatic context injection and native tools; a sup
 {
   "plugin": [
     "superpowers@git+https://github.com/obra/superpowers.git",
-    "./.opencode/plugins/acts.js",
-    "./.opencode/plugins/cbm.js"
+    "./.opencode/plugins/acts.js"
   ],
+  "mcp": {
+    "codebase-memory-mcp": {
+      "type": "local",
+      "command": ["codebase-memory-mcp"],
+      "enabled": true
+    }
+  },
   "permission": { "skill": { "acts": "allow" } }
 }
 ```
@@ -383,15 +389,17 @@ acts-core/
 │   ├── stack.zig      # v2 manifest model + validation
 │   ├── git.zig        # git/gh/git-spice subprocess wrapper
 │   ├── verify.zig     # Quality-gate runner (detect + execute)
-│   └── context.zig    # Durable context pack builder
+│   ├── context.zig    # Durable context pack builder
+│   ├── cbm.zig        # CBM client (acts graph / tech-lead / doc-risk)
+│   ├── graph.zig      # acts graph + acts tech-lead commands
+│   └── docrisk.zig    # acts doc-risk static+code-intel analysis
 └── tests/             # Zig unit tests
 .opencode/
 ├── plugins/
-│   ├── acts.js        # ACTS v2 OpenCode plugin
-│   └── cbm.js         # codebase-memory-mcp plugin (cross-repo)
+│   └── acts.js        # ACTS v2 OpenCode plugin (CBM via MCP)
 ├── skills/acts/       # superpowers-style skill
 └── commands/          # slash commands
-tests/                 # npm plugin tests (acts + cbm)
+tests/                 # npm plugin tests (acts.js)
 ```
 
 ### Build & Test Commands
@@ -402,7 +410,7 @@ zig build              # Debug build
 zig build test         # Zig unit tests
 zig build release -Dversion=2.0.0   # Optimized release
 cd ..
-npm test               # Plugin tests (acts-plugin + cbm-plugin)
+npm test               # Plugin tests (acts.js)
 ```
 
 ### Adding a New Command
@@ -432,12 +440,13 @@ MIT License — See [LICENSE](LICENSE)
 
 1. Run `acts validate` before committing
 2. Follow the ACTS v2 protocol for your own contributions
-3. Run plugin tests: `npm test` (offline tests for the `acts` and `cbm` OpenCode plugins)
+3. Run plugin tests: `npm test` (offline tests for the `acts` OpenCode plugin)
 
 ## Version History
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
+| 2.1.6 | 2026-08 | **CBM without the plugin**: removed `cbm.js` — CBM is now a native OpenCode MCP server (`mcp.codebase-memory-mcp`, wired by `acts setup`). Fleet helpers moved into the Zig binary: `acts graph repos/index --all/bootstrap/span`, plus `acts tech-lead <id>` (pre-flight risk report) and `acts doc-risk <file>` (static + code-intelligence doc risk evaluation). Shared CBM client (`cbm.zig`) used across all commands |
 | 2.1.0 | 2026-08 | **Risk-based HITL + centralized CBM + `acts setup`**: risk tiering (LOW/MEDIUM/HIGH/CRITICAL), auto-land LOW-risk verified changes, escalation checklist, approval audit log, stale-verification guard; CBM binary installed once per machine with one shared graph + `cbm_bootstrap` for CI; plugin auto-injects the active change's context pack with optional CBM blast-radius; per-change cost tracking; `acts setup` bootstraps a project without cloning (global binary install + plugins/skill/commands + opencode.json + AGENTS.md + GitHub workflow) |
 | 2.0.0 | 2026-08 | **Git-native redesign**: SQLite replaced by `.acts/stack.json` manifest; story/task/gate model replaced by **stack** (base branch) + **change** (stacked branch + PR); verification gates (`acts verify`) replace preflight/review ceremony; review via standard stacked PRs (gh/git-spice); durable context packs (`acts context`) with notes/checkpoint/redirect; ownership derived from git diffs; OpenCode skill + slash commands; greenfield Zig core |
 | 1.3.1 | 2026-07 | Cross-repo memory delivered as a dedicated `cbm` OpenCode plugin: auto-installs the codebase-memory-mcp binary, exposes its 14 native tools + fleet helpers (`cbm_repos`/`cbm_index_all`/`cbm_changes`/`cbm_install`), `acts_memory scope` ACTS bridge; removed the separate `mcp` server entry; offline `npm test` added |

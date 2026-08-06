@@ -53,6 +53,25 @@
         "url": "https://github.com/tommasop/acts-spec/pull/1",
         "approved": true
       }
+    },
+    {
+      "id": "cbm-mcp",
+      "title": "Remove cbm plugin: CBM via MCP + acts graph/tech-lead/doc-risk",
+      "branch": "acts/acts-v2/c2-remove-cbm-plugin-cbm-via-mcp-acts-graph-tech-lead-doc-risk",
+      "parent": null,
+      "status": "TODO",
+      "acceptance": [
+        "CBM tools available via MCP; cbm.js deleted; acts graph/tech-lead/doc-risk work; setup wires MCP; tests green"
+      ],
+      "verify": {},
+      "notes": [
+        ".acts/changes/cbm-mcp/notes/1786016251.md"
+      ],
+      "checkpoint": null,
+      "pr": {
+        "url": null,
+        "approved": false
+      }
     }
   ]
 }

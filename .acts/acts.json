@@ -2,7 +2,7 @@
   "manifest_version": "2.0.0",
   "quality_gate": {
     "test": "npm test && cd acts-core && zig build test",
-    "lint": "node --check .opencode/plugins/acts.js && node --check .opencode/plugins/cbm.js",
+    "lint": "node --check .opencode/plugins/acts.js",
     "typecheck": null,
     "build": "cd acts-core && zig build"
   },

@@ -145,13 +145,13 @@ jobs:
 
           # Verify the integration files + config landed
           test -f .opencode/plugins/acts.js
-          test -f .opencode/plugins/cbm.js
           test -f .opencode/skills/acts/SKILL.md
           test -f .github/workflows/opencode.yml
           grep -q "ACTS Integration (v2)" AGENTS.md
           grep -q '"permission"' opencode.json
           grep -q 'acts.js' opencode.json
-          echo "OK: setup wired AGENTS.md + opencode.json + plugins + github workflow"
+          grep -q '"mcp"' opencode.json
+          echo "OK: setup wired AGENTS.md + opencode.json + plugins + MCP + github workflow"
 
           # Idempotent: re-run adds no duplicate ACTS section
           "$BIN" setup . --no-install --source "$SPEC"
