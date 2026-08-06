@@ -147,9 +147,10 @@
         "base_sha": "0f3030d865e205b91ee9d0070d99c9a2719501d3"
       },
       "notes": [
-        ".acts/changes/fix-v1-shadow/notes/1786023124.md"
+        ".acts/changes/fix-v1-shadow/notes/1786023124.md",
+        ".acts/changes/fix-v1-shadow/notes/1786023149.md"
       ],
-      "checkpoint": null,
+      "checkpoint": "MERGED: stale v1 acts binary no longer shadows v2. install.sh + acts setup warn on shadowing; plugin version-aware discovery; regression test added.",
       "pr": {
         "url": "https://github.com/tommasop/acts-spec/pull/3",
         "approved": true
