@@ -115,7 +115,7 @@
       "title": "Fix stale v1 acts binary shadowing v2",
       "branch": "acts/acts-v2/c3-fix-stale-v1-acts-binary-shadowing-v2",
       "parent": null,
-      "status": "APPROVED",
+      "status": "MERGED",
       "acceptance": [
         "acts state read shows v2 hint (not StoryNotFound); install.sh + setup warn on shadow; plugin skips stale v1 binary; tests pass"
       ],
