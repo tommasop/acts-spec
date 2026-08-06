@@ -13,17 +13,31 @@ const PLUGIN_VERSION = '2.0.0';
 
 export const ActsPlugin = async ({ directory }) => {
   // ─── Binary Discovery ───────────────────────
+  // Candidate order: project-local .acts/bin first (self-contained/CI), then
+  // the global binary on PATH. We then prefer a v2 binary over a stale v1
+  // binary that may be shadowing it (v1 auto-creates a SQLite db and errors on
+  // v2 commands). If neither reports v2, fall back to the first found.
   const findActsBinary = () => {
+    const candidates = [];
     const localPath = path.join(directory, '.acts', 'bin', 'acts');
-    if (fs.existsSync(localPath)) {
-      return localPath;
-    }
+    if (fs.existsSync(localPath)) candidates.push(localPath);
     try {
       const which = execSync('which acts', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] });
-      return which.trim();
-    } catch {
-      return null;
-    }
+      const p = which.trim();
+      if (p && fs.existsSync(p)) candidates.push(p);
+    } catch { /* no global */ }
+
+    const isV2 = (p) => {
+      try {
+        const out = execFileSync(p, ['version'], { encoding: 'utf8', timeout: 5000, stdio: ['pipe', 'pipe', 'ignore'] });
+        return /2\.\d+\.\d+/.test(out);
+      } catch {
+        return false;
+      }
+    };
+
+    for (const c of candidates) if (isV2(c)) return c;
+    return candidates[0] || null;
   };
 
   const actsBinary = findActsBinary();

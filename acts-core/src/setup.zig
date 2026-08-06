@@ -111,6 +111,15 @@ fn fileExists(path: []const u8) bool {
     return true;
 }
 
+/// Resolve the first `name` on PATH (like `which`). Returns null if not found.
+fn which(allocator: std.mem.Allocator, name: []const u8) ?[]const u8 {
+    const res = git.run(allocator, &.{ "which", name }, 512) catch return null;
+    if (res.exit_code != 0) return null;
+    const t = std.mem.trim(u8, res.stdout, " \n\r");
+    if (t.len == 0) return null;
+    return allocator.dupe(u8, t) catch null;
+}
+
 /// Download a file over HTTP via curl into `dest` (creating parent dirs).
 fn curlDownload(allocator: std.mem.Allocator, url: []const u8, dest: []const u8) !void {
     if (!git.hasTool(allocator, "curl")) return SetupError.CurlMissing;
@@ -198,6 +207,24 @@ fn installBinaries(allocator: std.mem.Allocator, bin_dir_raw: []const u8) !void 
             return e;
         };
         std.debug.print("acts installed to {s}\n", .{acts_dest});
+    }
+
+    // Warn if another `acts` earlier in PATH shadows the one we just ensured
+    // at acts_dest (e.g. a stale v1 install in /usr/local/bin). This prevents
+    // silently resolving to the wrong binary after setup.
+    const resolved = which(allocator, "acts");
+    if (resolved) |r| {
+        defer allocator.free(r);
+        const r_canon = std.fs.realpathAlloc(allocator, r) catch r;
+        defer if (!std.mem.eql(u8, r_canon, r)) allocator.free(r_canon);
+        const d_canon = std.fs.realpathAlloc(allocator, acts_dest) catch acts_dest;
+        defer if (!std.mem.eql(u8, d_canon, acts_dest)) allocator.free(d_canon);
+        if (!std.mem.eql(u8, r_canon, d_canon)) {
+            std.debug.print(
+                "warning: `{s}` is earlier in PATH and shadows {s}.\n  Remove it or reorder PATH so {s} comes first.\n",
+                .{ r, acts_dest, bin_dir },
+            );
+        }
     }
 
     // --- cbm: run its official installer (best-effort) ---
