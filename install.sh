@@ -17,9 +17,13 @@ BIN_DIR="${ACTS_BIN_DIR:-}"
 WITH_CBM=false
 FORCE=false
 
-# Default global bin dir: $HOME/.local/bin (no sudo needed).
+# Default global bin dir: prefer $HOME/.local/bin (no sudo needed, and it is
+# what earlier installs used). Only fall back to /usr/local/bin when the user's
+# local bin dir is unwritable so we never leave two copies of acts on PATH.
 if [ -z "$BIN_DIR" ]; then
-    if [ -w "/usr/local/bin" ]; then
+    if [ -w "${HOME}/.local/bin" ]; then
+        BIN_DIR="${HOME}/.local/bin"
+    elif [ -w "/usr/local/bin" ]; then
         BIN_DIR="/usr/local/bin"
     else
         BIN_DIR="${HOME}/.local/bin"
@@ -185,6 +189,18 @@ main() {
     if ! command -v acts &>/dev/null; then
         echo "Note: ${BIN_DIR} is not in your PATH. Add it:"
         echo "  export PATH=\"${BIN_DIR}:\$PATH\""
+    else
+        # Detect a shadowing install: another `acts` earlier in PATH would be
+        # invoked instead of the one we just installed (e.g. a stale v1 copy).
+        local resolved
+        resolved="$(command -v acts)"
+        if [ "$resolved" != "$dest" ]; then
+            local shadow_ver
+            shadow_ver="$("$resolved" version 2>/dev/null | awk '{print $2}' || echo "unknown")"
+            echo "Warning: '$resolved' (v${shadow_ver}) is earlier in PATH and shadows ${dest} (v${VERSION})."
+            echo "  Remove '$resolved' (e.g. 'rm $resolved') or reorder PATH so ${BIN_DIR} comes first."
+            echo "  Otherwise 'acts' resolves to the stale binary."
+        fi
     fi
 }
 

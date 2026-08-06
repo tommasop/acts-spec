@@ -109,6 +109,25 @@
           "note": "human PR approval"
         }
       ]
+    },
+    {
+      "id": "fix-v1-shadow",
+      "title": "Fix stale v1 acts binary shadowing v2",
+      "branch": "acts/acts-v2/c3-fix-stale-v1-acts-binary-shadowing-v2",
+      "parent": null,
+      "status": "TODO",
+      "acceptance": [
+        "acts state read shows v2 hint (not StoryNotFound); install.sh + setup warn on shadow; plugin skips stale v1 binary; tests pass"
+      ],
+      "verify": {},
+      "notes": [
+        ".acts/changes/fix-v1-shadow/notes/1786023124.md"
+      ],
+      "checkpoint": null,
+      "pr": {
+        "url": null,
+        "approved": false
+      }
     }
   ]
 }

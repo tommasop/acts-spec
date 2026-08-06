@@ -33,9 +33,14 @@ fs.writeFileSync(path.join(tmp, '.acts', 'stack.json'), JSON.stringify({
 }, null, 2));
 
 // Dummy acts binary: echoes args so we can assert what the plugin invokes,
-// and returns valid stack JSON for `stack status --json`.
+// and returns valid stack JSON for `stack status --json`. Reports a v2 version
+// so the plugin's version-aware discovery picks it over any global binary.
 const actsBin = path.join(binDir, 'acts');
 fs.writeFileSync(actsBin, `#!/usr/bin/env bash
+if [ "$1" = "version" ]; then
+  echo "acts 2.99.0"
+  exit 0
+fi
 if [ "$1" = "stack" ] && [ "$2" = "status" ] && [ "$3" = "--json" ]; then
   echo '{"version":2,"id":"auth","title":"User auth","base_branch":"acts/auth/base","changes":[{"id":"c1","title":"JWT middleware","status":"IN_PROGRESS","branch":"acts/auth/c1-jwt"},{"id":"c2","title":"Login endpoint","status":"TODO","branch":"acts/auth/c2-login"}]}'
   exit 0
@@ -101,6 +106,42 @@ try {
   assert.ok(first.includes('ACTS v2'), 'bootstrap mentions ACTS v2');
   assert.ok(first.includes('acts context'), 'bootstrap includes v2 commands');
   ok('bootstrap injected into first user message');
+
+  // 9. Version-aware binary discovery: a stale v1 project-local binary is
+  //    skipped in favor of a v2 global binary on PATH (regression: v1 shadows
+  //    v2 and auto-creates a SQLite db). Here the local binary reports v1 and
+  //    the global (earlier on PATH) reports v2 — the tool must call the v2 one.
+  const v1dir = fs.mkdtempSync(path.join(os.tmpdir(), 'acts-v1shadow-'));
+  fs.mkdirSync(path.join(v1dir, '.acts', 'bin'), { recursive: true });
+  fs.writeFileSync(path.join(v1dir, '.acts', 'stack.json'), JSON.stringify({
+    version: 2, id: 's', title: 's', base_branch: 'acts/s/base', changes: [],
+  }));
+  fs.writeFileSync(path.join(v1dir, '.acts', 'bin', 'acts'), `#!/usr/bin/env bash
+if [ "$1" = "version" ]; then echo "acts 1.2.0"; exit 0; fi
+echo "V1_CALLED:$@"
+`);
+  fs.chmodSync(path.join(v1dir, '.acts', 'bin', 'acts'), 0o755);
+
+  const globalDir = fs.mkdtempSync(path.join(os.tmpdir(), 'acts-v2global-'));
+  fs.writeFileSync(path.join(globalDir, 'acts'), `#!/usr/bin/env bash
+if [ "$1" = "version" ]; then echo "acts 2.99.0"; exit 0; fi
+echo "V2_CALLED:$@"
+`);
+  fs.chmodSync(path.join(globalDir, 'acts'), 0o755);
+
+  const prevPath = process.env.PATH;
+  process.env.PATH = `${globalDir}:${prevPath}`;
+  try {
+    const hooks2 = await ActsPlugin({ directory: v1dir });
+    const tools2 = await hooks2.tools();
+    const res2 = await tools2.acts.handler({ command: 'stack status' });
+    assert.ok(res2.content[0].text.includes('V2_CALLED'), 'v2 global binary preferred over stale v1 local');
+    ok('v1 local binary skipped when v2 global exists (version-aware discovery)');
+  } finally {
+    process.env.PATH = prevPath;
+    fs.rmSync(v1dir, { recursive: true, force: true });
+    fs.rmSync(globalDir, { recursive: true, force: true });
+  }
 
   console.log(`\n${passed} checks passed.`);
   cleanup();
