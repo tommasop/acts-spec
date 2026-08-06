@@ -8,7 +8,6 @@ const RAW_BASE = "https://raw.githubusercontent.com/tommasop/acts-spec/master";
 /// does not need to clone acts-spec.
 pub const integration_files = [_][]const u8{
     ".opencode/plugins/acts.js",
-    ".opencode/plugins/cbm.js",
     ".opencode/skills/acts/SKILL.md",
     ".opencode/commands/acts-context.md",
     ".opencode/commands/acts-verify.md",
@@ -312,14 +311,13 @@ fn configureOpencode(allocator: std.mem.Allocator, opts: SetupOptions) !void {
         root = std.json.ObjectMap.init(allocator);
     }
 
-    // Ensure plugins array contains the three entries.
+    // Ensure plugins array contains the entries.
     const gop = try root.getOrPut("plugin");
     if (!gop.found_existing) gop.value_ptr.* = .{ .array = std.json.Array.init(allocator) };
     const plugins = &gop.value_ptr.*.array;
     const want = [_][]const u8{
         "superpowers@git+https://github.com/obra/superpowers.git",
         "./.opencode/plugins/acts.js",
-        "./.opencode/plugins/cbm.js",
     };
     for (want) |w| {
         var found = false;
@@ -330,6 +328,21 @@ fn configureOpencode(allocator: std.mem.Allocator, opts: SetupOptions) !void {
             }
         }
         if (!found) try plugins.append(.{ .string = w });
+    }
+
+    // Ensure CBM is exposed as a native MCP server (replaces the old cbm plugin).
+    const mgop = try root.getOrPut("mcp");
+    if (!mgop.found_existing) mgop.value_ptr.* = .{ .object = std.json.ObjectMap.init(allocator) };
+    const mcp = &mgop.value_ptr.*.object;
+    const cgop = try mcp.getOrPut("codebase-memory-mcp");
+    if (!cgop.found_existing) {
+        var server = std.json.ObjectMap.init(allocator);
+        try server.put("type", .{ .string = "local" });
+        var cmd = std.json.Array.init(allocator);
+        try cmd.append(.{ .string = "codebase-memory-mcp" });
+        try server.put("command", .{ .array = cmd });
+        try server.put("enabled", .{ .bool = true });
+        cgop.value_ptr.* = .{ .object = server };
     }
 
     // Ensure permission.skill.acts = allow

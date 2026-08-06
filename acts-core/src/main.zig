@@ -7,6 +7,9 @@ const context = @import("context.zig");
 const verify = @import("verify.zig");
 const risk = @import("risk.zig");
 const setup = @import("setup.zig");
+const cbm = @import("cbm.zig");
+const graph = @import("graph.zig");
+const docrisk = @import("docrisk.zig");
 
 const version_str = build_options.version;
 
@@ -43,6 +46,9 @@ const usage_text =
     \\
     \\Coordination:
     \\  scope <id> <file>                       Check file ownership (derived from diffs)
+    \\  tech-lead <id>                          Pre-flight risk report (CBM graph)
+    \\  doc-risk <file> [--json]                Evaluate a spec/plan doc (static + CBM)
+    \\  graph repos|index|bootstrap|span        CBM fleet helpers (replaces cbm plugin)
     \\  validate                                Validate manifest + branch consistency
     \\  setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>]
     \\                                          Install binaries globally + wire a project
@@ -245,6 +251,32 @@ fn runCommand(allocator: std.mem.Allocator, cmd: []const u8, args: *const Args) 
     if (std.mem.eql(u8, cmd, "risk")) {
         if (args.positional.items.len < 1) return error.MissingChangeId;
         return cmdRisk(allocator, args.positional.items[0]);
+    }
+    if (std.mem.eql(u8, cmd, "tech-lead")) {
+        if (args.positional.items.len < 1) return error.MissingChangeId;
+        const cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch ".";
+        return graph.cmdTechLead(allocator, cwd, args.positional.items[0]);
+    }
+    if (std.mem.eql(u8, cmd, "doc-risk")) {
+        if (args.positional.items.len < 1) return error.MissingFile;
+        const cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch ".";
+        return cmdDocRisk(allocator, cwd, args.positional.items[0], args.has("--json"));
+    }
+    if (std.mem.eql(u8, cmd, "graph")) {
+        if (args.positional.items.len < 1) return error.MissingSubcommand;
+        const cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch ".";
+        const sub = args.positional.items[0];
+        if (std.mem.eql(u8, sub, "repos")) {
+            return graph.cmdRepos(allocator, cwd, args.has("--json"));
+        } else if (std.mem.eql(u8, sub, "index")) {
+            return graph.cmdIndexAll(allocator, cwd);
+        } else if (std.mem.eql(u8, sub, "bootstrap")) {
+            return graph.cmdBootstrap(allocator, cwd);
+        } else if (std.mem.eql(u8, sub, "span")) {
+            if (args.positional.items.len < 2) return error.MissingChangeId;
+            return graph.cmdSpan(allocator, cwd, args.positional.items[1]);
+        }
+        return error.UnknownSubcommand;
     }
     if (std.mem.eql(u8, cmd, "context")) {
         const id = if (args.positional.items.len >= 1) args.positional.items[0] else null;
@@ -935,6 +967,124 @@ fn crossRepoEdgeCount(allocator: std.mem.Allocator, branch: []const u8, base: []
         if (std.mem.startsWith(u8, f, "../")) count += 1;
     }
     return count;
+}
+
+/// `acts doc-risk <file>` — evaluate a spec/plan document (static + CBM).
+fn cmdDocRisk(allocator: std.mem.Allocator, cwd: []const u8, file: []const u8, json_out: bool) !void {
+    // Read the document (local file or remote URL).
+    var content: []const u8 = undefined;
+    if (std.mem.startsWith(u8, file, "http://") or std.mem.startsWith(u8, file, "https://")) {
+        content = try fetchUrl(allocator, file);
+    } else {
+        content = try std.fs.cwd().readFileAlloc(allocator, file, 1 << 24);
+    }
+    defer allocator.free(content);
+
+    const report = try docrisk.analyze(allocator, content);
+
+    if (json_out) {
+        try stdout("{s}\n", .{report});
+        return;
+    }
+
+    try stdout("{s}\n", .{report});
+
+    // CBM code-intelligence layer: resolve code references in the doc against
+    // the graph. Best-effort; degrade to a note if CBM is unavailable.
+    const bin = cbm.findBinary(allocator, cwd);
+    if (bin) |b| {
+        try stdout("\n## Code-intelligence (CBM graph)\n", .{});
+        try stdout("- shared graph: {s}\n", .{cbm.cacheDir(allocator)});
+
+        // Ensure the current repo is indexed (auto-index-if-missing, fast mode).
+        const indexed = cbm.ensureIndexed(allocator, b, cwd);
+        if (!indexed) {
+            try stdout("> repo not indexed — run `acts graph index --all` for full enrichment.\n", .{});
+            return;
+        }
+
+        // Extract code-looking references from the document (max 15, bounded).
+        const refs = try extractCodeRefs(allocator, content, 15);
+        if (refs.len == 0) {
+            try stdout("- no code references found in the document.\n", .{});
+            return;
+        }
+
+        const projects = try cbm.listProjects(allocator, b);
+        var rows: usize = 0;
+        for (refs) |ref| {
+            if (rows >= 15) break;
+            // Try each indexed project (bounded to keep this fast).
+            for (projects) |p| {
+                if (rows >= 15) break;
+                const syms = cbm.searchSymbols(allocator, b, p.name, ref, 3) catch &[_]cbm.Symbol{};
+                for (syms) |s| {
+                    if (s.name.len == 0) continue;
+                    const tr = cbm.traceSymbol(allocator, b, p.name, s.name);
+                    const risk_mark = if (tr.cross_repo >= 2) "CRITICAL" else if (tr.cross_repo >= 1 or s.complexity >= 15) "HIGH" else if (s.complexity >= 8) "MEDIUM" else "LOW";
+                    try stdout(
+                        "| {s} | {s} | {s} | x-repo {d} | complexity {d} | in {d}/out {d} |\n",
+                        .{ s.name, p.name, risk_mark, tr.cross_repo, s.complexity, tr.callers, tr.callees },
+                    );
+                    rows += 1;
+                }
+                if (rows > 0) break; // resolved in this project
+            }
+        }
+        if (rows == 0) {
+            try stdout("- references not found in indexed graph (plan may target code that doesn't exist yet).\n", .{});
+        }
+    } else {
+        try stdout("\n> code-intelligence unavailable (cbm not installed) — run `acts setup --with-cbm`.\n", .{});
+    }
+}
+
+/// Extract up to `max` code-looking tokens from a document: PascalCase /
+/// camelCase symbols and dotted `pkg.Fn` or `Repo::Thing` references.
+fn extractCodeRefs(allocator: std.mem.Allocator, content: []const u8, max: usize) ![][]const u8 {
+    var out = std.ArrayList([]const u8).init(allocator);
+    var seen = std.StringHashMap(void).init(allocator);
+
+    var it = std.mem.tokenizeAny(u8, content, " \t\n\r,.;:()[]{}\"'`=+*/-");
+    while (it.next()) |tok| {
+        if (out.items.len >= max) break;
+        if (tok.len < 3 or tok.len > 40) continue;
+        // Skip markdown/url-ish and stopwords.
+        if (std.mem.eql(u8, tok, "the") or std.mem.eql(u8, tok, "and") or
+            std.mem.eql(u8, tok, "with") or std.mem.eql(u8, tok, "https") or
+            std.mem.eql(u8, tok, "http")) continue;
+        if (std.mem.indexOf(u8, tok, "//") != null) continue;
+
+        // Looks like a symbol: contains a dot, or starts uppercase + has a lowercase tail,
+        // or camelCase with an uppercase interior.
+        const has_dot = std.mem.indexOfScalar(u8, tok, '.') != null;
+        const starts_upper = std.ascii.isUpper(tok[0]);
+        var has_upper_interior = false;
+        var has_lower = false;
+        for (tok[1..]) |ch| {
+            if (std.ascii.isUpper(ch)) has_upper_interior = true;
+            if (std.ascii.isLower(ch)) has_lower = true;
+        }
+        if (!has_dot and !(starts_upper and has_lower) and !has_upper_interior) continue;
+
+        // Build a regex-ish pattern: escape nothing, just anchor with .* around for search_graph.
+        const pat = try std.fmt.allocPrint(allocator, ".*{s}.*", .{tok});
+        if (!seen.contains(tok)) {
+            try seen.put(tok, {});
+            try out.append(pat);
+        }
+    }
+    return out.toOwnedSlice();
+}
+
+/// Fetch a remote document via curl.
+fn fetchUrl(allocator: std.mem.Allocator, url: []const u8) ![]const u8 {
+    if (!git.hasTool(allocator, "curl")) return error.CurlMissing;
+    const tmp = "/tmp/acts-docrisk-XXXXXX";
+    const res = try git.run(allocator, &.{ "curl", "-fsSL", url }, 1 << 24);
+    if (res.exit_code != 0) return error.DownloadFailed;
+    _ = tmp;
+    return allocator.dupe(u8, res.stdout);
 }
 
 fn cmdContext(allocator: std.mem.Allocator, id_arg: ?[]const u8) !void {

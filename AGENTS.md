@@ -82,25 +82,30 @@ When a Zeplin link is given, extract the API contract before planning:
 
 ## Codebase Memory (cross-repo)
 
-ACTS integrates [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) for multi-repository orchestration via the **`cbm` OpenCode plugin** (`.opencode/plugins/cbm.js`) — no separate MCP server required. Multiple repos are declared as OpenCode `references`; the plugin auto-installs the CBM binary into `.acts/bin/` and indexes the fleet into a single per-project knowledge graph (`.acts/cbm/`, gitignored) where `CROSS_*` edges link symbols across repos.
+ACTS integrates [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) for multi-repository orchestration. CBM is exposed as a **native OpenCode MCP server** and driven from the Zig binary via `acts graph` / `acts tech-lead` / `acts doc-risk`. Multiple repos are declared as OpenCode `references`; the fleet indexes into a single shared knowledge graph (`~/.cache/codebase-memory-mcp`, gitignored) where `CROSS_*` edges link symbols across repos.
 
 ### Setup (in `opencode.json`)
 ```jsonc
 {
   "plugin": [
-    "./.opencode/plugins/acts.js",
-    "./.opencode/plugins/cbm.js"
+    "./.opencode/plugins/acts.js"
   ],
+  "mcp": {
+    "codebase-memory-mcp": {
+      "type": "local",
+      "command": ["codebase-memory-mcp"],
+      "enabled": true
+    }
+  },
   "references": {
     "ui-payments":   { "path": "../ui-payments",         "description": "Payments UI repo" },
     "magic":         { "path": "../ex_magic_library",    "description": "Magic core library" }
   }
 }
 ```
-The CBM binary is installed automatically on first use (or run `cbm_install`). Manual install: `curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash`
+CBM is exposed as a **native OpenCode MCP server** (no plugin needed) — its 14 graph tools (`search_graph`, `trace_path`, `query_graph`, `get_architecture`, `detect_changes`, …) are available to the agent directly. `acts setup` wires this entry. Install the binary with `acts setup --with-cbm` (or `curl -fsSL https://raw.githubusercontent.com/DeusData/codebase-memory-mcp/main/install.sh | bash`).
 
-### cbm plugin tools (native)
-The plugin exposes CBM's 14 tools directly, each taking a JSON `args` string:
+### CBM graph tools (via MCP)
 - `index_repository` — index a repo into the graph
 - `list_projects` — indexed projects + node/edge counts
 - `search_graph` — structural search by label/name/file/degree
@@ -110,17 +115,17 @@ The plugin exposes CBM's 14 tools directly, each taking a JSON `args` string:
 - `detect_changes` — map uncommitted diffs to symbols + repos (blast radius)
 - `get_code_snippet`, `get_graph_schema`, `search_code`, `manage_adr`, `ingest_traces`, `delete_project`, `index_status`
 
-### Fleet helpers + ACTS bridge
-- `cbm_repos` — list configured `references`
-- `cbm_index_all` — index every referenced repo into the shared graph
-- `cbm_changes` — detect changes across the fleet (blast radius)
-- `cbm_install` — (re)download the CBM binary
-- `acts_memory scope <change_id>` — map an ACTS change's changed files to the repos it spans
-- `acts_tech_lead_analysis --change_id <id> [--depth 3] [--risk_threshold MEDIUM]` — pre-flight risk report combining ACTS change context with CBM graph intelligence
+### Fleet commands (Zig binary, replaces the old cbm plugin)
+- `acts graph repos` — list configured `references`
+- `acts graph index --all` — index every reference into the shared graph
+- `acts graph bootstrap` — idempotent install+index (CI / fresh machines)
+- `acts graph span <change_id>` — map a change's files to the repos it spans
+- `acts tech-lead <change_id>` — pre-flight risk report combining change context with CBM graph intelligence
+- `acts doc-risk <file>` — evaluate a spec/plan document (static + CBM)
 
-### Tech Lead Pre-Flight Analysis (`acts_tech_lead_analysis`)
+### Tech Lead Pre-Flight Analysis (`acts tech-lead`)
 
-A standalone tool that produces a structured risk report before coding begins. It reads an ACTS change, resolves affected symbols via CBM graph queries, traces call chains with risk classification, and returns a markdown report for LLM interpretation.
+Produces a structured risk report before coding begins. It reads an ACTS change, resolves affected symbols via CBM graph queries, traces call chains with risk classification, and returns a markdown report for LLM interpretation.
 
 **When to use:**
 - Before starting implementation on a change
@@ -129,99 +134,61 @@ A standalone tool that produces a structured risk report before coding begins. I
 
 **Usage:**
 ```
-acts_tech_lead_analysis --change_id c1
-acts_tech_lead_analysis --change_id c1 --depth 2
-acts_tech_lead_analysis --change_id c1 --risk_threshold HIGH
+acts tech-lead c1
 ```
-
-**Parameters:**
-
-| Parameter | Required | Default | Description |
-|-----------|----------|---------|-------------|
-| `change_id` | Yes | — | ACTS change to analyze |
-| `depth` | No | `3` | Call chain trace depth (how many hops to follow) |
-| `risk_threshold` | No | `MEDIUM` | Minimum risk level to include: CRITICAL, HIGH, MEDIUM, LOW |
 
 **Processing pipeline:**
 1. Read ACTS change → extract its changed files (git diff vs base)
 2. Map each file → repo (via `opencode.json` references) → CBM project
-3. For each file, search for functions: `search_graph --file_path <file> --label Function`
-4. For each function, trace call chains: `trace_path --direction both --risk-labels true --mode cross_service`
+3. For each file, search for functions: `search_graph --project <p> --name-pattern .* --label Function`
+4. For each function, trace call chains: `trace_path --mode cross_service`
 5. Classify risk per symbol:
-   - **CRITICAL**: Cross-repo HTTP/GRPC edge, OR callers ≥ 2 in other repos
+   - **CRITICAL**: cross-repo edges, OR callers ≥ 2 in other repos
    - **HIGH**: ≥ 5 callers/callees, OR complexity > 15
    - **MEDIUM**: ≥ 3 callers/callees, OR complexity > 8
    - **LOW**: Everything else
-6. Detect blast radius via `detect_changes`
-7. Return structured markdown report
+6. Return structured markdown report
 
-**Output sections:**
-- **Risk Summary** — counts per risk level
-- **Cross-Repo Impact** — symbols calling/called by other repos (if any)
-- **Per-File Analysis** — table of symbols with risk, caller/callee counts, complexity
-- **Blast Radius** — changed files and impacted symbols from git diff
-- **Warnings** — indexing or query errors
+### Doc Risk (`acts doc-risk`)
 
-**Example output:**
-```markdown
-# Tech Lead Pre-Flight Report: T1
+Evaluate a spec or plan document (local `.md`/`.txt` or a URL) and highlight the major painpoints, grounded in the codebase via CBM:
 
-**Task:** Add payment retry logic
-**Status:** IN_PROGRESS
-**Files:** 3 | **Symbols:** 15 | **Depth:** 3
-
-## Risk Summary
-| Level | Count |
-|-------|-------|
-| CRITICAL | 1 |
-| HIGH | 4 |
-| MEDIUM | 6 |
-| LOW | 4 |
-
-## Cross-Repo Impact
-🔴 **CRITICAL** `magic.PaymentService.create` → `retry_payment`
-   Edge: OUTBOUND
-
-## Per-File Analysis
-
-### lib/payment/retry.ex (magic)
-| Symbol | Risk | Callers | Callees | Cross-Repo | Complexity |
-|--------|------|---------|---------|------------|------------|
-| retry_payment | HIGH | 3 | 2 | 1 outgoing | 12 |
-| handle_timeout | MEDIUM | 1 | 1 | — | 6 |
+```
+acts doc-risk plan.md
+acts doc-risk https://example.com/spec.md --out report.md
 ```
 
-**Interpreting the report:**
-- Cross-repo impacts require deployment coordination
-- HIGH-risk symbols with many callers need backward compatibility checks
-- HIGH-complexity functions may warrant code review
-- Use the data to prioritize review and testing
+The report combines:
+- **Static signals** — ambiguity, scope, tech-debt/migration, integration, concurrency, security, testability
+- **Code-intelligence (CBM graph)** — resolves code references in the document to real symbols, reporting complexity, cross-repo edges, and hotspots
+- **Major painpoints** — ranked lines from the document flagged for risk or ambiguity
 
 ### Slash Commands
 
-Custom OpenCode commands for quick access:
-
 | Command | Description |
 |---------|-------------|
-| `/tech-lead <change_id>` | Run pre-flight risk analysis on a change |
+| `/tech-lead <change_id>` | Run `acts tech-lead` pre-flight risk analysis |
 | `/risk <change_id>` | Short alias for `/tech-lead` |
+| `/doc-risk <file>` | Run `acts doc-risk` on a spec/plan |
+| `/graph <sub> [args]` | `acts graph` fleet helpers |
 
 **Usage:**
 ```
 /tech-lead c1
-/risk c1
+/doc-risk plan.md
 ```
 
 If no change ID is provided, the command will list active changes and ask which to analyze.
 
 ### Cross-Repo Workflow
-1. Declare the fleet as `references` in `opencode.json` (plugin already registered).
-2. `acts setup .`, then `cbm_index_all` (or `cbm_install` first) to build the shared graph.
+1. Declare the fleet as `references` in `opencode.json` (CBM exposed via MCP).
+2. `acts setup .`, then `acts graph bootstrap` (or `acts graph index --all`) to build the shared graph.
 3. `acts stack create <id>` and add changes (`acts change add`) whose changed files map to repos automatically.
-4. Use `acts_memory scope <change>`, `trace_path`, `query_graph`, `cbm_changes` for cross-repo impact analysis.
+4. Use `acts graph span <change>`, `trace_path`, `query_graph` for cross-repo impact analysis.
 
 ### Testing
-The `cbm` plugin is covered by an offline test: `npm test` (runs `tests/cbm-plugin.test.mjs`, which spins a temp project with dummy `acts` + `codebase-memory-mcp` binaries and asserts tool registration, reference resolution, `cbm_index_all` wiring, and the `acts_memory scope` bridge).
+The `acts.js` plugin is covered by an offline test: `npm test` (runs `tests/acts-plugin.test.mjs`). Zig-side tests (`zig build test`) cover the CBM client, doc-risk analysis, and fleet commands.
+
 
 
 

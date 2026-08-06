@@ -6,6 +6,38 @@ pub const CmdResult = struct {
     stderr: []const u8,
 };
 
+/// Run a command with args and an explicit environment, capturing output.
+pub fn runWithEnv(arena: std.mem.Allocator, argv: []const []const u8, env_map: std.process.EnvMap, max_out: usize) !CmdResult {
+    var child = std.process.Child.init(argv, arena);
+    child.stdin_behavior = .Ignore;
+    child.stdout_behavior = .Pipe;
+    child.stderr_behavior = .Pipe;
+    child.env_map = &env_map;
+
+    child.spawn() catch |err| {
+        return CmdResult{
+            .exit_code = 127,
+            .stdout = try std.fmt.allocPrint(arena, "", .{}),
+            .stderr = try std.fmt.allocPrint(arena, "spawn failed: {s} ({s})", .{ argv[0], @errorName(err) }),
+        };
+    };
+
+    const stdout_all = child.stdout.?.reader().readAllAlloc(arena, max_out) catch try arena.alloc(u8, 0);
+    const stderr_all = child.stderr.?.reader().readAllAlloc(arena, max_out) catch try arena.alloc(u8, 0);
+
+    const term = child.wait() catch return CmdResult{
+        .exit_code = 126,
+        .stdout = stdout_all,
+        .stderr = stderr_all,
+    };
+
+    const code: u8 = switch (term) {
+        .Exited => |c| @intCast(c),
+        else => 126,
+    };
+    return CmdResult{ .exit_code = code, .stdout = stdout_all, .stderr = stderr_all };
+}
+
 /// Run a command with args, capturing output. Returns exit code + trimmed stdout/stderr.
 /// Caller owns the returned slices (allocated from `arena`).
 pub fn run(arena: std.mem.Allocator, argv: []const []const u8, max_out: usize) !CmdResult {

@@ -1,6 +1,6 @@
 {
   "name": "acts-spec",
-  "version": "2.1.5",
+  "version": "2.1.6",
   "description": "ACTS (Agent Collaborative Tracking Standard) OpenCode plugin",
   "type": "module",
   "main": ".opencode/plugins/acts.js",
@@ -19,6 +19,6 @@
   "author": "Tommaso Patrizi",
   "license": "MIT",
   "scripts": {
-    "test": "node tests/cbm-plugin.test.mjs && node tests/acts-plugin.test.mjs"
+    "test": "node tests/acts-plugin.test.mjs"
   }
 }

@@ -7,7 +7,7 @@ agent: build
 
 Run a tech lead pre-flight analysis on change $ARGUMENTS.
 
-Use the `acts_tech_lead_analysis` tool with change_id "$ARGUMENTS".
+Use the `acts` tool: `acts tech-lead $ARGUMENTS` (CBM-grounded risk report).
 
 If no change ID is provided, first run `acts stack status` to list active changes, then ask which change to analyze.
 

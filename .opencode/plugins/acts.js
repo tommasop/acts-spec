@@ -143,8 +143,13 @@ export const ActsPlugin = async ({ directory }) => {
   // binary is discoverable — traces cross-repo callers/callees per file and
   // stores the edge counts on the change (risk_cbm) for `acts risk`.
   const findCbmBin = () => {
-    const globalBin = path.join(process.env.HOME || '~', '.cache', 'codebase-memory-mcp', 'bin', process.platform === 'win32' ? 'codebase-memory-mcp.exe' : 'codebase-memory-mcp');
-    const candidates = [globalBin, path.join(directory, '.acts', 'bin', 'codebase-memory-mcp')];
+    const home = process.env.HOME || '~';
+    const name = process.platform === 'win32' ? 'codebase-memory-mcp.exe' : 'codebase-memory-mcp';
+    const candidates = [
+      path.join(home, '.cache', 'codebase-memory-mcp', 'bin', name),
+      path.join(home, '.local', 'bin', name),
+      path.join(directory, '.acts', 'bin', name),
+    ];
     for (const c of candidates) if (fs.existsSync(c)) return c;
     try {
       const p = execSync('which codebase-memory-mcp', { encoding: 'utf8', stdio: ['pipe', 'pipe', 'ignore'] }).trim();
@@ -172,7 +177,7 @@ export const ActsPlugin = async ({ directory }) => {
     let crossEdges = 0;
 
     if (!cbmBin) {
-      out.push('(CBM binary not installed — run `cbm_install` for cross-repo trace data; git-level risk computed locally.)');
+      out.push('(CBM binary not installed — run `acts setup --with-cbm` for cross-repo trace data; git-level risk computed locally.)');
       return out.join('\n');
     }
 
@@ -289,7 +294,31 @@ verify -> review (PR) -> approve -> stack land -> note + checkpoint + validate.
       }
     }
 
+    // Cross-repo fleet (from opencode.json references; CBM tools come natively
+    // via the codebase-memory-mcp MCP server — no plugin needed).
+    const fleet = loadFleetReferences();
+    if (fleet.length > 0) {
+      lines.push(`## Cross-Repo Fleet`);
+      lines.push(`- Repos: ${fleet.map(r => r.alias).join(', ')}`);
+      lines.push(`- Graph tools: search_graph, trace_path, query_graph, get_architecture (via MCP)`);
+      lines.push(`- Fleet commands: acts graph repos | index --all | bootstrap | span <id>`);
+      lines.push(`- Risk: acts tech-lead <id>  |  acts doc-risk <file>`);
+    }
+
     return [lines.join('\n')];
+  };
+
+  // Fleet references from opencode.json (for the system-context block).
+  const loadFleetReferences = () => {
+    try {
+      const cfgPath = path.join(directory, 'opencode.json');
+      if (!fs.existsSync(cfgPath)) return [];
+      const cfg = JSON.parse(fs.readFileSync(cfgPath, 'utf8'));
+      const refs = cfg.references || {};
+      return Object.keys(refs).map(alias => ({ alias, ...refs[alias] }));
+    } catch {
+      return [];
+    }
   };
 
   // ─── Hooks ──────────────────────────────────
