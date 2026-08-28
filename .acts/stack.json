@@ -1,0 +1,29 @@
+{
+  "version": 3,
+  "id": "global-skills",
+  "title": "Global availability: archify + cbm + ponytail for all projects",
+  "branch": "acts/global-skills/feature",
+  "base_branch": "master",
+  "base_sha": "c138179704922df8e43f84ea8a90306af175e2ac",
+  "pr": {
+    "url": null
+  },
+  "changes": [
+    {
+      "id": "c1",
+      "title": "global skill install (archify + ponytail; cbm already global)",
+      "status": "TODO",
+      "start_sha": "c138179704922df8e43f84ea8a90306af175e2ac",
+      "end_sha": null,
+      "acceptance": [
+        "acts archify install --global installs to ~/.config/opencode/skills",
+        "acts ponytail install --global installs commands+plugin+rules globally",
+        "findPonytail detects global installs in any project",
+        "tests pass (zig build test + npm test)"
+      ],
+      "verify": {},
+      "notes": [],
+      "checkpoint": null
+    }
+  ]
+}

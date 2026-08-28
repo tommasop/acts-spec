@@ -51,8 +51,8 @@ pub const agents_section =
     \\- `acts redirect <id> --accept <criteria>` — Update scope mid-flight without context loss
     \\- `acts scope <id> <file>` — Check file ownership (derived from diffs)
     \\- `acts diagram <id> [--delta] [--attach]` — Render the change's architecture impact via archify (HTML; `--attach` comments on the PR)
-    \\- `acts ponytail install` — Install the ponytail minimality skill (rules + commands + plugin)
-    \\- `acts validate` — Validate manifest + branch consistency
+    \\- `acts archify install [--global]` — Install the archify diagram renderer skill (per-project, or globally for all projects)
+    \\- `acts ponytail install [--global]` — Install the ponytail minimality skill (rules + commands + plugin; per-project or global)
     \\
     \\Status Values: TODO, IN_PROGRESS, VERIFIED, IN_REVIEW, APPROVED, MERGED
     \\
@@ -153,6 +153,7 @@ pub const SetupOptions = struct {
     bin_dir: []const u8 = "~/.local/bin", // global install location
     with_archify: bool = false, // also install the archify diagram renderer skill
     with_ponytail: bool = false, // also install the ponytail minimality skill
+    global: bool = false, // install the with-* skills machine-wide (opencode global config)
 };
 
 /// Main entry: `acts setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>] [--no-install] [--with-archify]`
@@ -179,21 +180,52 @@ pub fn run(allocator: std.mem.Allocator, opts: SetupOptions) !void {
 
     // 5. Optional archify renderer skill (diagrams for `acts diagram`).
     if (opts.with_archify) {
-        try installArchify(allocator, opts.target_dir);
+        if (opts.global) {
+            try installArchifyGlobal(allocator);
+        } else {
+            try installArchify(allocator, opts.target_dir);
+        }
     }
 
     // 6. Optional ponytail minimality skill (rules + commands + plugin).
     if (opts.with_ponytail) {
-        if (ponytail.findPonytail(allocator, opts.target_dir)) |p| {
+        const root = if (opts.global) globalConfigRoot(allocator) else opts.target_dir;
+        if (ponytail.findPonytailIn(allocator, &.{root})) |p| {
             std.debug.print("ponytail already installed: {s}\n", .{p});
         } else {
-            const written = ponytail.installFiles(allocator, opts.target_dir) catch 0;
+            const written = if (opts.global)
+                (ponytail.installFilesGlobal(allocator, root) catch 0)
+            else
+                (ponytail.installFiles(allocator, root) catch 0);
             if (written > 0) {
                 std.debug.print("ponytail installed ({d} files).\n", .{written});
             } else {
                 std.debug.print("note: could not fetch ponytail (offline?) — run `acts ponytail install` later.\n", .{});
             }
         }
+    }
+}
+
+/// opencode's global config root (`~/.config/opencode`).
+fn globalConfigRoot(allocator: std.mem.Allocator) []const u8 {
+    const home = std.posix.getenv("HOME") orelse "";
+    return std.fs.path.join(allocator, &.{ home, ".config", "opencode" }) catch (allocator.dupe(u8, home) catch "");
+}
+
+/// Install archify machine-wide via `npx skills add --global` (lands in
+/// `~/.agents/skills/archify`, auto-loaded by opencode). Idempotent.
+fn installArchifyGlobal(allocator: std.mem.Allocator) !void {
+    if (!git.hasTool(allocator, "node") or !git.hasTool(allocator, "npx")) {
+        std.debug.print("note: `node`/`npx` not found — skipping global archify install.\n", .{});
+        return;
+    }
+    std.debug.print("installing archify skill globally via npx…\n", .{});
+    const res = git.run(allocator, archify.installCmdArgs(true), 1 << 24) catch {
+        std.debug.print("note: `npx skills add` failed — run `acts archify install --global` later.\n", .{});
+        return;
+    };
+    if (res.exit_code != 0) {
+        std.debug.print("note: `npx skills add` failed: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
     }
 }
 
@@ -209,7 +241,7 @@ pub fn installArchify(allocator: std.mem.Allocator, target_dir: []const u8) !voi
         return;
     }
     std.debug.print("installing archify skill via npx (diagram renderer for `acts diagram`)…\n", .{});
-    const res = git.run(allocator, archify.installCmdArgs(), 1 << 24) catch {
+    const res = git.run(allocator, archify.installCmdArgs(false), 1 << 24) catch {
         std.debug.print("note: `npx skills add` failed — run `acts archify install` later.\n", .{});
         return;
     };
