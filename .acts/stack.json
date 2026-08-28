@@ -49,8 +49,10 @@
         },
         "base_sha": "04f29573ab1fe85d0ab69d92e0c8f646d22b4156"
       },
-      "notes": [],
-      "checkpoint": null,
+      "notes": [
+        ".acts/changes/c1/notes/1787944866.md"
+      ],
+      "checkpoint": "done: landed onto master via v3 flow; release binary 2.3.0 compiled + global acts updated",
       "risk": "LOW",
       "approvals": [
         {
