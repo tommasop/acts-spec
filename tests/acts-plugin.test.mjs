@@ -20,15 +20,17 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'acts-plugin-test-'));
 const binDir = path.join(tmp, '.acts', 'bin');
 fs.mkdirSync(binDir, { recursive: true });
 
-// ACTS v2 manifest
+// ACTS v3 manifest
 fs.writeFileSync(path.join(tmp, '.acts', 'stack.json'), JSON.stringify({
-  version: 2,
+  version: 3,
   id: 'auth',
   title: 'User auth',
-  base_branch: 'acts/auth/base',
+  branch: 'acts/auth/feature',
+  base_branch: 'master',
+  pr: { url: null },
   changes: [
-    { id: 'c1', title: 'JWT middleware', status: 'IN_PROGRESS', branch: 'acts/auth/c1-jwt' },
-    { id: 'c2', title: 'Login endpoint', status: 'TODO', branch: 'acts/auth/c2-login' },
+    { id: 'c1', title: 'JWT middleware', status: 'IN_PROGRESS', start_sha: 'abc', end_sha: null },
+    { id: 'c2', title: 'Login endpoint', status: 'TODO', start_sha: 'def', end_sha: null },
   ],
 }, null, 2));
 
@@ -42,7 +44,7 @@ if [ "$1" = "version" ]; then
   exit 0
 fi
 if [ "$1" = "stack" ] && [ "$2" = "status" ] && [ "$3" = "--json" ]; then
-  echo '{"version":2,"id":"auth","title":"User auth","base_branch":"acts/auth/base","changes":[{"id":"c1","title":"JWT middleware","status":"IN_PROGRESS","branch":"acts/auth/c1-jwt"},{"id":"c2","title":"Login endpoint","status":"TODO","branch":"acts/auth/c2-login"}]}'
+  echo '{"version":3,"id":"auth","title":"User auth","branch":"acts/auth/feature","base_branch":"master","pr":{"url":null},"changes":[{"id":"c1","title":"JWT middleware","status":"IN_PROGRESS","start_sha":"abc","end_sha":null},{"id":"c2","title":"Login endpoint","status":"TODO","start_sha":"def","end_sha":null}]}'
   exit 0
 fi
 echo "ACTS_CALLED:$@"
@@ -98,7 +100,9 @@ try {
   assert.ok(sys.includes('auth'), 'system context has stack id');
   assert.ok(sys.includes('JWT middleware'), 'system context lists changes');
   assert.ok(sys.includes('Active Change'), 'system context auto-injects the active change pack');
-  ok('system transform injects v2 stack context + auto-injects active change');
+  assert.ok(sys.includes('Feature branch'), 'system context shows the feature branch');
+  assert.ok(sys.includes('acts/auth/feature'), 'system context names the feature branch');
+  ok('system transform injects v3 stack context + auto-injects active change');
 
   // 6b. acts_context with blast_radius falls back gracefully when no CBM binary
   const ctxBr = await tools.acts_context.handler({ change_id: 'c1', blast_radius: true });
