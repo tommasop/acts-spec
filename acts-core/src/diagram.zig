@@ -350,6 +350,14 @@ pub fn cmdArchifyInstall(allocator: std.mem.Allocator, cwd: []const u8) !void {
     }
 }
 
+/// Whole-stack diagram (Phase 4 implements rendering). Stub keeps cmdReview compiling.
+pub fn cmdStackDiagram(allocator: std.mem.Allocator, cwd: []const u8, delta: bool, attach: bool) !void {
+    _ = allocator;
+    _ = cwd;
+    _ = delta;
+    _ = attach;
+}
+
 test "partitionComponents derives before/after side keys" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();

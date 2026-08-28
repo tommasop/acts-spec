@@ -774,33 +774,43 @@ fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
     defer parsed.deinit();
     const v = parsed.value;
 
-    const m = stack.getChange(v, id) orelse return error.ChangeNotFound;
-    if (!stack.verifyAllPassed(v, id)) return error.VerifyRequired;
+    // The change id is accepted for familiarity but review covers the whole stack.
+    if (stack.getChange(v, id) == null) return error.ChangeNotFound;
 
-    const branch = if (m.get("branch")) |b| if (b == .string) b.string else "" else "";
-    const ctitle = if (m.get("title")) |s| if (s == .string) s.string else "" else "";
-    const root = &v.object;
-    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
+    const feat = stack.branchOf(v) orelse return error.ManifestInvalid;
+    const integ = stack.integrationBranch(v);
+    const stitle = if (v.object.get("title")) |s| if (s == .string) s.string else "" else "";
 
-    // Ensure we're on the change's branch so the PR reflects its code.
+    // Every non-merged change must be verified before the PR is reviewable.
+    if (!stack.allVerified(v)) return error.VerifyRequired;
+
+    // Ensure we're on the feature branch so the PR reflects its code.
     const cur_branch = (try git.currentBranch(allocator)) orelse "";
-    if (!std.mem.eql(u8, cur_branch, branch)) {
-        _ = try git.checkoutBranch(allocator, branch);
+    if (!std.mem.eql(u8, cur_branch, feat)) {
+        _ = try git.checkoutBranch(allocator, feat);
     }
 
-    // Compute risk tier early (used for the PR body and auto-land).
-    const range = stack.changeDiffRange(v, id);
-    const tier = try computeRiskForChange(allocator, v, id, range.from, range.to);
-    _ = try stack.setRisk(v, id, tier.label());
+    // Compute risk for every change (whole-stack summary).
+    const changes = v.object.get("changes") orelse return error.ManifestInvalid;
+    if (changes == .array) {
+        for (changes.array.items) |*c| {
+            if (c.* != .object) continue;
+            const cid = if (c.object.get("id")) |x| if (x == .string) x.string else "" else "";
+            if (cid.len == 0) continue;
+            const range = stack.changeDiffRange(v, cid);
+            const tier = try computeRiskForChange(allocator, v, cid, range.from, range.to);
+            _ = try stack.setRisk(v, cid, tier.label());
+        }
+    }
 
-    // Push the branch (and, when using git-spice, the rest of the stack).
+    // Push the feature branch.
     var pr_submitted = false;
     const remote = git.defaultRemote(allocator) orelse blk: {
         try stdout("note: no git remote configured — cannot submit PR. Commit and push manually.\n", .{});
         break :blk "";
     };
     if (remote.len > 0) {
-        const push_res = try git.pushBranch(allocator, remote, branch);
+        const push_res = try git.pushBranch(allocator, remote, feat);
         if (push_res.exit_code != 0) {
             try stderr("git push: {s}\n", .{std.mem.trim(u8, push_res.stderr, " \n\r")});
             return error.PushFailed;
@@ -808,116 +818,63 @@ fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
         pr_submitted = true;
     }
 
-    // Build PR body from the context pack, plus risk tier + escalation notes.
-    var body_buf = std.ArrayList(u8).init(allocator);
-    const pack = try context.buildContextPack(allocator, v, id);
-    try body_buf.appendSlice(pack);
-    try body_buf.writer().print("\n## Risk Tier: {s}\n", .{tier.label()});
-    if (tier == .HIGH or tier == .CRITICAL) {
-        try body_buf.appendSlice(
-            "\n## ⚠️ Escalation Checklist (mandatory human review)\n" ++
-            "- [ ] Deployment coordination across services\n" ++
-            "- [ ] Backward compatibility verified for high-caller-count symbols\n" ++
-            "- [ ] Rollback plan confirmed\n",
-        );
-    } else if (tier == .LOW) {
-        try body_buf.appendSlice("\n> LOW risk — eligible for auto-land once CI passes.\n");
-    }
-    const body = body_buf.items;
+    // Build the whole-stack PR body.
+    const body = try buildReviewBody(allocator, v);
 
     const tools = git.detectTools(allocator);
-    var pr_url: ?[]const u8 = null;
+    var pr_url = stack.stackPrUrl(v);
+    const existing = pr_url != null;
 
-    if (pr_submitted and tools.git_spice) {
-        // git-spice handles the full stack of PRs bottom-up.
-        const res = try git.run(allocator, &.{ "gs", "stack", "submit" }, 16384);
-        if (res.exit_code == 0) {
-            const trimmed = std.mem.trim(u8, res.stdout, " \n\r");
-            if (trimmed.len > 0) {
-                // Best-effort: surface any PR URL in gs output.
-                var it = std.mem.tokenizeAny(u8, trimmed, " \n\r");
-                while (it.next()) |tok| {
-                    if (std.mem.indexOf(u8, tok, "github.com/") != null or std.mem.indexOf(u8, tok, "gitlab.com/") != null) {
-                        pr_url = tok;
-                        break;
-                    }
-                }
+    if (pr_submitted and tools.gh) {
+        if (existing) {
+            const edit = try git.run(allocator, &.{ "gh", "pr", "edit", pr_url.?, "--body", body }, 16384);
+            if (edit.exit_code != 0) {
+                try stderr("gh pr edit: {s}\n", .{std.mem.trim(u8, edit.stderr, " \n\r")});
             }
-            try stdout("{s}\n", .{trimmed});
         } else {
-            try stderr("gs stack submit: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
-            try stdout("note: git-spice failed — falling back to gh pr create.\n", .{});
+            const create = try git.run(allocator, &.{
+                "gh", "pr", "create",
+                "--head", feat,
+                "--base", integ,
+                "--title", stitle,
+                "--body", body,
+            }, 16384);
+            if (create.exit_code == 0) {
+                const trimmed = std.mem.trim(u8, create.stdout, " \n\r");
+                if (trimmed.len > 0) {
+                    pr_url = trimmed;
+                    _ = try stack.setStackPrUrl(allocator, &parsed.value, trimmed);
+                }
+            } else {
+                try stderr("gh pr create: {s}\n", .{std.mem.trim(u8, create.stderr, " \n\r")});
+            }
         }
+    } else if (pr_submitted and !tools.gh) {
+        try stdout("note: `gh` not found — branch pushed to {s}; create the PR manually.\n", .{remote});
     }
 
-    if (pr_url == null and pr_submitted and tools.gh) {
-        const res = try git.run(allocator, &.{
-            "gh",
-            "pr",
-            "create",
-            "--head",
-            branch,
-            "--base",
-            base,
-            "--title",
-            try std.fmt.allocPrint(allocator, "{s}: {s}", .{ id, ctitle }),
-            "--body",
-            body,
-        }, 16384);
-        if (res.exit_code == 0) {
-            const trimmed = std.mem.trim(u8, res.stdout, " \n\r");
-            if (trimmed.len > 0) pr_url = trimmed;
-        } else {
-            try stderr("gh pr create: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
+    // The whole stack is under review via the one PR.
+    if (changes == .array) {
+        for (changes.array.items) |*c| {
+            if (c.* != .object) continue;
+            const st = c.object.get("status") orelse continue;
+            const s = if (st == .string) st.string else "";
+            if (!std.mem.eql(u8, s, stack.status_merged)) {
+                const cid = if (c.object.get("id")) |x| if (x == .string) x.string else "" else "";
+                _ = try stack.setChangeString(v, cid, "status", stack.status_in_review);
+            }
         }
-    } else if (pr_url == null and pr_submitted and !tools.gh and !tools.git_spice) {
-        try stdout("note: neither gh nor gs CLI found — branch pushed to {s}; submit PR manually.\n", .{remote});
     }
-
-    if (pr_url) |url| {
-        _ = try stack.setPrUrl(allocator, v, id, url);
-        try stdout("PR submitted: {s}\n", .{url});
-    }
-    _ = try stack.setChangeString(v, id, "status", stack.status_in_review);
     try stack.save(allocator, v);
 
-    // Best-effort, non-blocking: attach an archify architecture-delta comment
-    // to the submitted PR so reviewers see the change's architecture impact.
-    if (pr_url != null) {
+    if (pr_url) |url| {
+        try stdout("PR submitted: {s}\n", .{url});
+        // Attach the whole-stack archify delta (best-effort, non-blocking).
         const cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch ".";
-        diagram.attachToPr(allocator, cwd, id, true) catch |err| {
+        diagram.cmdStackDiagram(allocator, cwd, true, true) catch |err| {
             try stderr("note: archify attach skipped ({s}) — review is not blocked.\n", .{@errorName(err)});
         };
     }
-
-    // Risk-based HITL: LOW-risk verified changes are eligible for auto-land.
-    // gated by .acts/acts.json `hilt.auto_land_low` (default true).
-    if (tier == .LOW and autoLandLowEnabled(allocator)) {
-        try stdout("LOW risk + verified — auto-landing.\n", .{});
-        _ = try stack.appendApproval(allocator, v, id, "approve", "__auto__", "LOW", "auto-land: low risk, verified");
-        _ = try stack.setPrApproved(allocator, v, id, true);
-        _ = try stack.setChangeString(v, id, "status", stack.status_approved);
-        try stack.save(allocator, v);
-        try stdout("change {s} auto-approved (LOW risk)\n", .{id});
-    }
-}
-
-/// Read `.acts/acts.json` `hilt.auto_land_low` (default true).
-fn autoLandLowEnabled(allocator: std.mem.Allocator) bool {
-    const file = std.fs.cwd().openFile(".acts/acts.json", .{}) catch return true;
-    defer file.close();
-    const content = file.readToEndAlloc(allocator, 65536) catch return true;
-    defer allocator.free(content);
-    const parsed = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch return true;
-    defer parsed.deinit();
-    const v = parsed.value;
-    if (v != .object) return true;
-    const hilt = v.object.get("hilt") orelse return true;
-    if (hilt != .object) return true;
-    if (hilt.object.get("auto_land_low")) |a| {
-        if (a == .bool) return a.bool;
-    }
-    return true;
 }
 
 fn cmdApprove(allocator: std.mem.Allocator, id: []const u8) !void {

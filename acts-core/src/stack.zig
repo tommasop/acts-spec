@@ -429,6 +429,24 @@ pub fn allApproved(v: std.json.Value) bool {
     return any_non_merged;
 }
 
+/// True when every non-merged change has verification evidence that passed.
+pub fn allVerified(v: std.json.Value) bool {
+    const changes = v.object.get("changes") orelse return false;
+    if (changes != .array) return false;
+    var any_non_merged = false;
+    for (changes.array.items) |*c| {
+        if (c.* != .object) continue;
+        const st = c.object.get("status") orelse continue;
+        const s = if (st == .string) st.string else "";
+        if (std.mem.eql(u8, s, status_merged)) continue;
+        any_non_merged = true;
+        if (c.object.get("id")) |idv| {
+            if (idv == .string and !verifyAllPassed(v, idv.string)) return false;
+        }
+    }
+    return any_non_merged;
+}
+
 pub fn unapprovedChanges(allocator: std.mem.Allocator, v: std.json.Value) ![][]const u8 {
     var out = std.ArrayList([]const u8).init(allocator);
     const changes = v.object.get("changes") orelse return out.toOwnedSlice();
