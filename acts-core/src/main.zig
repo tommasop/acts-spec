@@ -11,6 +11,7 @@ const cbm = @import("cbm.zig");
 const graph = @import("graph.zig");
 const archify = @import("archify.zig");
 const diagram = @import("diagram.zig");
+const ponytail = @import("ponytail.zig");
 const docrisk = @import("docrisk.zig");
 
 const version_str = build_options.version;
@@ -55,6 +56,7 @@ const usage_text =
     \\                                          archify (HTML; --delta = Before/Delta/
     \\                                          After, --attach = comment on the PR)
     \\  archify install                         Install the archify renderer skill
+    \\  ponytail install                        Install the ponytail minimality skill
     \\  validate                                Validate manifest + branch consistency
     \\  setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>]
     \\                                          Install binaries globally + wire a project
@@ -99,7 +101,7 @@ fn parseArgs(allocator: std.mem.Allocator, argv: []const []const u8) !Args {
     errdefer args.deinit();
 
     const long_value_flags = [_][]const u8{ "--title", "--accept", "--message", "--cost", "--source", "--bin-dir", "--manual", "--reason", "--type", "-t", "-m" };
-    const bool_flags = [_][]const u8{ "--all", "--json", "--github", "--force", "--no-install", "--delta", "--attach", "--with-archify" };
+    const bool_flags = [_][]const u8{ "--all", "--json", "--github", "--force", "--no-install", "--delta", "--attach", "--with-archify", "--with-ponytail" };
     var i: usize = 0;
     while (i < argv.len) : (i += 1) {
         const a = argv[i];
@@ -303,6 +305,14 @@ fn runCommand(allocator: std.mem.Allocator, cmd: []const u8, args: *const Args) 
         const cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch ".";
         if (std.mem.eql(u8, args.positional.items[0], "install")) {
             return diagram.cmdArchifyInstall(allocator, cwd);
+        }
+        return error.UnknownSubcommand;
+    }
+    if (std.mem.eql(u8, cmd, "ponytail")) {
+        if (args.positional.items.len < 1) return error.MissingSubcommand;
+        const cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch ".";
+        if (std.mem.eql(u8, args.positional.items[0], "install")) {
+            return cmdPonytailInstall(allocator, cwd);
         }
         return error.UnknownSubcommand;
     }
@@ -832,7 +842,17 @@ fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
     }
 
     // Build the whole-stack PR body.
-    const body = try buildReviewBody(allocator, v);
+    var body_buf = std.ArrayList(u8).init(allocator);
+    try body_buf.appendSlice(try buildReviewBody(allocator, v));
+
+    // Best-effort: when the ponytail minimality skill is installed, append its
+    // review checklist + per-change diff stats to the PR body (non-blocking).
+    const cwd0 = std.fs.cwd().realpathAlloc(allocator, ".") catch ".";
+    if (ponytail.findPonytail(allocator, cwd0) != null) {
+        const stats = try collectChangeStats(allocator, v);
+        try body_buf.appendSlice(try ponytail.reviewSection(allocator, v, stats));
+    }
+    const body = body_buf.items;
 
     const tools = git.detectTools(allocator);
     var pr_url = stack.stackPrUrl(v);
@@ -1323,12 +1343,58 @@ fn cmdSetup(allocator: std.mem.Allocator, args: *const Args) !void {
         .no_install = args.has("--no-install"),
         .bin_dir = args.flag("--bin-dir") orelse "~/.local/bin",
         .with_archify = args.has("--with-archify"),
+        .with_ponytail = args.has("--with-ponytail"),
     });
     try stdout("setup complete for {s}\n", .{target});
     try stdout("  next: open a session with OpenCode — the acts skill + tools are wired.\n", .{});
     if (!args.has("--no-install")) {
         try stdout("  next: `acts stack create <id>` to start your first stack.\n", .{});
     }
+}
+
+// ---------------------------------------------------------------------------
+// ponytail
+// ---------------------------------------------------------------------------
+
+/// `acts ponytail install` — fetch ponytail's opencode files (rules + slash
+/// commands + frontmatter plugin) into the project. Idempotent; offline-safe.
+fn cmdPonytailInstall(allocator: std.mem.Allocator, cwd: []const u8) !void {
+    if (ponytail.findPonytail(allocator, cwd)) |p| {
+        try stdout("ponytail already installed: {s}\n", .{p});
+        return;
+    }
+    if (!git.hasTool(allocator, "curl")) {
+        try stderr("error: `curl` not found — required to fetch ponytail.\n", .{});
+        return error.ToolMissing;
+    }
+    try stdout("fetching ponytail skill files (rules + commands + plugin)…\n", .{});
+    const written = try ponytail.installFiles(allocator, cwd);
+    if (written == 0) {
+        try stderr("note: could not fetch ponytail (offline?) — re-run `acts ponytail install` later.\n", .{});
+        return;
+    }
+    if (ponytail.findPonytail(allocator, cwd)) |p| {
+        try stdout("ponytail installed ({d} files; {s})\n", .{ written, p });
+    } else {
+        try stdout("ponytail install wrote {d} files — re-run `acts ponytail install` if a file is missing.\n", .{written});
+    }
+}
+
+/// Diff stats per change (files + additions) for the ponytail review section.
+fn collectChangeStats(allocator: std.mem.Allocator, v: std.json.Value) ![]ponytail.ChangeStat {
+    var out = std.ArrayList(ponytail.ChangeStat).init(allocator);
+    const changes = v.object.get("changes") orelse return out.toOwnedSlice();
+    if (changes != .array) return out.toOwnedSlice();
+    for (changes.array.items) |*c| {
+        if (c.* != .object) continue;
+        const cid = if (c.object.get("id")) |x| if (x == .string) x.string else "" else "";
+        if (cid.len == 0) continue;
+        const range = stack.changeDiffRange(v, cid);
+        const files = if (range.from.len > 0) try git.diffNameOnly(allocator, range.from, range.to) else &[_][]const u8{};
+        const adds = if (range.from.len > 0) try diffAdditionsRange(allocator, range.from, range.to) else 0;
+        try out.append(.{ .id = cid, .files = files.len, .additions = adds });
+    }
+    return out.toOwnedSlice();
 }
 
 // ---------------------------------------------------------------------------

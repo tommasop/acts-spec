@@ -1,6 +1,7 @@
 const std = @import("std");
 const git = @import("git.zig");
 const archify = @import("archify.zig");
+const ponytail = @import("ponytail.zig");
 
 const RAW_BASE = "https://raw.githubusercontent.com/tommasop/acts-spec/master";
 
@@ -16,6 +17,7 @@ pub const integration_files = [_][]const u8{
     ".opencode/commands/acts-stack.md",
     ".opencode/commands/acts-zeplin.md",
     ".opencode/commands/acts-diagram.md",
+    ".opencode/commands/acts-ponytail.md",
 };
 
 /// The AGENTS.md ACTS v2 section that `acts setup` injects (idempotent).
@@ -49,6 +51,7 @@ pub const agents_section =
     \\- `acts redirect <id> --accept <criteria>` — Update scope mid-flight without context loss
     \\- `acts scope <id> <file>` — Check file ownership (derived from diffs)
     \\- `acts diagram <id> [--delta] [--attach]` — Render the change's architecture impact via archify (HTML; `--attach` comments on the PR)
+    \\- `acts ponytail install` — Install the ponytail minimality skill (rules + commands + plugin)
     \\- `acts validate` — Validate manifest + branch consistency
     \\
     \\Status Values: TODO, IN_PROGRESS, VERIFIED, IN_REVIEW, APPROVED, MERGED
@@ -149,6 +152,7 @@ pub const SetupOptions = struct {
     no_install: bool = false, // skip global binary install
     bin_dir: []const u8 = "~/.local/bin", // global install location
     with_archify: bool = false, // also install the archify diagram renderer skill
+    with_ponytail: bool = false, // also install the ponytail minimality skill
 };
 
 /// Main entry: `acts setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>] [--no-install] [--with-archify]`
@@ -176,6 +180,20 @@ pub fn run(allocator: std.mem.Allocator, opts: SetupOptions) !void {
     // 5. Optional archify renderer skill (diagrams for `acts diagram`).
     if (opts.with_archify) {
         try installArchify(allocator, opts.target_dir);
+    }
+
+    // 6. Optional ponytail minimality skill (rules + commands + plugin).
+    if (opts.with_ponytail) {
+        if (ponytail.findPonytail(allocator, opts.target_dir)) |p| {
+            std.debug.print("ponytail already installed: {s}\n", .{p});
+        } else {
+            const written = ponytail.installFiles(allocator, opts.target_dir) catch 0;
+            if (written > 0) {
+                std.debug.print("ponytail installed ({d} files).\n", .{written});
+            } else {
+                std.debug.print("note: could not fetch ponytail (offline?) — run `acts ponytail install` later.\n", .{});
+            }
+        }
     }
 }
 
@@ -491,15 +509,18 @@ test "integration files list covers plugins + skill + commands" {
     var seen_plugins = false;
     var seen_skill = false;
     var seen_diagram = false;
+    var seen_ponytail = false;
     for (integration_files) |f| {
         if (std.mem.eql(u8, f, ".opencode/plugins/acts.js")) seen_plugins = true;
         if (std.mem.eql(u8, f, ".opencode/skills/acts/SKILL.md")) seen_skill = true;
         if (std.mem.eql(u8, f, ".opencode/commands/acts-diagram.md")) seen_diagram = true;
+        if (std.mem.eql(u8, f, ".opencode/commands/acts-ponytail.md")) seen_ponytail = true;
     }
     try std.testing.expect(seen_plugins);
     try std.testing.expect(seen_skill);
     try std.testing.expect(seen_diagram);
-    try std.testing.expect(integration_files.len >= 9);
+    try std.testing.expect(seen_ponytail);
+    try std.testing.expect(integration_files.len >= 10);
 }
 
 test "agents_section mentions verify gate and setup commands" {

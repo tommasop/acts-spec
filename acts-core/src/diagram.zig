@@ -317,11 +317,13 @@ fn attachToPrRange(allocator: std.mem.Allocator, cwd: []const u8, id: []const u8
     }
 }
 
-/// Stack-level PR URL from the manifest (one PR per stack).
+/// Stack-level PR URL from the manifest (one PR per stack). Duped into the
+/// caller's allocator because `parsed.deinit()` frees the tree it lives in.
 fn stackPrUrl(allocator: std.mem.Allocator) ?[]const u8 {
     var parsed = stack.load(allocator) catch return null;
     defer parsed.deinit();
-    return stack.stackPrUrl(parsed.value);
+    const url = stack.stackPrUrl(parsed.value) orelse return null;
+    return allocator.dupe(u8, url) catch null;
 }
 
 /// `acts archify install` — install the archify renderer via `npx skills add`
