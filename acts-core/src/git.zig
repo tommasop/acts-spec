@@ -288,9 +288,7 @@ pub fn diffNameStatus(arena: std.mem.Allocator, from: []const u8, to: []const u8
 
 /// Full SHA of HEAD. Empty on failure.
 pub fn headSha(arena: std.mem.Allocator) ![]const u8 {
-    const res = try run(arena, &.{ "git", "rev-parse", "HEAD" }, 512);
-    if (res.exit_code != 0) return "";
-    return std.mem.trim(u8, res.stdout, " \n\r");
+    return refSha(arena, "HEAD");
 }
 
 /// Merge `branch` into the current branch with --no-ff (used by stack land).

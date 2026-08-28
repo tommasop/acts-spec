@@ -103,10 +103,9 @@ pub fn integrationBranch(v: std.json.Value) []const u8 {
     return "";
 }
 
-pub fn setBranch(allocator: std.mem.Allocator, v: std.json.Value, branch: []const u8) !bool {
+pub fn setBranch(allocator: std.mem.Allocator, v: *std.json.Value, branch: []const u8) !bool {
     _ = allocator;
-    const map: *std.json.ObjectMap = @constCast(&v.object);
-    try map.put("branch", .{ .string = branch });
+    try v.object.put("branch", .{ .string = branch });
     return true;
 }
 
@@ -408,9 +407,8 @@ pub fn stackPrUrl(v: std.json.Value) ?[]const u8 {
     return null;
 }
 
-pub fn setStackPrUrl(allocator: std.mem.Allocator, v: std.json.Value, url: []const u8) !bool {
-    const map: *std.json.ObjectMap = @constCast(&v.object);
-    const gop = try map.getOrPut("pr");
+pub fn setStackPrUrl(allocator: std.mem.Allocator, v: *std.json.Value, url: []const u8) !bool {
+    const gop = try v.object.getOrPut("pr");
     if (!gop.found_existing) gop.value_ptr.* = .{ .object = std.json.ObjectMap.init(allocator) };
     try gop.value_ptr.*.object.put("url", .{ .string = url });
     return true;
@@ -623,7 +621,6 @@ test "setStackPrUrl roundtrips and allApproved" {
     try r.put("version", .{ .integer = 3 });
     try r.put("branch", .{ .string = "acts/auth/feature" });
     try r.put("base_branch", .{ .string = "master" });
-    try r.put("pr", .{ .object = std.json.ObjectMap.init(a) });
     var ch = std.json.Array.init(a);
     var c1 = std.json.ObjectMap.init(a);
     try c1.put("id", .{ .string = "c1" });
@@ -634,9 +631,9 @@ test "setStackPrUrl roundtrips and allApproved" {
     try c2.put("status", .{ .string = "APPROVED" });
     try ch.append(.{ .object = c2 });
     try r.put("changes", .{ .array = ch });
-    const v: std.json.Value = .{ .object = r };
+    var v: std.json.Value = .{ .object = r };
 
-    _ = try setStackPrUrl(a, v, "https://github.com/x/pull/9");
+    _ = try setStackPrUrl(a, &v, "https://github.com/x/pull/9");
     try std.testing.expectEqualStrings("https://github.com/x/pull/9", stackPrUrl(v).?);
     try std.testing.expect(allApproved(v));
 }

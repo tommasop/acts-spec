@@ -1041,6 +1041,12 @@ fn buildReviewBody(allocator: std.mem.Allocator, v: std.json.Value) ![]const u8 
                         }
                     }
                 }
+                if (ver.object.get("forced")) |f| {
+                    if (f == .bool and f.bool) {
+                        const reason = if (ver.object.get("force_reason")) |fr| if (fr == .string) fr.string else "" else "";
+                        try w.print("  - forced verification: {s}\n", .{reason});
+                    }
+                }
             }
         }
     }
@@ -1579,21 +1585,14 @@ fn activeChangeForBranch(v: std.json.Value, branch: []const u8) ?[]const u8 {
     if (changes != .array) return null;
     const feat = stack.branchOf(v) orelse "";
     if (std.mem.eql(u8, branch, feat)) {
-        var top: ?[]const u8 = null;
-        for (changes.array.items) |*c| {
-            if (c.* != .object) continue;
-            if (c.object.get("status")) |st| {
-                if (st == .string and std.mem.eql(u8, st.string, stack.status_merged)) continue;
-            }
-            if (c.object.get("id")) |idv| {
-                if (idv == .string) top = idv.string;
-            }
-        }
-        return top;
+        return stack.topChange(v);
     }
     for (changes.array.items) |*c| {
         if (c.* != .object) continue;
         const m = &c.*.object;
+        if (m.get("status")) |st| {
+            if (st == .string and std.mem.eql(u8, st.string, stack.status_merged)) continue;
+        }
         if (m.get("branch")) |b| {
             if (b == .string and std.mem.eql(u8, b.string, branch)) {
                 if (m.get("id")) |idv| {
@@ -1800,6 +1799,27 @@ test "activeChangeForBranch picks top non-merged change on the feature branch" {
 
     try std.testing.expectEqualStrings("c2", activeChangeForBranch(v, "acts/auth/feature").?);
     try std.testing.expect(activeChangeForBranch(v, "master") == null);
+
+    // Legacy v2: a change with a per-change `branch` resolves when checked out.
+    var rl = std.json.ObjectMap.init(a);
+    try rl.put("version", .{ .integer = 2 });
+    try rl.put("base_branch", .{ .string = "acts/x/base" });
+    var chl = std.json.Array.init(a);
+    var lc = std.json.ObjectMap.init(a);
+    try lc.put("id", .{ .string = "c1" });
+    try lc.put("status", .{ .string = "TODO" });
+    try lc.put("branch", .{ .string = "acts/x/c1" });
+    try chl.append(.{ .object = lc });
+    var lc2 = std.json.ObjectMap.init(a);
+    try lc2.put("id", .{ .string = "c2" });
+    try lc2.put("status", .{ .string = "MERGED" });
+    try lc2.put("branch", .{ .string = "acts/x/c2" });
+    try chl.append(.{ .object = lc2 });
+    try rl.put("changes", .{ .array = chl });
+    const vl: std.json.Value = .{ .object = rl };
+    try std.testing.expectEqualStrings("c1", activeChangeForBranch(vl, "acts/x/c1").?);
+    try std.testing.expect(activeChangeForBranch(vl, "acts/x/other") == null);
+    try std.testing.expect(activeChangeForBranch(vl, "acts/x/c2") == null);
 }
 
 test "buildReviewBody renders stack summary with per-change sections" {
@@ -1829,6 +1849,15 @@ test "buildReviewBody renders stack summary with per-change sections" {
     try ver.put("test", .{ .object = v1 });
     try c1.put("verify", .{ .object = ver });
     try ch.append(.{ .object = c1 });
+    var c2 = std.json.ObjectMap.init(a);
+    try c2.put("id", .{ .string = "c2" });
+    try c2.put("title", .{ .string = "Ops changes" });
+    try c2.put("status", .{ .string = "VERIFIED" });
+    var ver2 = std.json.ObjectMap.init(a);
+    try ver2.put("forced", .{ .bool = true });
+    try ver2.put("force_reason", .{ .string = "lint fails outside change" });
+    try c2.put("verify", .{ .object = ver2 });
+    try ch.append(.{ .object = c2 });
     try r.put("changes", .{ .array = ch });
     const v: std.json.Value = .{ .object = r };
 
@@ -1838,4 +1867,6 @@ test "buildReviewBody renders stack summary with per-change sections" {
     try std.testing.expect(std.mem.indexOf(u8, body, "token validated") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "npm test") != null);
     try std.testing.expect(std.mem.indexOf(u8, body, "LOW") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "forced verification") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "lint fails outside change") != null);
 }
