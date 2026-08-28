@@ -205,8 +205,10 @@
         },
         "base_sha": "a8d26d1ed01f126b0ef6316ae94c0d155f8cc407"
       },
-      "notes": [],
-      "checkpoint": null,
+      "notes": [
+        ".acts/changes/c1/notes/1787933699.md"
+      ],
+      "checkpoint": "done: diagram + archify install + plugin tool + PR attach + docs; verified (MEDIUM risk); next: human PR review (acts review c1)",
       "pr": {
         "url": null,
         "approved": false
