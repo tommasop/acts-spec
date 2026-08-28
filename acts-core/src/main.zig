@@ -424,87 +424,92 @@ fn cmdStackLand(allocator: std.mem.Allocator) !void {
     defer parsed.deinit();
     const v = parsed.value;
     const root = &v.object;
+    const sid = if (root.get("id")) |s| if (s == .string) s.string else "" else "";
 
-    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
-    if (base.len == 0) return error.ManifestInvalid;
+    const feat = stack.branchOf(v) orelse return error.ManifestInvalid;
+    const integ = stack.integrationBranch(v);
+    if (integ.len == 0) return error.ManifestInvalid;
 
-    const changes = root.get("changes") orelse return error.ManifestInvalid;
-    if (changes != .array) return error.ManifestInvalid;
-
-    var landed_any = false;
-    for (changes.array.items) |*c| {
-        if (c.* != .object) continue;
-        const m = &c.*.object;
-        const cid = if (m.get("id")) |s| if (s == .string) s.string else "" else "";
-        const cstatus = if (m.get("status")) |s| if (s == .string) s.string else "" else "";
-        const cbranch = if (m.get("branch")) |s| if (s == .string) s.string else "" else "";
-
-        if (std.mem.eql(u8, cstatus, stack.status_merged)) continue;
-        if (!std.mem.eql(u8, cstatus, stack.status_approved)) {
-            try stdout("skip {s}: status is {s} (need APPROVED)\n", .{ cid, cstatus });
-            continue;
-        }
-
-        // Stale-verification guard: if the base branch moved since this change
-        // was verified, require re-verification before landing.
-        const verified_sha = stack.getVerifyBaseSha(v, cid);
-        const cur_base_sha = try git.refSha(allocator, base);
-        if (verified_sha != null and cur_base_sha.len > 0 and !std.mem.eql(u8, verified_sha.?, cur_base_sha)) {
-            try stdout("skip {s}: base moved since verify — run `acts verify {s}` before landing\n", .{ cid, cid });
-            continue;
-        }
-
-        // Commit any pending manifest/note changes on the change branch first, so
-        // switching to the base branch isn't blocked by a dirty tracked `.acts/`.
-        const cur = (try git.currentBranch(allocator)) orelse "";
-        if (!std.mem.eql(u8, cur, cbranch)) {
-            _ = try git.checkoutBranch(allocator, cbranch);
-        }
-        const status_res = try git.run(allocator, &.{ "git", "status", "--porcelain", "--", ".acts" }, 8192);
-        if (status_res.exit_code == 0 and std.mem.trim(u8, status_res.stdout, " \n\r").len > 0) {
-            _ = try git.run(allocator, &.{ "git", "add", ".acts" }, 8192);
-            const cres = try git.gitCommit(allocator, try std.fmt.allocPrint(allocator, "chore(acts): record {s} state", .{cid}));
-            if (cres.exit_code != 0) {
-                try stderr("commit .acts failed for {s}: {s}\n", .{ cid, std.mem.trim(u8, cres.stderr, " \n\r") });
-                return error.CommitFailed;
-            }
-        }
-
-        // Merge the change branch into the base branch
-        const co = try git.checkoutBranch(allocator, base);
-        if (co.exit_code != 0) {
-            try stderr("checkout {s} failed: {s}\n", .{ base, std.mem.trim(u8, co.stderr, " \n\r") });
-            return error.CheckoutFailed;
-        }
-        const mr = try git.run(allocator, &.{ "git", "merge", "--no-ff", cbranch, "-m", try std.fmt.allocPrint(allocator, "acts: land {s}", .{cid}) }, 8192);
-        if (mr.exit_code != 0) {
-            try stderr("merge failed for {s}: {s}\n", .{ cid, std.mem.trim(u8, mr.stderr, " \n\r") });
-            return error.MergeFailed;
-        }
-        try stdout("landed {s} onto {s}\n", .{ cid, base });
-        landed_any = true;
+    // Whole-branch landing: every non-merged change must be APPROVED.
+    const unappr = try stack.unapprovedChanges(allocator, v);
+    if (unappr.len > 0) {
+        try stdout("cannot land: {d} change(s) not APPROVED:\n", .{unappr.len});
+        for (unappr) |cid| try stdout("  - {s}\n", .{cid});
+        return error.NotApproved;
     }
 
-    // Update the manifest: mark landed changes MERGED. Note: we are on the base
-    // branch now, so save the manifest there and commit it.
-    if (landed_any) {
+    // Stale-verification guard: if the integration branch moved since a change
+    // was verified, require re-verification before landing.
+    const cur_integ_sha = try git.refSha(allocator, integ);
+    const changes = root.get("changes") orelse return error.ManifestInvalid;
+    if (changes == .array) {
         for (changes.array.items) |*c| {
             if (c.* != .object) continue;
-            const m = &c.*.object;
-            const cid = if (m.get("id")) |s| if (s == .string) s.string else "" else "";
-            const cstatus = if (m.get("status")) |s| if (s == .string) s.string else "" else "";
-            if (!std.mem.eql(u8, cstatus, stack.status_merged)) {
+            const cid = if (c.object.get("id")) |x| if (x == .string) x.string else "" else "";
+            if (cid.len == 0) continue;
+            const verified_sha = stack.getVerifyBaseSha(v, cid);
+            if (verified_sha != null and cur_integ_sha.len > 0 and !std.mem.eql(u8, verified_sha.?, cur_integ_sha)) {
+                try stdout("skip {s}: integration branch moved since verify — run `acts verify {s}` before landing\n", .{ cid, cid });
+                return error.StaleVerification;
+            }
+        }
+    }
+
+    // Commit any pending manifest/note changes on the feature branch first, so
+    // switching to the integration branch isn't blocked by a dirty tracked `.acts/`.
+    const cur = (try git.currentBranch(allocator)) orelse "";
+    if (!std.mem.eql(u8, cur, feat)) {
+        _ = try git.checkoutBranch(allocator, feat);
+    }
+    const status_res = try git.run(allocator, &.{ "git", "status", "--porcelain", "--", ".acts" }, 8192);
+    if (status_res.exit_code == 0 and std.mem.trim(u8, status_res.stdout, " \n\r").len > 0) {
+        _ = try git.run(allocator, &.{ "git", "add", ".acts" }, 8192);
+        _ = try git.gitCommit(allocator, try std.fmt.allocPrint(allocator, "chore(acts): record {s} state", .{sid}));
+    }
+
+    // Merge the whole feature branch into the integration branch.
+    const co = try git.checkoutBranch(allocator, integ);
+    if (co.exit_code != 0) {
+        try stderr("checkout {s} failed: {s}\n", .{ integ, std.mem.trim(u8, co.stderr, " \n\r") });
+        return error.CheckoutFailed;
+    }
+    const mr = try git.mergeNoFf(allocator, feat, try std.fmt.allocPrint(allocator, "acts: land {s}", .{sid}));
+    if (mr.exit_code != 0) {
+        try stderr("merge failed: {s}\n", .{std.mem.trim(u8, mr.stderr, " \n\r")});
+        return error.MergeFailed;
+    }
+    try stdout("landed stack {s} onto {s}\n", .{ sid, integ });
+
+    // Mark all changes MERGED, save the manifest on the integration branch.
+    if (changes == .array) {
+        for (changes.array.items) |*c| {
+            if (c.* != .object) continue;
+            const cid = if (c.object.get("id")) |x| if (x == .string) x.string else "" else "";
+            if (cid.len == 0) continue;
+            const st = if (c.object.get("status")) |x| if (x == .string) x.string else "" else "";
+            if (!std.mem.eql(u8, st, stack.status_merged)) {
                 _ = try stack.setChangeString(v, cid, "status", stack.status_merged);
             }
         }
-        try stack.save(allocator, v);
-        const status_res = try git.run(allocator, &.{ "git", "status", "--porcelain", "--", ".acts" }, 8192);
-        if (status_res.exit_code == 0 and std.mem.trim(u8, status_res.stdout, " \n\r").len > 0) {
-            _ = try git.run(allocator, &.{ "git", "add", ".acts" }, 8192);
-            _ = try git.gitCommit(allocator, "chore(acts): mark landed changes MERGED");
+    }
+    try stack.save(allocator, v);
+    const st2 = try git.run(allocator, &.{ "git", "status", "--porcelain", "--", ".acts" }, 8192);
+    if (st2.exit_code == 0 and std.mem.trim(u8, st2.stdout, " \n\r").len > 0) {
+        _ = try git.run(allocator, &.{ "git", "add", ".acts" }, 8192);
+        _ = try git.gitCommit(allocator, "chore(acts): mark landed changes MERGED");
+    }
+
+    // Close the stack PR (one PR per stack).
+    if (stack.stackPrUrl(v)) |url| {
+        if (git.hasTool(allocator, "gh")) {
+            const close_comment = try std.fmt.allocPrint(allocator, "Merged into {s} via acts stack land.", .{integ});
+            const close = try git.run(allocator, &.{ "gh", "pr", "close", url, "--comment", close_comment }, 8192);
+            if (close.exit_code == 0) {
+                try stdout("closed PR: {s}\n", .{url});
+            } else {
+                try stderr("note: gh pr close failed: {s}\n", .{std.mem.trim(u8, close.stderr, " \n\r")});
+            }
         }
-    } else {
-        try stdout("nothing to land (no APPROVED changes)\n", .{});
     }
 }
 
