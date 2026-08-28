@@ -1445,7 +1445,6 @@ fn cmdMigrate(allocator: std.mem.Allocator, args: *const Args) !void {
         const treview = f.next() orelse "";
 
         idx += 1;
-        _ = try slugify(allocator, ttitle);
 
         var entry = std.json.ObjectMap.init(allocator);
         try entry.put("id", .{ .string = tid });
@@ -1470,7 +1469,9 @@ fn cmdMigrate(allocator: std.mem.Allocator, args: *const Args) !void {
             std.fs.cwd().makePath(dir) catch {};
             const fname = try std.fmt.allocPrint(allocator, "{s}/v1-files.md", .{dir});
             try std.fs.cwd().writeFile(.{ .sub_path = fname, .data = note.items });
-            _ = try stack.appendNote(allocator, .{ .object = root_map }, tid, fname);
+            // Link the note directly on this entry's notes array (root changes not yet set).
+            const notes_arr = entry.getPtr("notes") orelse return error.MigrationFailed;
+            try notes_arr.array.append(.{ .string = fname });
         }
 
         try changes.append(.{ .object = entry });
