@@ -156,26 +156,33 @@ pub const SetupOptions = struct {
     global: bool = false, // install the with-* skills machine-wide (opencode global config)
 };
 
-/// Main entry: `acts setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>] [--no-install] [--with-archify]`
+/// Main entry: `acts setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>] [--no-install] [--with-archify] [--with-ponytail] [--global]`
 pub fn run(allocator: std.mem.Allocator, opts: SetupOptions) !void {
     // 0. Global binary install (acts self-copy + cbm download), unless --no-install.
     if (!opts.no_install) {
         try installBinaries(allocator, opts.bin_dir);
     }
 
-    // 1. Install the OpenCode integration files into the target project.
-    const installed = try installIntegrationFiles(allocator, opts);
+    const target = if (opts.global) globalConfigRoot(allocator) else opts.target_dir;
+
+    // 1. Install the OpenCode integration files (skill + commands; the acts.js
+    //    plugin comes from the `acts-spec@` npm entry in the global config).
+    const installed = try installIntegrationFiles(allocator, opts, target);
     _ = installed;
 
     // 2. Merge opencode.json (plugins + permission).
-    try configureOpencode(allocator, opts);
+    try configureOpencode(allocator, opts, target);
 
-    // 3. Inject AGENTS.md section (idempotent).
-    try configureAgentsMd(allocator, opts);
+    // 3. AGENTS.md section is project-scoped: the OpenCode plugin already
+    //    injects the ACTS bootstrap only when a project actually has a stack,
+    //    so forcing it into the global AGENTS.md would misdirect non-ACTS projects.
+    if (!opts.global) {
+        try configureAgentsMd(allocator, opts);
 
-    // 4. Optional GitHub workflow.
-    if (opts.with_github) {
-        try configureGithub(allocator, opts);
+        // 4. Optional GitHub workflow.
+        if (opts.with_github) {
+            try configureGithub(allocator, opts);
+        }
     }
 
     // 5. Optional archify renderer skill (diagrams for `acts diagram`).
@@ -362,12 +369,31 @@ fn expandHome(allocator: std.mem.Allocator, p: []const u8) ![]const u8 {
     return allocator.dupe(u8, p);
 }
 
-/// Install each integration file into the target project (from GitHub or a
-/// local acts-spec checkout). Returns number of files written.
-fn installIntegrationFiles(allocator: std.mem.Allocator, opts: SetupOptions) !usize {
+/// Resolve where an integration file lands. Project-local keeps the layout
+/// under the project; global maps the acts skill → `{root}/skills/acts/` and
+/// the slash commands → `{root}/command/` (opencode's global dirs), skipping
+/// the acts.js plugin (the `acts-spec@` npm entry loads it globally).
+fn installDest(allocator: std.mem.Allocator, global: bool, target: []const u8, rel: []const u8) ?[]const u8 {
+    if (!global) {
+        return std.fs.path.join(allocator, &.{ target, rel }) catch null;
+    }
+    const skills_prefix = ".opencode/skills/";
+    const commands_prefix = ".opencode/commands/";
+    if (std.mem.startsWith(u8, rel, skills_prefix)) {
+        return std.fs.path.join(allocator, &.{ target, "skills", rel[skills_prefix.len..] }) catch null;
+    }
+    if (std.mem.startsWith(u8, rel, commands_prefix)) {
+        return std.fs.path.join(allocator, &.{ target, "command", std.fs.path.basename(rel) }) catch null;
+    }
+    return null; // plugin / other files: handled by the npm plugin entry globally
+}
+
+/// Install each integration file into the target (project, or global config
+/// when `opts.global`). Returns number of files written.
+fn installIntegrationFiles(allocator: std.mem.Allocator, opts: SetupOptions, target: []const u8) !usize {
     var count: usize = 0;
     for (integration_files) |rel| {
-        const dest = try std.fs.path.join(allocator, &.{ opts.target_dir, rel });
+        const dest = installDest(allocator, opts.global, target, rel) orelse continue;
         defer allocator.free(dest);
 
         if (!opts.force and fileExists(dest)) continue; // idempotent
@@ -397,10 +423,11 @@ fn installIntegrationFiles(allocator: std.mem.Allocator, opts: SetupOptions) !us
     return count;
 }
 
-/// Merge (or create) opencode.json: ensure the plugins (superpowers + acts +
-/// cbm) and the skill permission are present.
-fn configureOpencode(allocator: std.mem.Allocator, opts: SetupOptions) !void {
-    const cfg_path = try std.fs.path.join(allocator, &.{ opts.target_dir, "opencode.json" });
+/// Merge (or create) opencode.json: ensure the plugins (superpowers + acts) and
+/// the skill permission are present. Global configs load the acts plugin from
+/// the `acts-spec@` npm entry; project configs use the local acts.js.
+fn configureOpencode(allocator: std.mem.Allocator, opts: SetupOptions, target: []const u8) !void {
+    const cfg_path = try std.fs.path.join(allocator, &.{ target, "opencode.json" });
     defer allocator.free(cfg_path);
 
     var root: std.json.ObjectMap = undefined;
@@ -430,7 +457,10 @@ fn configureOpencode(allocator: std.mem.Allocator, opts: SetupOptions) !void {
     const plugins = &gop.value_ptr.*.array;
     const want = [_][]const u8{
         "superpowers@git+https://github.com/obra/superpowers.git",
-        "./.opencode/plugins/acts.js",
+        if (opts.global)
+            "acts-spec@git+https://github.com/tommasop/acts-spec.git"
+        else
+            "./.opencode/plugins/acts.js",
     };
     for (want) |w| {
         var found = false;
@@ -559,4 +589,21 @@ test "agents_section mentions verify gate and setup commands" {
     try std.testing.expect(std.mem.indexOf(u8, agents_section, "acts verify") != null);
     try std.testing.expect(std.mem.indexOf(u8, agents_section, "acts context") != null);
     try std.testing.expect(std.mem.indexOf(u8, agents_section, "acts risk") != null);
+}
+
+test "installDest maps integration files to global opencode dirs" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const g = "/home/test/.config/opencode";
+
+    const skill = installDest(a, true, g, ".opencode/skills/acts/SKILL.md").?;
+    try std.testing.expectEqualStrings("/home/test/.config/opencode/skills/acts/SKILL.md", skill);
+    const cmd = installDest(a, true, g, ".opencode/commands/acts-verify.md").?;
+    try std.testing.expectEqualStrings("/home/test/.config/opencode/command/acts-verify.md", cmd);
+    // The acts.js plugin is loaded globally via the npm entry, not installed as a file.
+    try std.testing.expect(installDest(a, true, g, ".opencode/plugins/acts.js") == null);
+    // Project-local keeps the layout under the project.
+    const proj = installDest(a, false, "/proj", ".opencode/plugins/acts.js").?;
+    try std.testing.expectEqualStrings("/proj/.opencode/plugins/acts.js", proj);
 }
