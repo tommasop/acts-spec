@@ -22,7 +22,7 @@ pub const integration_files = [_][]const u8{
 pub const agents_section =
     \\## ACTS Integration (v2)
     \\
-    \\This project uses ACTS v2 — a **git-native coordination protocol** for agent-aided development. Git is the system of record: a *stack* is a feature (base branch), a *change* is one unit of agent work (a stacked branch + PR). Verification is the gate; context is served on demand.
+    \\This project uses ACTS v2 — a **git-native coordination protocol** for agent-aided development. Git is the system of record: a *stack* is a feature (a **feature branch** off `master`), a *change* is one unit of agent work (**a checkpoint on that branch**). Verification is the gate; context is served on demand.
     \\
     \\### Rules
     \\- Agent MUST load context before writing code: `acts context <change>`

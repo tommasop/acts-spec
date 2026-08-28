@@ -436,7 +436,7 @@ acts migrate LEGACY-42
 # → migrated v1 story LEGACY-42 → v3 stack (feature branch acts/LEGACY-42/feature, 3 changes)
 ```
 
-`acts migrate` maps v1 tasks → changes (preserving parent chains, statuses, and file ownership as session notes). See [docs/MIGRATION.md](docs/MIGRATION.md).
+`acts migrate` maps v1 tasks → changes (preserving statuses and file ownership as session notes). See [docs/MIGRATION.md](docs/MIGRATION.md).
 
 ## License
 

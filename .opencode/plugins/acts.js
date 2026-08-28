@@ -290,13 +290,13 @@ This project uses ACTS v2 (Agent Collaborative Tracking Standard) — a git-nati
 - Agent MUST run \`acts validate\` before finishing.
 
 ACTS v2 Commands:
-- acts stack create <id> [-t <title>]      Start a new stack (base branch + manifest)
+- acts stack create <id> [-t <title>]      Start a new stack (feature branch + manifest)
 - acts stack status [--json]               Show stack tree + change statuses
-- acts stack land                          Merge APPROVED changes bottom-up
-- acts change add <id> -t <title> [--accept <criteria>]  Add a change on top of the stack
+- acts stack land                          Merge the whole feature branch once all changes are APPROVED
+- acts change add <id> -t <title> [--accept <criteria>]  Add a change (checkpoint on the feature branch)
 - acts change status [<id>]                Show change details
 - acts verify [<id>] [--all]               Run quality gates; record evidence (GATE for review)
-- acts review <id>                         Submit stacked PR (requires verify to pass)
+- acts review <id>                         Submit/update the stack's ONE PR (requires verify to pass)
 - acts approve <id>                        Mark approved after human PR review
 - acts rework <id>                         Reopen for rework (clears approval)
 - acts context [<id>]                      Emit scoped context pack (durable task state)
@@ -448,7 +448,7 @@ verify -> review (PR) -> approve -> stack land -> note + checkpoint + validate.
         // ─── Context Pack Tool ──────────────────
         acts_context: {
           description: 'Load the ACTS v2 scoped context pack for a change (or the current branch\'s change). ' +
-            'ALWAYS call this before writing code on a change. Surfaces acceptance criteria, parent chain, ' +
+            'ALWAYS call this before writing code on a change. Surfaces acceptance criteria, preceding changes, ' +
             'verification status, checkpoint, session notes, and changed files. With blast_radius=true, ' +
             'also appends CBM cross-repo callers/callees for each changed file.',
           inputSchema: {

@@ -3,7 +3,7 @@ description: Start a new ACTS v2 stack (git-native coordination)
 agent: build
 ---
 
-Start a new ACTS v2 stack (feature) — creates the base branch and `.acts/stack.json` manifest.
+Start a new ACTS v2 stack (feature) — creates the feature branch (`acts/<id>/feature`) and `.acts/stack.json` manifest.
 
 Usage: `/acts-stack <id> <title>`
 
