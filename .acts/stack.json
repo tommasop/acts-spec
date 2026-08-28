@@ -12,7 +12,7 @@
     {
       "id": "c1",
       "title": "global skill install (archify + ponytail; cbm already global)",
-      "status": "APPROVED",
+      "status": "MERGED",
       "start_sha": "c138179704922df8e43f84ea8a90306af175e2ac",
       "end_sha": "fecf8c393831419a7446c81063737ad7ef77841b",
       "acceptance": [
