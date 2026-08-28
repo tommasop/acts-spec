@@ -515,39 +515,19 @@ fn cmdChangeAdd(allocator: std.mem.Allocator, id: []const u8, args: *const Args)
     const title = args.flag("--title") orelse args.flag("-t") orelse return error.MissingTitle;
     const root = &v.object;
     const sid = if (root.get("id")) |s| if (s == .string) s.string else "" else "";
-    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
+    _ = sid;
+    const feat = stack.branchOf(v) orelse return error.ManifestInvalid;
 
-    // Determine parent: current top of stack (or base if none)
-    const parent = stack.topChange(v);
-    const parent_branch = if (parent) |p| blk: {
-        const pm = stack.getChange(v, p) orelse break :blk base;
-        if (pm.get("branch")) |b| if (b == .string) break :blk b.string;
-        break :blk base;
-    } else base;
+    // Checkpoint at the current feature-branch HEAD — no new branch.
+    const head = try git.headSha(allocator);
 
-    const changes = root.get("changes").?.array.items.len;
-    const slug = try slugify(allocator, title);
-    const branch = try std.fmt.allocPrint(allocator, "acts/{s}/c{d}-{s}", .{ sid, changes + 1, slug });
-
-    const res = try git.createBranch(allocator, branch, parent_branch);
-    if (res.exit_code != 0) {
-        try stderr("git: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
-        return error.BranchConflict;
-    }
-
-    // Build the change entry
     var entry = std.json.ObjectMap.init(allocator);
     try entry.put("id", .{ .string = id });
     try entry.put("title", .{ .string = title });
-    try entry.put("branch", .{ .string = branch });
-    if (parent) |p| {
-        try entry.put("parent", .{ .string = p });
-    } else {
-        try entry.put("parent", .null);
-    }
     try entry.put("status", .{ .string = stack.status_todo });
+    if (head.len > 0) try entry.put("start_sha", .{ .string = head });
+    try entry.put("end_sha", .null);
 
-    // Acceptance criteria (split on newlines if --accept given)
     var acceptance = std.json.Array.init(allocator);
     if (args.flag("--accept")) |accept_raw| {
         try appendAcceptance(allocator, &acceptance, accept_raw);
@@ -557,16 +537,11 @@ fn cmdChangeAdd(allocator: std.mem.Allocator, id: []const u8, args: *const Args)
     try entry.put("notes", .{ .array = std.json.Array.init(allocator) });
     try entry.put("checkpoint", .null);
 
-    var pr = std.json.ObjectMap.init(allocator);
-    try pr.put("url", .null);
-    try pr.put("approved", .{ .bool = false });
-    try entry.put("pr", .{ .object = pr });
-
     const changes_arr = root.getPtr("changes").?;
     try changes_arr.array.append(.{ .object = entry });
 
     try stack.save(allocator, v);
-    try stdout("change {s} added on branch {s} (parent: {s})\n", .{ id, branch, if (parent) |p| p else base });
+    try stdout("change {s} added (checkpoint {s}) on feature branch {s}\n", .{ id, if (head.len > 0) head[0..7] else "(no commits)", feat });
 }
 
 fn cmdChangeStatus(allocator: std.mem.Allocator, id_arg: ?[]const u8) !void {
