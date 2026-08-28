@@ -171,20 +171,47 @@
       "title": "archify: acts diagram + acts_archify tool + PR attach",
       "branch": "acts/acts-v2/c4-archify-acts-diagram-acts-archify-tool-pr-attach",
       "parent": null,
-      "status": "TODO",
+      "status": "VERIFIED",
       "acceptance": [
         "acts diagram renders architecture delta",
         "acts review attaches PNG+HTML PR comment",
         "acts setup --with-archify and acts archify install work",
         "tests pass (zig build test + npm test)"
       ],
-      "verify": {},
+      "verify": {
+        "test": {
+          "cmd": "npm test && cd acts-core && zig build test",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 178
+        },
+        "lint": {
+          "cmd": "node --check .opencode/plugins/acts.js",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 20
+        },
+        "typecheck": {
+          "cmd": "skipped",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 0
+        },
+        "build": {
+          "cmd": "cd acts-core && zig build",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 20
+        },
+        "base_sha": "a8d26d1ed01f126b0ef6316ae94c0d155f8cc407"
+      },
       "notes": [],
       "checkpoint": null,
       "pr": {
         "url": null,
         "approved": false
-      }
+      },
+      "risk": "MEDIUM"
     }
   ]
 }
