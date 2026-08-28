@@ -1400,21 +1400,26 @@ fn cmdMigrate(allocator: std.mem.Allocator, args: *const Args) !void {
     const sstatus = fields.next() orelse "";
     _ = sstatus;
 
-    // ── Create the v2 stack ───────────────────
+    // ── Create the v3 stack ───────────────────
     if (!git.isGitRepo(allocator)) return error.NotGitRepo;
     if (!validId(sid)) return error.InvalidStackId;
-    const base_branch = try std.fmt.allocPrint(allocator, "acts/{s}/base", .{sid});
-    const res = try git.createBranch(allocator, base_branch, "");
+    const feat = try std.fmt.allocPrint(allocator, "acts/{s}/feature", .{sid});
+    const integ = (try git.currentBranch(allocator)) orelse "master";
+    const res = try git.createBranch(allocator, feat, "");
     if (res.exit_code != 0) {
         try stderr("git: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
         return error.BranchConflict;
     }
 
     var root_map = std.json.ObjectMap.init(allocator);
-    try root_map.put("version", .{ .integer = 2 });
+    try root_map.put("version", .{ .integer = 3 });
     try root_map.put("id", .{ .string = sid });
     try root_map.put("title", .{ .string = stitle });
-    try root_map.put("base_branch", .{ .string = base_branch });
+    try root_map.put("branch", .{ .string = feat });
+    try root_map.put("base_branch", .{ .string = integ });
+    var pr0 = std.json.ObjectMap.init(allocator);
+    try pr0.put("url", .null);
+    try root_map.put("pr", .{ .object = pr0 });
     var changes = std.json.Array.init(allocator);
 
     // ── Query tasks for this story ────────────
@@ -1432,7 +1437,6 @@ fn cmdMigrate(allocator: std.mem.Allocator, args: *const Args) !void {
 
     var tasks_it = std.mem.tokenizeAny(u8, tasks_res.stdout, "\n");
     var idx: usize = 0;
-    var prev_tid: ?[]const u8 = null;
     while (tasks_it.next()) |line| {
         var f = std.mem.splitScalar(u8, line, '|');
         const tid = f.next() orelse continue;
@@ -1441,29 +1445,18 @@ fn cmdMigrate(allocator: std.mem.Allocator, args: *const Args) !void {
         const treview = f.next() orelse "";
 
         idx += 1;
-        const slug = try slugify(allocator, ttitle);
-        const branch = try std.fmt.allocPrint(allocator, "acts/{s}/c{d}-{s}", .{ sid, idx, slug });
+        _ = try slugify(allocator, ttitle);
 
         var entry = std.json.ObjectMap.init(allocator);
         try entry.put("id", .{ .string = tid });
         try entry.put("title", .{ .string = ttitle });
-        try entry.put("branch", .{ .string = branch });
-        if (prev_tid) |pt| {
-            try entry.put("parent", .{ .string = pt });
-        } else {
-            try entry.put("parent", .null);
-        }
-        prev_tid = tid;
+        try entry.put("status", .{ .string = statusFromV1(tstatus, treview) });
+        try entry.put("start_sha", .null);
+        try entry.put("end_sha", .null);
         try entry.put("acceptance", .{ .array = std.json.Array.init(allocator) });
         try entry.put("verify", .{ .object = std.json.ObjectMap.init(allocator) });
         try entry.put("notes", .{ .array = std.json.Array.init(allocator) });
         try entry.put("checkpoint", .null);
-        try entry.put("status", .{ .string = statusFromV1(tstatus, treview) });
-
-        var pr = std.json.ObjectMap.init(allocator);
-        try pr.put("url", .null);
-        try pr.put("approved", .{ .bool = std.mem.eql(u8, treview, "approved") });
-        try entry.put("pr", .{ .object = pr });
 
         // Preserve v1 file ownership as a session note
         const files = try queryV1Files(allocator, v1_db, tid);
@@ -1486,7 +1479,7 @@ fn cmdMigrate(allocator: std.mem.Allocator, args: *const Args) !void {
     try root_map.put("changes", .{ .array = changes });
     try stack.save(allocator, .{ .object = root_map });
 
-    try stdout("migrated v1 story {s} → v2 stack (base branch {s}, {d} changes)\n", .{ sid, base_branch, idx });
+    try stdout("migrated v1 story {s} → v3 stack (feature branch {s}, {d} changes)\n", .{ sid, feat, idx });
     try stdout("  next: acts change status c1  |  acts verify --all  |  acts review <id>\n", .{});
 }
 
