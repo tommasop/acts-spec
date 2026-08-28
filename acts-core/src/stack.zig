@@ -86,6 +86,30 @@ pub fn changeStatus(v: std.json.Value, id: []const u8) ?[]const u8 {
     return null;
 }
 
+pub fn branchOf(v: std.json.Value) ?[]const u8 {
+    if (v.object.get("branch")) |b| {
+        if (b == .string and b.string.len > 0) return b.string;
+    }
+    if (v.object.get("base_branch")) |b| {
+        if (b == .string and b.string.len > 0) return b.string;
+    }
+    return null;
+}
+
+pub fn integrationBranch(v: std.json.Value) []const u8 {
+    if (v.object.get("base_branch")) |b| {
+        if (b == .string) return b.string;
+    }
+    return "";
+}
+
+pub fn setBranch(allocator: std.mem.Allocator, v: std.json.Value, branch: []const u8) !bool {
+    _ = allocator;
+    const map: *std.json.ObjectMap = @constCast(&v.object);
+    try map.put("branch", .{ .string = branch });
+    return true;
+}
+
 pub fn setChangeString(v: std.json.Value, id: []const u8, key: []const u8, value: []const u8) !bool {
     const m = getChange(v, id) orelse return false;
     try m.put(key, .{ .string = value });
@@ -321,6 +345,109 @@ pub fn getCheckpoint(v: std.json.Value, id: []const u8) ?[]const u8 {
     return null;
 }
 
+pub fn changeStartSha(v: std.json.Value, id: []const u8) ?[]const u8 {
+    const m = getChange(v, id) orelse return null;
+    if (m.get("start_sha")) |s| {
+        if (s == .string and s.string.len > 0) return s.string;
+    }
+    return null;
+}
+
+pub fn setChangeStartSha(allocator: std.mem.Allocator, v: std.json.Value, id: []const u8, sha: []const u8) !bool {
+    _ = allocator;
+    const m = getChange(v, id) orelse return false;
+    try m.put("start_sha", .{ .string = sha });
+    return true;
+}
+
+pub fn changeEndSha(v: std.json.Value, id: []const u8) ?[]const u8 {
+    const m = getChange(v, id) orelse return null;
+    if (m.get("end_sha")) |s| {
+        if (s == .string and s.string.len > 0) return s.string;
+    }
+    return null;
+}
+
+pub fn setChangeEndSha(allocator: std.mem.Allocator, v: std.json.Value, id: []const u8, sha: []const u8) !bool {
+    _ = allocator;
+    const m = getChange(v, id) orelse return false;
+    try m.put("end_sha", .{ .string = sha });
+    return true;
+}
+
+pub fn changeIsLegacy(v: std.json.Value, id: []const u8) bool {
+    return legacyChangeBranch(v, id) != null and changeStartSha(v, id) == null;
+}
+
+pub fn legacyChangeBranch(v: std.json.Value, id: []const u8) ?[]const u8 {
+    const m = getChange(v, id) orelse return null;
+    if (m.get("branch")) |b| {
+        if (b == .string and b.string.len > 0) return b.string;
+    }
+    return null;
+}
+
+pub const DiffRange = struct { from: []const u8, to: []const u8 };
+
+pub fn changeDiffRange(v: std.json.Value, id: []const u8) DiffRange {
+    if (changeStartSha(v, id)) |start| {
+        return .{ .from = start, .to = changeEndSha(v, id) orelse "HEAD" };
+    }
+    if (legacyChangeBranch(v, id)) |cbranch| {
+        return .{ .from = integrationBranch(v), .to = cbranch };
+    }
+    return .{ .from = "", .to = "" };
+}
+
+pub fn stackPrUrl(v: std.json.Value) ?[]const u8 {
+    const pr = v.object.get("pr") orelse return null;
+    if (pr != .object) return null;
+    if (pr.object.get("url")) |u| {
+        if (u == .string and u.string.len > 0) return u.string;
+    }
+    return null;
+}
+
+pub fn setStackPrUrl(allocator: std.mem.Allocator, v: std.json.Value, url: []const u8) !bool {
+    const map: *std.json.ObjectMap = @constCast(&v.object);
+    const gop = try map.getOrPut("pr");
+    if (!gop.found_existing) gop.value_ptr.* = .{ .object = std.json.ObjectMap.init(allocator) };
+    try gop.value_ptr.*.object.put("url", .{ .string = url });
+    return true;
+}
+
+pub fn allApproved(v: std.json.Value) bool {
+    const changes = v.object.get("changes") orelse return false;
+    if (changes != .array) return false;
+    var any_non_merged = false;
+    for (changes.array.items) |*c| {
+        if (c.* != .object) continue;
+        const st = c.object.get("status") orelse continue;
+        const s = if (st == .string) st.string else "";
+        if (std.mem.eql(u8, s, status_merged)) continue;
+        any_non_merged = true;
+        if (!std.mem.eql(u8, s, status_approved)) return false;
+    }
+    return any_non_merged;
+}
+
+pub fn unapprovedChanges(allocator: std.mem.Allocator, v: std.json.Value) ![][]const u8 {
+    var out = std.ArrayList([]const u8).init(allocator);
+    const changes = v.object.get("changes") orelse return out.toOwnedSlice();
+    if (changes != .array) return out.toOwnedSlice();
+    for (changes.array.items) |*c| {
+        if (c.* != .object) continue;
+        const st = c.object.get("status") orelse continue;
+        const s = if (st == .string) st.string else "";
+        if (std.mem.eql(u8, s, status_merged)) continue;
+        if (std.mem.eql(u8, s, status_approved)) continue;
+        if (c.object.get("id")) |idv| {
+            if (idv == .string) try out.append(idv.string);
+        }
+    }
+    return out.toOwnedSlice();
+}
+
 /// The parent change id (or null) for a change.
 pub fn parentOf(v: std.json.Value, id: []const u8) ?[]const u8 {
     const m = getChange(v, id) orelse return null;
@@ -352,16 +479,17 @@ pub fn validate(allocator: std.mem.Allocator, v: std.json.Value) ![]const u8 {
     var out = std.ArrayList(u8).init(allocator);
     const root = &v.object;
 
-    if (root.get("version")) |ver| {
-        if (ver != .integer or ver.integer != 2) {
-            try out.writer().print("manifest version must be 2 (got {any})\n", .{ver});
-        }
-    } else {
-        try out.appendSlice("missing 'version'\n");
+    var ver: i64 = 0;
+    if (root.get("version")) |verv| {
+        if (verv == .integer) ver = verv.integer;
+    }
+    if (ver != 2 and ver != 3) {
+        try out.writer().print("manifest version must be 2 or 3 (got {any})\n", .{root.get("version")});
     }
     if (root.get("id") == null) try out.appendSlice("missing 'id'\n");
-    if (root.get("base_branch") == null) try out.appendSlice("missing 'base_branch'\n");
     if (root.get("title") == null) try out.appendSlice("missing 'title'\n");
+    if (ver == 3 and root.get("branch") == null) try out.appendSlice("missing 'branch'\n");
+    if (root.get("base_branch") == null) try out.appendSlice("missing 'base_branch'\n");
 
     const changes = root.get("changes") orelse {
         try out.appendSlice("missing 'changes'\n");
@@ -384,7 +512,11 @@ pub fn validate(allocator: std.mem.Allocator, v: std.json.Value) ![]const u8 {
         const id_str = if (id == .string) id.string else "";
         if (c.object.get("title") == null) try out.writer().print("change {s}: missing 'title'\n", .{id_str});
         if (c.object.get("status") == null) try out.writer().print("change {s}: missing 'status'\n", .{id_str});
-        if (c.object.get("branch") == null) try out.writer().print("change {s}: missing 'branch'\n", .{id_str});
+        const has_branch = c.object.get("branch") != null;
+        const has_start = c.object.get("start_sha") != null;
+        if (!has_branch and !has_start) {
+            try out.writer().print("change {s}: missing 'branch' (legacy v2) or 'start_sha' (v3)\n", .{id_str});
+        }
         if (c.object.get("acceptance") != null) {
             if (c.object.get("acceptance").? != .array) {
                 try out.writer().print("change {s}: 'acceptance' must be array\n", .{id_str});
@@ -395,4 +527,116 @@ pub fn validate(allocator: std.mem.Allocator, v: std.json.Value) ![]const u8 {
         }
     }
     return out.toOwnedSlice();
+}
+
+test "v3 manifest validates and legacy v2 still validates" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    // v3 fixture
+    var r3 = std.json.ObjectMap.init(a);
+    try r3.put("version", .{ .integer = 3 });
+    try r3.put("id", .{ .string = "auth" });
+    try r3.put("title", .{ .string = "Add auth" });
+    try r3.put("branch", .{ .string = "acts/auth/feature" });
+    try r3.put("base_branch", .{ .string = "master" });
+    var ch3 = std.json.Array.init(a);
+    var c3 = std.json.ObjectMap.init(a);
+    try c3.put("id", .{ .string = "c1" });
+    try c3.put("title", .{ .string = "JWT" });
+    try c3.put("status", .{ .string = "TODO" });
+    try c3.put("start_sha", .{ .string = "abc" });
+    try ch3.append(.{ .object = c3 });
+    try r3.put("changes", .{ .array = ch3 });
+    const v3: std.json.Value = .{ .object = r3 };
+    const problems3 = try validate(a, v3);
+    try std.testing.expectEqual(@as(usize, 0), std.mem.trim(u8, problems3, " \n\r").len);
+
+    // v2 fixture (per-change branch, no start_sha) still validates
+    var r2 = std.json.ObjectMap.init(a);
+    try r2.put("version", .{ .integer = 2 });
+    try r2.put("id", .{ .string = "legacy" });
+    try r2.put("title", .{ .string = "Legacy" });
+    try r2.put("base_branch", .{ .string = "acts/legacy/base" });
+    var ch2 = std.json.Array.init(a);
+    var c2 = std.json.ObjectMap.init(a);
+    try c2.put("id", .{ .string = "c1" });
+    try c2.put("title", .{ .string = "JWT" });
+    try c2.put("status", .{ .string = "MERGED" });
+    try c2.put("branch", .{ .string = "acts/legacy/c1-jwt" });
+    try ch2.append(.{ .object = c2 });
+    try r2.put("changes", .{ .array = ch2 });
+    const v2: std.json.Value = .{ .object = r2 };
+    const problems2 = try validate(a, v2);
+    try std.testing.expectEqual(@as(usize, 0), std.mem.trim(u8, problems2, " \n\r").len);
+
+    // v3 change missing both branch and start_sha → error
+    var cbad = std.json.ObjectMap.init(a);
+    try cbad.put("id", .{ .string = "c2" });
+    try cbad.put("title", .{ .string = "Bad" });
+    try cbad.put("status", .{ .string = "TODO" });
+    var chbad = std.json.Array.init(a);
+    try chbad.append(.{ .object = cbad });
+    try r3.put("changes", .{ .array = chbad });
+    const vbad: std.json.Value = .{ .object = r3 };
+    const problems_bad = try validate(a, vbad);
+    try std.testing.expect(std.mem.indexOf(u8, problems_bad, "branch") != null or std.mem.indexOf(u8, problems_bad, "start_sha") != null);
+}
+
+test "branchOf and changeDiffRange resolve v3 checkpoints" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var r = std.json.ObjectMap.init(a);
+    try r.put("version", .{ .integer = 3 });
+    try r.put("branch", .{ .string = "acts/auth/feature" });
+    try r.put("base_branch", .{ .string = "master" });
+    var ch = std.json.Array.init(a);
+    var c = std.json.ObjectMap.init(a);
+    try c.put("id", .{ .string = "c1" });
+    try c.put("status", .{ .string = "TODO" });
+    try c.put("start_sha", .{ .string = "abc" });
+    try c.put("end_sha", .{ .string = "def" });
+    try ch.append(.{ .object = c });
+    try r.put("changes", .{ .array = ch });
+    const v: std.json.Value = .{ .object = r };
+
+    try std.testing.expectEqualStrings("acts/auth/feature", branchOf(v).?);
+    try std.testing.expectEqualStrings("master", integrationBranch(v));
+    const range = changeDiffRange(v, "c1");
+    try std.testing.expectEqualStrings("abc", range.from);
+    try std.testing.expectEqualStrings("def", range.to);
+    try std.testing.expect(allApproved(v) == false);
+    const un = try unapprovedChanges(a, v);
+    try std.testing.expectEqual(@as(usize, 1), un.len);
+    try std.testing.expectEqualStrings("c1", un[0]);
+}
+
+test "setStackPrUrl roundtrips and allApproved" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var r = std.json.ObjectMap.init(a);
+    try r.put("version", .{ .integer = 3 });
+    try r.put("branch", .{ .string = "acts/auth/feature" });
+    try r.put("base_branch", .{ .string = "master" });
+    try r.put("pr", .{ .object = std.json.ObjectMap.init(a) });
+    var ch = std.json.Array.init(a);
+    var c1 = std.json.ObjectMap.init(a);
+    try c1.put("id", .{ .string = "c1" });
+    try c1.put("status", .{ .string = "APPROVED" });
+    try ch.append(.{ .object = c1 });
+    var c2 = std.json.ObjectMap.init(a);
+    try c2.put("id", .{ .string = "c2" });
+    try c2.put("status", .{ .string = "APPROVED" });
+    try ch.append(.{ .object = c2 });
+    try r.put("changes", .{ .array = ch });
+    const v: std.json.Value = .{ .object = r };
+
+    _ = try setStackPrUrl(a, v, "https://github.com/x/pull/9");
+    try std.testing.expectEqualStrings("https://github.com/x/pull/9", stackPrUrl(v).?);
+    try std.testing.expect(allApproved(v));
 }
