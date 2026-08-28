@@ -171,7 +171,7 @@
       "title": "archify: acts diagram + acts_archify tool + PR attach",
       "branch": "acts/acts-v2/c4-archify-acts-diagram-acts-archify-tool-pr-attach",
       "parent": null,
-      "status": "VERIFIED",
+      "status": "APPROVED",
       "acceptance": [
         "acts diagram renders architecture delta",
         "acts review attaches PNG+HTML PR comment",
@@ -210,10 +210,19 @@
       ],
       "checkpoint": "done: diagram + archify install + plugin tool + PR attach + docs; verified (MEDIUM risk); next: human PR review (acts review c1)",
       "pr": {
-        "url": null,
-        "approved": false
+        "url": "https://github.com/tommasop/acts-spec/pull/4",
+        "approved": true
       },
-      "risk": "MEDIUM"
+      "risk": "MEDIUM",
+      "approvals": [
+        {
+          "action": "approve",
+          "by": "developer",
+          "tier": "MEDIUM",
+          "ts": 1787935006,
+          "note": "human PR approval"
+        }
+      ]
     }
   ]
 }
