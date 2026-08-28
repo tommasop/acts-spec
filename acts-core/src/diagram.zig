@@ -17,13 +17,6 @@ fn print(comptime fmt: []const u8, args: anytype) void {
     std.io.getStdOut().writer().print(fmt, args) catch {};
 }
 
-fn strOf(obj: *const std.json.ObjectMap, key: []const u8) ?[]const u8 {
-    if (obj.get(key)) |val| {
-        if (val == .string) return val.string;
-    }
-    return null;
-}
-
 fn writeFile(path: []const u8, data: []const u8) !void {
     if (std.fs.path.dirname(path)) |d| std.fs.cwd().makePath(d) catch {};
     try std.fs.cwd().writeFile(.{ .sub_path = path, .data = data });
@@ -158,26 +151,14 @@ fn renderCompare(allocator: std.mem.Allocator, renderer: []const u8, base_path: 
     return res.exit_code == 0;
 }
 
-fn loadChange(allocator: std.mem.Allocator, id: []const u8) !struct { parsed: std.json.Parsed(std.json.Value), branch: []const u8, base: []const u8, ctitle: []const u8 } {
+fn loadChange(allocator: std.mem.Allocator, id: []const u8) !struct { parsed: std.json.Parsed(std.json.Value), range: stack.DiffRange, ctitle: []const u8 } {
     var parsed = try stack.load(allocator);
     errdefer parsed.deinit();
     const v = parsed.value;
     const change = stack.getChange(v, id) orelse return error.ChangeNotFound;
-    const branch = strOf(change, "branch") orelse "";
-    const base = strOf(&v.object, "base_branch") orelse "";
-    const ctitle = strOf(change, "title") orelse id;
-    return .{ .parsed = parsed, .branch = branch, .base = base, .ctitle = ctitle };
-}
-
-fn prUrlOf(allocator: std.mem.Allocator, id: []const u8) ?[]const u8 {
-    var parsed = stack.load(allocator) catch return null;
-    defer parsed.deinit();
-    const change = stack.getChange(parsed.value, id) orelse return null;
-    const pr = change.get("pr") orelse return null;
-    if (pr != .object) return null;
-    const url = pr.object.get("url") orelse return null;
-    if (url != .string) return null;
-    return allocator.dupe(u8, url.string) catch null;
+    const ctitle = if (change.get("title")) |s| if (s == .string) s.string else "" else "";
+    const range = stack.changeDiffRange(v, id);
+    return .{ .parsed = parsed, .range = range, .ctitle = ctitle };
 }
 
 /// Render the change's architecture diagram (delta if `delta`, else a single
@@ -186,13 +167,27 @@ fn prUrlOf(allocator: std.mem.Allocator, id: []const u8) ?[]const u8 {
 pub fn cmdDiagram(allocator: std.mem.Allocator, cwd: []const u8, id: []const u8, delta: bool) !?[]const u8 {
     const loaded = try loadChange(allocator, id);
     defer loaded.parsed.deinit();
-    const branch = loaded.branch;
-    const base = loaded.base;
+    const range = loaded.range;
     const ctitle = loaded.ctitle;
+    if (range.from.len == 0) {
+        print("change {s}: no commit range recorded — nothing to diagram.\n", .{id});
+        return null;
+    }
+    return renderRange(allocator, cwd, id, ctitle, range.from, range.to, delta);
+}
 
-    const entries = try git.diffNameStatus(allocator, base, branch);
+fn renderRange(
+    allocator: std.mem.Allocator,
+    cwd: []const u8,
+    id: []const u8,
+    ctitle: []const u8,
+    from: []const u8,
+    to: []const u8,
+    delta: bool,
+) !?[]const u8 {
+    const entries = try git.diffNameStatus(allocator, from, to);
     if (entries.len == 0) {
-        print("change {s}: no committed diff vs base ({s}) — nothing to diagram.\n", .{ id, base });
+        print("change {s}: no committed diff in range {s}..{s} — nothing to diagram.\n", .{ id, from, to });
         return null;
     }
 
@@ -203,7 +198,7 @@ pub fn cmdDiagram(allocator: std.mem.Allocator, cwd: []const u8, id: []const u8,
     const renderer = archify.findRenderer(allocator, cwd);
     if (renderer == null) {
         const summary = try buildDeltaSummary(allocator, id, components, sides.before, sides.after);
-        print("archify renderer not installed — `acts diagram` degraded to a textual delta.\n", .{});
+        print("archify renderer not installed — degraded to a textual delta.\n", .{});
         print("{s}\n", .{summary});
         print("hint: run `acts archify install` (or `acts setup --with-archify`) to render HTML diagrams.\n", .{});
         return null;
@@ -261,12 +256,20 @@ fn rawUrlFromGist(allocator: std.mem.Allocator, gist_url: []const u8, png_path: 
     return std.fmt.allocPrint(allocator, "https://gist.githubusercontent.com/{s}/{s}/raw/{s}", .{ user, gid, base }) catch null;
 }
 
-/// Post the architecture-delta comment to the change's PR (best-effort, never
-/// blocks). Inline PNG via `visual-check` + a public gist when Chrome is
-/// available; otherwise the markdown summary + HTML link.
+/// Post the architecture-delta comment to the change's (or stack's) PR.
 pub fn attachToPr(allocator: std.mem.Allocator, cwd: []const u8, id: []const u8, delta: bool) !void {
-    const pr_url = prUrlOf(allocator, id) orelse {
-        print("attach: no PR recorded for {s} — run `acts review` first.\n", .{id});
+    _ = delta; // attach is always a delta comment
+    var parsed = try stack.load(allocator);
+    defer parsed.deinit();
+    const v = parsed.value;
+    const range = stack.changeDiffRange(v, id);
+    if (range.from.len == 0) return;
+    try attachToPrRange(allocator, cwd, id, range.from, range.to);
+}
+
+fn attachToPrRange(allocator: std.mem.Allocator, cwd: []const u8, id: []const u8, from: []const u8, to: []const u8) !void {
+    const pr_url = stackPrUrl(allocator) orelse {
+        print("attach: no stack PR recorded — run `acts review` first.\n", .{});
         return;
     };
     const tools = git.detectTools(allocator);
@@ -275,13 +278,12 @@ pub fn attachToPr(allocator: std.mem.Allocator, cwd: []const u8, id: []const u8,
         return;
     }
 
-    const html_path = try cmdDiagram(allocator, cwd, id, delta);
+    const html_path = try renderRange(allocator, cwd, id, "", from, to, true);
     if (html_path == null) return;
 
     var body = std.ArrayList(u8).init(allocator);
     const w = body.writer();
 
-    // Best-effort inline PNG: visual-check (needs Chrome) → public gist → raw URL.
     if (archify.findRenderer(allocator, cwd)) |renderer| {
         const vc = try runNode(allocator, renderer, &.{ "visual-check", html_path.?, "--json" });
         if (vc.exit_code == 0) {
@@ -297,14 +299,7 @@ pub fn attachToPr(allocator: std.mem.Allocator, cwd: []const u8, id: []const u8,
         }
     }
 
-    // Build the markdown delta summary (reloads the change).
-    var parsed = try stack.load(allocator);
-    defer parsed.deinit();
-    const v = parsed.value;
-    const change = stack.getChange(v, id) orelse return error.ChangeNotFound;
-    const branch = strOf(change, "branch") orelse "";
-    const base = strOf(&v.object, "base_branch") orelse "";
-    const entries = try git.diffNameStatus(allocator, base, branch);
+    const entries = try git.diffNameStatus(allocator, from, to);
     const aliases = graph.referenceAliases(allocator, cwd);
     const components = try buildComponents(allocator, entries, aliases);
     const sides = try partitionComponents(allocator, aliases, entries);
@@ -320,6 +315,13 @@ pub fn attachToPr(allocator: std.mem.Allocator, cwd: []const u8, id: []const u8,
     } else {
         print("attach: gh pr comment failed: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
     }
+}
+
+/// Stack-level PR URL from the manifest (one PR per stack).
+fn stackPrUrl(allocator: std.mem.Allocator) ?[]const u8 {
+    var parsed = stack.load(allocator) catch return null;
+    defer parsed.deinit();
+    return stack.stackPrUrl(parsed.value);
 }
 
 /// `acts archify install` — install the archify renderer via `npx skills add`
@@ -350,12 +352,23 @@ pub fn cmdArchifyInstall(allocator: std.mem.Allocator, cwd: []const u8) !void {
     }
 }
 
-/// Whole-stack diagram (Phase 4 implements rendering). Stub keeps cmdReview compiling.
+/// Whole-stack diagram: integration branch (before) vs feature branch (after).
+/// Used by `acts review` to attach a single architecture delta to the one PR.
 pub fn cmdStackDiagram(allocator: std.mem.Allocator, cwd: []const u8, delta: bool, attach: bool) !void {
-    _ = allocator;
-    _ = cwd;
-    _ = delta;
-    _ = attach;
+    var parsed = try stack.load(allocator);
+    defer parsed.deinit();
+    const v = parsed.value;
+    const sid = if (v.object.get("id")) |s| if (s == .string) s.string else "" else "";
+    const stitle = if (v.object.get("title")) |s| if (s == .string) s.string else "" else "";
+    const integ = stack.integrationBranch(v);
+    const feat = stack.branchOf(v) orelse return error.ManifestInvalid;
+    if (integ.len == 0) return;
+
+    const id = try std.fmt.allocPrint(allocator, "stack-{s}", .{sid});
+    _ = try renderRange(allocator, cwd, id, stitle, integ, feat, delta);
+    if (attach) {
+        try attachToPrRange(allocator, cwd, id, integ, feat);
+    }
 }
 
 test "partitionComponents derives before/after side keys" {
