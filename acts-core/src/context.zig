@@ -124,7 +124,10 @@ pub fn buildContextPack(
 
     // Changed files (blast radius from the checkpoint range)
     if (range.from.len > 0) {
-        const files = git.changedFilesSince(allocator, range.from) catch &[_][]const u8{};
+        const files = if (stack.changeEndSha(v, change_id) != null)
+            (git.diffNameOnly(allocator, range.from, range.to) catch &[_][]const u8{})
+        else
+            (git.changedFilesSince(allocator, range.from) catch &[_][]const u8{});
         try out.appendSlice("\n## Changed Files\n");
         if (files.len == 0) {
             try out.appendSlice("- (no changes yet)\n");

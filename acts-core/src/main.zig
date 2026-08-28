@@ -1247,7 +1247,10 @@ fn cmdScope(allocator: std.mem.Allocator, id: []const u8, file: []const u8) !voi
         return;
     }
 
-    const files = try git.changedFilesSince(allocator, range.from);
+    const files = if (stack.changeEndSha(v, id) != null)
+        try git.diffNameOnly(allocator, range.from, range.to)
+    else
+        try git.changedFilesSince(allocator, range.from);
     for (files) |f| {
         if (std.mem.eql(u8, f, file)) {
             try stdout("{{\n  \"file_path\": \"{s}\",\n  \"action\": \"ok\",\n  \"message\": \"File is part of change {s}'s range\"\n}}\n", .{ file, id });
