@@ -8,6 +8,11 @@ dist/
 .acts/plugin-state.json
 .acts/*.db
 
+# archify renderer (installed via `acts archify install`, not committed)
+.agents/skills/archify/
+.opencode/skills/archify/
+.acts/changes/*/archify/
+
 # Zig build artifacts
 acts-core/.zig-cache/
 acts-core/zig-out/

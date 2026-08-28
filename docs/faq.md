@@ -76,6 +76,18 @@ sudo cp zig-out/bin/acts /usr/local/bin/acts
 cp acts-core/zig-out/bin/acts .acts/bin/acts
 ```
 
+## How do I visualize what a change does to the architecture?
+
+Use archify via ACTS:
+
+```bash
+acts archify install                    # one-time: installs the renderer (needs node/npx)
+acts diagram c1 --delta                 # Before/Delta/After architecture HTML
+acts diagram c1 --delta --attach        # also comment it on the change's PR
+```
+
+`acts review` attaches the delta automatically when the renderer is installed. Without it, `acts diagram` prints a textual delta summary (component | status | kind).
+
 ## What's the minimum to try ACTS?
 
 Two commands:

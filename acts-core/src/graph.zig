@@ -50,6 +50,15 @@ fn loadReferences(allocator: std.mem.Allocator, cwd: []const u8) ![]Reference {
     return out.toOwnedSlice();
 }
 
+/// Alias-only view of the configured references (used by `acts diagram` to
+/// map changed files to cross-repo components).
+pub fn referenceAliases(allocator: std.mem.Allocator, cwd: []const u8) []const []const u8 {
+    const refs = loadReferences(allocator, cwd) catch return &[_][]const u8{};
+    var out = std.ArrayList([]const u8).init(allocator);
+    for (refs) |r| out.append(r.alias) catch {};
+    return out.toOwnedSlice() catch &[_][]const u8{};
+}
+
 /// `acts graph repos` — list fleet references.
 pub fn cmdRepos(allocator: std.mem.Allocator, cwd: []const u8, json_out: bool) !void {
     const refs = try loadReferences(allocator, cwd);

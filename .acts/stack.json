@@ -165,6 +165,64 @@
           "note": "auto-land: low risk, verified"
         }
       ]
+    },
+    {
+      "id": "c1",
+      "title": "archify: acts diagram + acts_archify tool + PR attach",
+      "branch": "acts/acts-v2/c4-archify-acts-diagram-acts-archify-tool-pr-attach",
+      "parent": null,
+      "status": "APPROVED",
+      "acceptance": [
+        "acts diagram renders architecture delta",
+        "acts review attaches PNG+HTML PR comment",
+        "acts setup --with-archify and acts archify install work",
+        "tests pass (zig build test + npm test)"
+      ],
+      "verify": {
+        "test": {
+          "cmd": "npm test && cd acts-core && zig build test",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 194
+        },
+        "lint": {
+          "cmd": "node --check .opencode/plugins/acts.js",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 16
+        },
+        "typecheck": {
+          "cmd": "skipped",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 0
+        },
+        "build": {
+          "cmd": "cd acts-core && zig build",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 20
+        },
+        "base_sha": "a8d26d1ed01f126b0ef6316ae94c0d155f8cc407"
+      },
+      "notes": [
+        ".acts/changes/c1/notes/1787933699.md"
+      ],
+      "checkpoint": "done: diagram + archify install + plugin tool + PR attach + docs; verified (MEDIUM risk); next: human PR review (acts review c1)",
+      "pr": {
+        "url": "https://github.com/tommasop/acts-spec/pull/4",
+        "approved": true
+      },
+      "risk": "MEDIUM",
+      "approvals": [
+        {
+          "action": "approve",
+          "by": "developer",
+          "tier": "MEDIUM",
+          "ts": 1787935006,
+          "note": "human PR approval"
+        }
+      ]
     }
   ]
 }

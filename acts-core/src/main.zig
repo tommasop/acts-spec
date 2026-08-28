@@ -9,6 +9,8 @@ const risk = @import("risk.zig");
 const setup = @import("setup.zig");
 const cbm = @import("cbm.zig");
 const graph = @import("graph.zig");
+const archify = @import("archify.zig");
+const diagram = @import("diagram.zig");
 const docrisk = @import("docrisk.zig");
 
 const version_str = build_options.version;
@@ -49,6 +51,10 @@ const usage_text =
     \\  tech-lead <id>                          Pre-flight risk report (CBM graph)
     \\  doc-risk <file> [--json]                Evaluate a spec/plan doc (static + CBM)
     \\  graph repos|index|bootstrap|span        CBM fleet helpers (replaces cbm plugin)
+    \\  diagram <id> [--delta] [--attach]       Render change architecture impact via
+    \\                                          archify (HTML; --delta = Before/Delta/
+    \\                                          After, --attach = comment on the PR)
+    \\  archify install                         Install the archify renderer skill
     \\  validate                                Validate manifest + branch consistency
     \\  setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>]
     \\                                          Install binaries globally + wire a project
@@ -92,8 +98,8 @@ fn parseArgs(allocator: std.mem.Allocator, argv: []const []const u8) !Args {
     var args = Args.init(allocator);
     errdefer args.deinit();
 
-    const long_value_flags = [_][]const u8{ "--title", "--accept", "--message", "--cost", "--source", "--bin-dir", "--manual", "--reason", "-t", "-m" };
-    const bool_flags = [_][]const u8{ "--all", "--json", "--github", "--force", "--no-install" };
+    const long_value_flags = [_][]const u8{ "--title", "--accept", "--message", "--cost", "--source", "--bin-dir", "--manual", "--reason", "--type", "-t", "-m" };
+    const bool_flags = [_][]const u8{ "--all", "--json", "--github", "--force", "--no-install", "--delta", "--attach", "--with-archify" };
     var i: usize = 0;
     while (i < argv.len) : (i += 1) {
         const a = argv[i];
@@ -275,6 +281,28 @@ fn runCommand(allocator: std.mem.Allocator, cmd: []const u8, args: *const Args) 
         } else if (std.mem.eql(u8, sub, "span")) {
             if (args.positional.items.len < 2) return error.MissingChangeId;
             return graph.cmdSpan(allocator, cwd, args.positional.items[1]);
+        }
+        return error.UnknownSubcommand;
+    }
+    if (std.mem.eql(u8, cmd, "diagram")) {
+        if (args.positional.items.len < 1) return error.MissingChangeId;
+        const cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch ".";
+        const diag_type = args.flag("--type") orelse "architecture";
+        if (!std.mem.eql(u8, diag_type, "architecture")) {
+            try stderr("diagram: only --type architecture is supported in this version.\n", .{});
+            return error.UnsupportedDiagramType;
+        }
+        _ = try diagram.cmdDiagram(allocator, cwd, args.positional.items[0], args.has("--delta"));
+        if (args.has("--attach")) {
+            return diagram.attachToPr(allocator, cwd, args.positional.items[0], true);
+        }
+        return;
+    }
+    if (std.mem.eql(u8, cmd, "archify")) {
+        if (args.positional.items.len < 1) return error.MissingSubcommand;
+        const cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch ".";
+        if (std.mem.eql(u8, args.positional.items[0], "install")) {
+            return diagram.cmdArchifyInstall(allocator, cwd);
         }
         return error.UnknownSubcommand;
     }
@@ -847,6 +875,15 @@ fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
     _ = try stack.setChangeString(v, id, "status", stack.status_in_review);
     try stack.save(allocator, v);
 
+    // Best-effort, non-blocking: attach an archify architecture-delta comment
+    // to the submitted PR so reviewers see the change's architecture impact.
+    if (pr_url != null) {
+        const cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch ".";
+        diagram.attachToPr(allocator, cwd, id, true) catch |err| {
+            try stderr("note: archify attach skipped ({s}) — review is not blocked.\n", .{@errorName(err)});
+        };
+    }
+
     // Risk-based HITL: LOW-risk verified changes are eligible for auto-land.
     // gated by .acts/acts.json `hilt.auto_land_low` (default true).
     if (tier == .LOW and autoLandLowEnabled(allocator)) {
@@ -1227,6 +1264,7 @@ fn cmdSetup(allocator: std.mem.Allocator, args: *const Args) !void {
         .force = args.has("--force"),
         .no_install = args.has("--no-install"),
         .bin_dir = args.flag("--bin-dir") orelse "~/.local/bin",
+        .with_archify = args.has("--with-archify"),
     });
     try stdout("setup complete for {s}\n", .{target});
     try stdout("  next: open a session with OpenCode — the acts skill + tools are wired.\n", .{});
@@ -1653,4 +1691,11 @@ test "failingFilesOwnedByChange detects owned vs external files" {
 
     // Empty output (broken tooling) → not owned, so force is allowed.
     try std.testing.expect(!failingFilesOwnedByChangeWithOwned("", &owned));
+}
+
+test "usage text documents diagram and archify install" {
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, "diagram <id>") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, "--delta") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, "--attach") != null);
+    try std.testing.expect(std.mem.indexOf(u8, usage_text, "archify install") != null);
 }

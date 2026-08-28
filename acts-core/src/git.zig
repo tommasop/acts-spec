@@ -218,6 +218,74 @@ pub fn refSha(arena: std.mem.Allocator, ref: []const u8) ![]const u8 {
     return std.mem.trim(u8, res.stdout, " \n\r");
 }
 
+test "parseNameStatus splits --name-status output" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    const out =
+        \\A	src/new.zig
+        \\M	old.zig
+        \\D	gone.zig
+        \\R100	a.zig	b.zig
+        \\C075	c.zig	d.zig
+    ;
+    const entries = try parseNameStatus(a, out);
+    try std.testing.expectEqual(@as(usize, 5), entries.len);
+    try std.testing.expectEqual(@as(u8, 'A'), entries[0].status);
+    try std.testing.expectEqualStrings("src/new.zig", entries[0].file);
+    try std.testing.expectEqual(@as(u8, 'M'), entries[1].status);
+    try std.testing.expectEqualStrings("old.zig", entries[1].file);
+    try std.testing.expectEqual(@as(u8, 'D'), entries[2].status);
+    try std.testing.expectEqualStrings("gone.zig", entries[2].file);
+    // Renames/copies resolve to the NEW path.
+    try std.testing.expectEqual(@as(u8, 'R'), entries[3].status);
+    try std.testing.expectEqualStrings("b.zig", entries[3].file);
+    try std.testing.expectEqual(@as(u8, 'C'), entries[4].status);
+    try std.testing.expectEqualStrings("d.zig", entries[4].file);
+}
+
+pub const FileStatus = struct {
+    /// One of 'A' (added), 'M' (modified), 'D' (deleted), 'R' (renamed),
+    /// 'C' (copied), 'T' (type change), 'U' (unmerged).
+    status: u8,
+    /// Path relative to repo root (for renames/copies: the NEW path).
+    file: []const u8,
+};
+
+/// Parse `git diff --name-status` output into entries. Rename/copy lines
+/// (`R100\told\tnew`) resolve to the new path so the caller sees the current
+/// tree position of every touched file.
+pub fn parseNameStatus(arena: std.mem.Allocator, stdout: []const u8) ![]FileStatus {
+    var out = std.ArrayList(FileStatus).init(arena);
+    var it = std.mem.tokenizeAny(u8, stdout, "\n");
+    while (it.next()) |line| {
+        if (line.len < 2) continue;
+        const status = line[0];
+        var rest = line[1..];
+        if (rest.len > 0 and rest[0] == ' ') rest = rest[1..];
+        if (status == 'R' or status == 'C') {
+            var fields = std.mem.tokenizeScalar(u8, rest, '\t');
+            _ = fields.next(); // old path
+            if (fields.next()) |newpath| {
+                try out.append(.{ .status = status, .file = newpath });
+            }
+            continue;
+        }
+        if (rest.len > 0) try out.append(.{ .status = status, .file = rest });
+    }
+    return out.toOwnedSlice();
+}
+
+/// Committed-only name-status between two refs (base and a change branch):
+/// which files were Added/Modified/Deleted. Used by `acts diagram` to derive
+/// the Before (base) and After (head) component sets.
+pub fn diffNameStatus(arena: std.mem.Allocator, from: []const u8, to: []const u8) ![]FileStatus {
+    const res = try run(arena, &.{ "git", "diff", "--name-status", from, to }, 65536);
+    if (res.exit_code != 0) return &[_]FileStatus{};
+    return parseNameStatus(arena, res.stdout);
+}
+
 /// Count of added lines between base and HEAD (for risk heuristics).
 pub fn diffAdditions(arena: std.mem.Allocator, base: []const u8) !usize {
     const res = try run(arena, &.{ "git", "diff", "--numstat", base, "HEAD" }, 65536);

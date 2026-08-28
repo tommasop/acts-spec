@@ -1,5 +1,6 @@
 const std = @import("std");
 const git = @import("git.zig");
+const archify = @import("archify.zig");
 
 const RAW_BASE = "https://raw.githubusercontent.com/tommasop/acts-spec/master";
 
@@ -14,6 +15,7 @@ pub const integration_files = [_][]const u8{
     ".opencode/commands/acts-change.md",
     ".opencode/commands/acts-stack.md",
     ".opencode/commands/acts-zeplin.md",
+    ".opencode/commands/acts-diagram.md",
 };
 
 /// The AGENTS.md ACTS v2 section that `acts setup` injects (idempotent).
@@ -46,6 +48,7 @@ pub const agents_section =
     \\- `acts checkpoint <id> -s <summary>` — Record a status checkpoint
     \\- `acts redirect <id> --accept <criteria>` — Update scope mid-flight without context loss
     \\- `acts scope <id> <file>` — Check file ownership (derived from diffs)
+    \\- `acts diagram <id> [--delta] [--attach]` — Render the change's architecture impact via archify (HTML; `--attach` comments on the PR)
     \\- `acts validate` — Validate manifest + branch consistency
     \\
     \\Status Values: TODO, IN_PROGRESS, VERIFIED, IN_REVIEW, APPROVED, MERGED
@@ -145,9 +148,10 @@ pub const SetupOptions = struct {
     force: bool = false,
     no_install: bool = false, // skip global binary install
     bin_dir: []const u8 = "~/.local/bin", // global install location
+    with_archify: bool = false, // also install the archify diagram renderer skill
 };
 
-/// Main entry: `acts setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>] [--no-install]`
+/// Main entry: `acts setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>] [--no-install] [--with-archify]`
 pub fn run(allocator: std.mem.Allocator, opts: SetupOptions) !void {
     // 0. Global binary install (acts self-copy + cbm download), unless --no-install.
     if (!opts.no_install) {
@@ -167,6 +171,38 @@ pub fn run(allocator: std.mem.Allocator, opts: SetupOptions) !void {
     // 4. Optional GitHub workflow.
     if (opts.with_github) {
         try configureGithub(allocator, opts);
+    }
+
+    // 5. Optional archify renderer skill (diagrams for `acts diagram`).
+    if (opts.with_archify) {
+        try installArchify(allocator, opts.target_dir);
+    }
+}
+
+/// Install the archify renderer skill into the target project via
+/// `npx skills add tt-a1i/archify`. Idempotent; requires node/npx.
+pub fn installArchify(allocator: std.mem.Allocator, target_dir: []const u8) !void {
+    if (archify.findRenderer(allocator, target_dir)) |r| {
+        std.debug.print("archify renderer already installed: {s}\n", .{r});
+        return;
+    }
+    if (!git.hasTool(allocator, "node") or !git.hasTool(allocator, "npx")) {
+        std.debug.print("note: `node`/`npx` not found — skipping archify install. Run `acts archify install` later.\n", .{});
+        return;
+    }
+    std.debug.print("installing archify skill via npx (diagram renderer for `acts diagram`)…\n", .{});
+    const res = git.run(allocator, archify.installCmdArgs(), 1 << 24) catch {
+        std.debug.print("note: `npx skills add` failed — run `acts archify install` later.\n", .{});
+        return;
+    };
+    if (res.exit_code != 0) {
+        std.debug.print("note: `npx skills add` failed: {s} — run `acts archify install` later.\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
+        return;
+    }
+    if (archify.findRenderer(allocator, target_dir)) |r| {
+        std.debug.print("archify installed: {s}\n", .{r});
+    } else {
+        std.debug.print("note: archify install ran but renderer not found under `.opencode/skills/archify`.\n", .{});
     }
 }
 
@@ -454,13 +490,16 @@ test "expandHome resolves tilde" {
 test "integration files list covers plugins + skill + commands" {
     var seen_plugins = false;
     var seen_skill = false;
+    var seen_diagram = false;
     for (integration_files) |f| {
         if (std.mem.eql(u8, f, ".opencode/plugins/acts.js")) seen_plugins = true;
         if (std.mem.eql(u8, f, ".opencode/skills/acts/SKILL.md")) seen_skill = true;
+        if (std.mem.eql(u8, f, ".opencode/commands/acts-diagram.md")) seen_diagram = true;
     }
     try std.testing.expect(seen_plugins);
     try std.testing.expect(seen_skill);
-    try std.testing.expect(integration_files.len >= 8);
+    try std.testing.expect(seen_diagram);
+    try std.testing.expect(integration_files.len >= 9);
 }
 
 test "agents_section mentions verify gate and setup commands" {

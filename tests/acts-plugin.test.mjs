@@ -64,10 +64,10 @@ try {
   const tools = await hooks.tools();
 
   // 2. Core tools registered
-  for (const n of ['acts', 'acts_context', 'acts_mode', 'acts_zeplin']) {
+  for (const n of ['acts', 'acts_context', 'acts_mode', 'acts_zeplin', 'acts_archify']) {
     assert.ok(tools[n] && typeof tools[n].handler === 'function', `missing tool: ${n}`);
   }
-  ok('acts / acts_context / acts_mode / acts_zeplin tools registered');
+  ok('acts / acts_context / acts_mode / acts_zeplin / acts_archify tools registered');
 
   // 3. acts tool passes command through to binary
   const res = await tools.acts.handler({ command: 'verify c1' });
@@ -84,6 +84,12 @@ try {
   const zp = await tools.acts_zeplin.handler({ url: 'https://app.zeplin.io/project/abc/flow/xyz' });
   assert.ok(zp.content[0].text.includes('acts-zeplin-contract.mjs'), 'acts_zeplin references the contract script');
   ok('acts_zeplin handles missing script gracefully offline');
+
+  // 5b. acts_archify returns a helpful install hint when the renderer is absent (offline)
+  const ar = await tools.acts_archify.handler({ action: 'validate', type: 'architecture', input: 'ir.json' });
+  assert.ok(ar.content[0].text.includes('archify'), 'acts_archify mentions archify');
+  assert.ok(ar.content[0].text.includes('acts archify install'), 'acts_archify suggests installing the renderer');
+  ok('acts_archify handles missing renderer gracefully offline');
 
   // 6. System context includes stack info from manifest + auto-injects active change pack
   const out = { system: [] };

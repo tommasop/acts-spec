@@ -38,6 +38,8 @@ ACTS coordinates human + agent development on a shared repo. **Git is the system
 | `acts checkpoint <id> -s <summary>` | Record a status checkpoint. |
 | `acts redirect <id> --accept <criteria>` | Update scope mid-flight without context loss. |
 | `acts scope <id> <file>` | Check file ownership (derived from diffs). |
+| `acts diagram <id> [--delta] [--attach]` | Render the change's architecture impact via archify (HTML). `--delta` = Before/Delta/After; `--attach` = comment on the change's PR. |
+| `acts archify install` | Install the archify diagram renderer skill (`npx skills add tt-a1i/archify`). |
 | `acts migrate [<story-id>]` | Import a v1 SQLite story into a v2 stack. |
 | `acts validate` | Validate manifest + branch consistency. |
 
@@ -67,3 +69,13 @@ When you start a session on an existing change, **always** run `acts context <id
 - Changed files + commit history (blast radius)
 
 If the human redirects scope, use `acts redirect <id> --accept "<new criteria>"` — this updates the contract in-place so you never lose the accumulated context by restarting.
+
+## Diagrams (archify)
+
+Visualize what a change does to the architecture before review:
+
+- `acts diagram <id>` — render an architecture impact map (HTML) of the components the change touches.
+- `acts diagram <id> --delta` — Before/Delta/After comparison (base branch vs change branch).
+- `acts diagram <id> --attach` — post the delta as a comment on the change's PR (also done automatically by `acts review` when the renderer is installed).
+- `acts archify install` (or `acts setup --with-archify`) — install the renderer. Without it, `acts diagram` degrades to a textual delta summary.
+- For iterative authoring, the `acts_archify` plugin tool validates/delivers a candidate IR JSON (`validate` → fix per diagnostics → `deliver`).
