@@ -21,13 +21,13 @@ const usage_text =
     \\Usage: acts <command> [args]
     \\
     \\Stack lifecycle:
-    \\  stack create <id> [-t <title>]          Start a new stack (base branch + manifest)
+    \\  stack create <id> [-t <title>]          Start a new stack (feature branch + manifest)
     \\  stack status                            Show stack and change status tree
-    \\  stack land                              Merge approved changes bottom-up
+    \\  stack land                              Merge the whole feature branch (all changes APPROVED)
     \\
     \\Change lifecycle:
     \\  change add <id> -t <title> [--accept <criteria>]
-    \\                                          Add a change (branch) on top of the stack
+    \\                                          Add a change (checkpoint on the feature branch)
     \\  change status [<id>]                    Show change details
     \\  verify [<id>] [--all] [--force -m <reason> | --manual <evidence>]
     \\                                          Run quality gates, record evidence
@@ -35,7 +35,7 @@ const usage_text =
     \\                                            outside this change (refused if a
     \\                                            change-owned file fails)
     \\                                          --manual: skip gates, record evidence
-    \\  review <id>                             Submit stacked PR (requires verify to pass)
+    \\  review <id>                             Submit/update the stack's ONE PR (feature vs base; requires verify to pass)
     \\  approve <id>                            Mark change approved (after human PR review)
     \\  rework <id>                             Reopen for rework (clears approval)
     \\  risk <id>                               Compute + show the change's risk tier
@@ -351,25 +351,33 @@ fn cmdStackCreate(allocator: std.mem.Allocator, id: []const u8, args: *const Arg
     if (stack.manifestExists()) return error.StackAlreadyExists;
 
     const title = args.flag("--title") orelse args.flag("-t") orelse id;
-    const base_branch = try std.fmt.allocPrint(allocator, "acts/{s}/base", .{id});
+    // The integration branch is whatever we're on now (master/main).
+    const integ = (try git.currentBranch(allocator)) orelse "master";
+    const integ_sha = try git.refSha(allocator, integ);
+    const feat = try std.fmt.allocPrint(allocator, "acts/{s}/feature", .{id});
 
-    // Create the base branch from current HEAD
-    const res = try git.createBranch(allocator, base_branch, "");
+    // Create the feature branch from current HEAD.
+    const res = try git.createBranch(allocator, feat, "");
     if (res.exit_code != 0) {
         try stderr("git: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
         return error.BranchConflict;
     }
 
     var root = std.json.ObjectMap.init(allocator);
-    try root.put("version", .{ .integer = 2 });
+    try root.put("version", .{ .integer = 3 });
     try root.put("id", .{ .string = id });
     try root.put("title", .{ .string = title });
-    try root.put("base_branch", .{ .string = base_branch });
+    try root.put("branch", .{ .string = feat });
+    try root.put("base_branch", .{ .string = integ });
+    if (integ_sha.len > 0) try root.put("base_sha", .{ .string = integ_sha });
+    var pr = std.json.ObjectMap.init(allocator);
+    try pr.put("url", .null);
+    try root.put("pr", .{ .object = pr });
     try root.put("changes", .{ .array = std.json.Array.init(allocator) });
 
     try stack.save(allocator, .{ .object = root });
 
-    try stdout("stack {s} created on branch {s}\n", .{ id, base_branch });
+    try stdout("stack {s} created on feature branch {s} (off {s})\n", .{ id, feat, integ });
     try stdout("  next: acts change add c1 -t \"<title>\" --accept \"<criteria>\"\n", .{});
 }
 
@@ -378,32 +386,39 @@ fn cmdStackStatus(allocator: std.mem.Allocator, args: *const Args) !void {
     defer parsed.deinit();
     const v = parsed.value;
 
+    // --json contract: pure JSON (the plugin JSON.parses this output).
+    if (args.has("--json")) {
+        var buf = std.ArrayList(u8).init(allocator);
+        defer buf.deinit();
+        try std.json.stringify(v, .{ .whitespace = .indent_2 }, buf.writer());
+        try buf.append('\n');
+        try stdout("{s}", .{buf.items});
+        return;
+    }
+
     const root = &v.object;
     const sid = if (root.get("id")) |s| if (s == .string) s.string else "" else "";
     const stitle = if (root.get("title")) |s| if (s == .string) s.string else "" else "";
-    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
+    const feat = stack.branchOf(v) orelse "";
+    const integ = stack.integrationBranch(v);
 
-    try stdout("Stack: {s} — {s} (base: {s})\n", .{ sid, stitle, base });
+    try stdout("Stack: {s} — {s}\n", .{ sid, stitle });
+    try stdout("  feature: {s} (off {s})\n", .{ feat, integ });
+    if (stack.stackPrUrl(v)) |url| {
+        try stdout("  PR: {s}\n", .{url});
+    }
 
     const changes = root.get("changes") orelse return;
     if (changes != .array) return;
-    var idx: usize = 0;
     for (changes.array.items) |*c| {
         if (c.* != .object) continue;
         const m = &c.*.object;
         const cid = if (m.get("id")) |s| if (s == .string) s.string else "" else "";
         const ctitle = if (m.get("title")) |s| if (s == .string) s.string else "" else "";
         const cstatus = if (m.get("status")) |s| if (s == .string) s.string else "" else "";
-        const marker: []const u8 = if (cstatus.len == 0) "  " else cstatus;
-        try stdout("  {s} {s}  {s}\n", .{ if (idx == 0) "└" else "├", marker, ctitle });
-        _ = cid;
-        idx += 1;
-    }
-    if (args.has("--json")) {
-        var buf = std.ArrayList(u8).init(allocator);
-        defer buf.deinit();
-        try std.json.stringify(v, .{ .whitespace = .indent_2 }, buf.writer());
-        try stdout("{s}\n", .{buf.items});
+        const start = if (stack.changeStartSha(v, cid)) |s| s[0..@min(@as(usize, 7), s.len)] else "-";
+        const end = if (stack.changeEndSha(v, cid)) |s| s[0..@min(@as(usize, 7), s.len)] else "…";
+        try stdout("  [{s}] {s}  {s}  ({s}..{s})\n", .{ if (std.mem.eql(u8, cstatus, stack.status_merged)) "x" else " ", cstatus, ctitle, start, end });
     }
 }
 
@@ -412,87 +427,95 @@ fn cmdStackLand(allocator: std.mem.Allocator) !void {
     defer parsed.deinit();
     const v = parsed.value;
     const root = &v.object;
+    const sid = if (root.get("id")) |s| if (s == .string) s.string else "" else "";
 
-    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
-    if (base.len == 0) return error.ManifestInvalid;
+    const feat = stack.branchOf(v) orelse return error.ManifestInvalid;
+    const integ = stack.integrationBranch(v);
+    if (integ.len == 0) return error.ManifestInvalid;
 
-    const changes = root.get("changes") orelse return error.ManifestInvalid;
-    if (changes != .array) return error.ManifestInvalid;
-
-    var landed_any = false;
-    for (changes.array.items) |*c| {
-        if (c.* != .object) continue;
-        const m = &c.*.object;
-        const cid = if (m.get("id")) |s| if (s == .string) s.string else "" else "";
-        const cstatus = if (m.get("status")) |s| if (s == .string) s.string else "" else "";
-        const cbranch = if (m.get("branch")) |s| if (s == .string) s.string else "" else "";
-
-        if (std.mem.eql(u8, cstatus, stack.status_merged)) continue;
-        if (!std.mem.eql(u8, cstatus, stack.status_approved)) {
-            try stdout("skip {s}: status is {s} (need APPROVED)\n", .{ cid, cstatus });
-            continue;
-        }
-
-        // Stale-verification guard: if the base branch moved since this change
-        // was verified, require re-verification before landing.
-        const verified_sha = stack.getVerifyBaseSha(v, cid);
-        const cur_base_sha = try git.refSha(allocator, base);
-        if (verified_sha != null and cur_base_sha.len > 0 and !std.mem.eql(u8, verified_sha.?, cur_base_sha)) {
-            try stdout("skip {s}: base moved since verify — run `acts verify {s}` before landing\n", .{ cid, cid });
-            continue;
-        }
-
-        // Commit any pending manifest/note changes on the change branch first, so
-        // switching to the base branch isn't blocked by a dirty tracked `.acts/`.
-        const cur = (try git.currentBranch(allocator)) orelse "";
-        if (!std.mem.eql(u8, cur, cbranch)) {
-            _ = try git.checkoutBranch(allocator, cbranch);
-        }
-        const status_res = try git.run(allocator, &.{ "git", "status", "--porcelain", "--", ".acts" }, 8192);
-        if (status_res.exit_code == 0 and std.mem.trim(u8, status_res.stdout, " \n\r").len > 0) {
-            _ = try git.run(allocator, &.{ "git", "add", ".acts" }, 8192);
-            const cres = try git.gitCommit(allocator, try std.fmt.allocPrint(allocator, "chore(acts): record {s} state", .{cid}));
-            if (cres.exit_code != 0) {
-                try stderr("commit .acts failed for {s}: {s}\n", .{ cid, std.mem.trim(u8, cres.stderr, " \n\r") });
-                return error.CommitFailed;
-            }
-        }
-
-        // Merge the change branch into the base branch
-        const co = try git.checkoutBranch(allocator, base);
-        if (co.exit_code != 0) {
-            try stderr("checkout {s} failed: {s}\n", .{ base, std.mem.trim(u8, co.stderr, " \n\r") });
-            return error.CheckoutFailed;
-        }
-        const mr = try git.run(allocator, &.{ "git", "merge", "--no-ff", cbranch, "-m", try std.fmt.allocPrint(allocator, "acts: land {s}", .{cid}) }, 8192);
-        if (mr.exit_code != 0) {
-            try stderr("merge failed for {s}: {s}\n", .{ cid, std.mem.trim(u8, mr.stderr, " \n\r") });
-            return error.MergeFailed;
-        }
-        try stdout("landed {s} onto {s}\n", .{ cid, base });
-        landed_any = true;
+    // Whole-branch landing: every non-merged change must be APPROVED.
+    const unappr = try stack.unapprovedChanges(allocator, v);
+    if (unappr.len > 0) {
+        try stdout("cannot land: {d} change(s) not APPROVED:\n", .{unappr.len});
+        for (unappr) |cid| try stdout("  - {s}\n", .{cid});
+        return error.NotApproved;
     }
 
-    // Update the manifest: mark landed changes MERGED. Note: we are on the base
-    // branch now, so save the manifest there and commit it.
-    if (landed_any) {
+    // Stale-verification guard: if the integration branch moved since a change
+    // was verified, require re-verification before landing.
+    const cur_integ_sha = try git.refSha(allocator, integ);
+    const changes = root.get("changes") orelse return error.ManifestInvalid;
+    if (changes == .array) {
         for (changes.array.items) |*c| {
             if (c.* != .object) continue;
-            const m = &c.*.object;
-            const cid = if (m.get("id")) |s| if (s == .string) s.string else "" else "";
-            const cstatus = if (m.get("status")) |s| if (s == .string) s.string else "" else "";
-            if (!std.mem.eql(u8, cstatus, stack.status_merged)) {
+            const cid = if (c.object.get("id")) |x| if (x == .string) x.string else "" else "";
+            if (cid.len == 0) continue;
+            const cst = if (c.object.get("status")) |x| if (x == .string) x.string else "" else "";
+            if (std.mem.eql(u8, cst, stack.status_merged)) continue;
+            const verified_sha = stack.getVerifyBaseSha(v, cid);
+            if (verified_sha != null and cur_integ_sha.len > 0 and !std.mem.eql(u8, verified_sha.?, cur_integ_sha)) {
+                try stdout("skip {s}: integration branch moved since verify — run `acts verify {s}` before landing\n", .{ cid, cid });
+                return error.StaleVerification;
+            }
+        }
+    }
+
+    // Commit any pending manifest/note changes on the feature branch first, so
+    // switching to the integration branch isn't blocked by a dirty tracked `.acts/`.
+    const cur = (try git.currentBranch(allocator)) orelse "";
+    if (!std.mem.eql(u8, cur, feat)) {
+        _ = try git.checkoutBranch(allocator, feat);
+    }
+    const status_res = try git.run(allocator, &.{ "git", "status", "--porcelain", "--", ".acts" }, 8192);
+    if (status_res.exit_code == 0 and std.mem.trim(u8, status_res.stdout, " \n\r").len > 0) {
+        _ = try git.run(allocator, &.{ "git", "add", ".acts" }, 8192);
+        _ = try git.gitCommit(allocator, try std.fmt.allocPrint(allocator, "chore(acts): record {s} state", .{sid}));
+    }
+
+    // Merge the whole feature branch into the integration branch.
+    const co = try git.checkoutBranch(allocator, integ);
+    if (co.exit_code != 0) {
+        try stderr("checkout {s} failed: {s}\n", .{ integ, std.mem.trim(u8, co.stderr, " \n\r") });
+        return error.CheckoutFailed;
+    }
+    const mr = try git.mergeNoFf(allocator, feat, try std.fmt.allocPrint(allocator, "acts: land {s}", .{sid}));
+    if (mr.exit_code != 0) {
+        _ = try git.run(allocator, &.{ "git", "merge", "--abort" }, 8192);
+        try stderr("merge failed: {s}\n", .{std.mem.trim(u8, mr.stderr, " \n\r")});
+        return error.MergeFailed;
+    }
+    try stdout("landed stack {s} onto {s}\n", .{ sid, integ });
+
+    // Mark all changes MERGED, save the manifest on the integration branch.
+    if (changes == .array) {
+        for (changes.array.items) |*c| {
+            if (c.* != .object) continue;
+            const cid = if (c.object.get("id")) |x| if (x == .string) x.string else "" else "";
+            if (cid.len == 0) continue;
+            const st = if (c.object.get("status")) |x| if (x == .string) x.string else "" else "";
+            if (!std.mem.eql(u8, st, stack.status_merged)) {
                 _ = try stack.setChangeString(v, cid, "status", stack.status_merged);
             }
         }
-        try stack.save(allocator, v);
-        const status_res = try git.run(allocator, &.{ "git", "status", "--porcelain", "--", ".acts" }, 8192);
-        if (status_res.exit_code == 0 and std.mem.trim(u8, status_res.stdout, " \n\r").len > 0) {
-            _ = try git.run(allocator, &.{ "git", "add", ".acts" }, 8192);
-            _ = try git.gitCommit(allocator, "chore(acts): mark landed changes MERGED");
+    }
+    try stack.save(allocator, v);
+    const st2 = try git.run(allocator, &.{ "git", "status", "--porcelain", "--", ".acts" }, 8192);
+    if (st2.exit_code == 0 and std.mem.trim(u8, st2.stdout, " \n\r").len > 0) {
+        _ = try git.run(allocator, &.{ "git", "add", ".acts" }, 8192);
+        _ = try git.gitCommit(allocator, "chore(acts): mark landed changes MERGED");
+    }
+
+    // Close the stack PR (one PR per stack).
+    if (stack.stackPrUrl(v)) |url| {
+        if (git.hasTool(allocator, "gh")) {
+            const close_comment = try std.fmt.allocPrint(allocator, "Merged into {s} via acts stack land.", .{integ});
+            const close = try git.run(allocator, &.{ "gh", "pr", "close", url, "--comment", close_comment }, 8192);
+            if (close.exit_code == 0) {
+                try stdout("closed PR: {s}\n", .{url});
+            } else {
+                try stderr("note: gh pr close failed: {s}\n", .{std.mem.trim(u8, close.stderr, " \n\r")});
+            }
         }
-    } else {
-        try stdout("nothing to land (no APPROVED changes)\n", .{});
     }
 }
 
@@ -507,39 +530,19 @@ fn cmdChangeAdd(allocator: std.mem.Allocator, id: []const u8, args: *const Args)
     const title = args.flag("--title") orelse args.flag("-t") orelse return error.MissingTitle;
     const root = &v.object;
     const sid = if (root.get("id")) |s| if (s == .string) s.string else "" else "";
-    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
+    _ = sid;
+    const feat = stack.branchOf(v) orelse return error.ManifestInvalid;
 
-    // Determine parent: current top of stack (or base if none)
-    const parent = stack.topChange(v);
-    const parent_branch = if (parent) |p| blk: {
-        const pm = stack.getChange(v, p) orelse break :blk base;
-        if (pm.get("branch")) |b| if (b == .string) break :blk b.string;
-        break :blk base;
-    } else base;
+    // Checkpoint at the current feature-branch HEAD — no new branch.
+    const head = try git.headSha(allocator);
 
-    const changes = root.get("changes").?.array.items.len;
-    const slug = try slugify(allocator, title);
-    const branch = try std.fmt.allocPrint(allocator, "acts/{s}/c{d}-{s}", .{ sid, changes + 1, slug });
-
-    const res = try git.createBranch(allocator, branch, parent_branch);
-    if (res.exit_code != 0) {
-        try stderr("git: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
-        return error.BranchConflict;
-    }
-
-    // Build the change entry
     var entry = std.json.ObjectMap.init(allocator);
     try entry.put("id", .{ .string = id });
     try entry.put("title", .{ .string = title });
-    try entry.put("branch", .{ .string = branch });
-    if (parent) |p| {
-        try entry.put("parent", .{ .string = p });
-    } else {
-        try entry.put("parent", .null);
-    }
     try entry.put("status", .{ .string = stack.status_todo });
+    if (head.len > 0) try entry.put("start_sha", .{ .string = head });
+    try entry.put("end_sha", .null);
 
-    // Acceptance criteria (split on newlines if --accept given)
     var acceptance = std.json.Array.init(allocator);
     if (args.flag("--accept")) |accept_raw| {
         try appendAcceptance(allocator, &acceptance, accept_raw);
@@ -549,16 +552,11 @@ fn cmdChangeAdd(allocator: std.mem.Allocator, id: []const u8, args: *const Args)
     try entry.put("notes", .{ .array = std.json.Array.init(allocator) });
     try entry.put("checkpoint", .null);
 
-    var pr = std.json.ObjectMap.init(allocator);
-    try pr.put("url", .null);
-    try pr.put("approved", .{ .bool = false });
-    try entry.put("pr", .{ .object = pr });
-
     const changes_arr = root.getPtr("changes").?;
     try changes_arr.array.append(.{ .object = entry });
 
     try stack.save(allocator, v);
-    try stdout("change {s} added on branch {s} (parent: {s})\n", .{ id, branch, if (parent) |p| p else base });
+    try stdout("change {s} added (checkpoint {s}) on feature branch {s}\n", .{ id, if (head.len > 0) head[0..7] else "(no commits)", feat });
 }
 
 fn cmdChangeStatus(allocator: std.mem.Allocator, id_arg: ?[]const u8) !void {
@@ -571,37 +569,20 @@ fn cmdChangeStatus(allocator: std.mem.Allocator, id_arg: ?[]const u8) !void {
 
     const ctitle = if (m.get("title")) |s| if (s == .string) s.string else "" else "";
     const cstatus = if (m.get("status")) |s| if (s == .string) s.string else "" else "";
-    const cbranch = if (m.get("branch")) |s| if (s == .string) s.string else "" else "";
-    const parent = stack.parentOf(v, id) orelse "";
+    const start = stack.changeStartSha(v, id) orelse "-";
+    const end = stack.changeEndSha(v, id) orelse "HEAD";
+    const tier = stack.getRisk(v, id) orelse "UNKNOWN";
 
     try stdout("Change: {s} — {s}\n", .{ id, ctitle });
     try stdout("  status: {s}\n", .{cstatus});
-    try stdout("  branch: {s}\n", .{cbranch});
-    try stdout("  parent: {s}\n", .{parent});
-    if (m.get("acceptance")) |acc| {
-        if (acc == .array) {
-            try stdout("  acceptance:\n", .{});
-            for (acc.array.items) |item| {
-                if (item == .string) try stdout("    - {s}\n", .{item.string});
-            }
-        }
-    }
-    if (stack.getCheckpoint(v, id)) |cp| {
-        try stdout("  checkpoint: {s}\n", .{cp});
-    }
-    const verified = stack.verifyAllPassed(v, id);
-    try stdout("  verified: {s}\n", .{if (verified) "yes" else "no"});
-    if (stack.getRisk(v, id)) |tier| {
-        try stdout("  risk: {s}\n", .{tier});
-    }
-    if (stack.getCost(v, id)) |cost| {
-        try stdout("  cost: ${d:.2}\n", .{cost});
-    }
-    if (m.get("pr")) |pr| {
-        if (pr == .object) {
-            if (pr.object.get("url")) |u| {
-                if (u == .string and u.string.len > 0) try stdout("  pr: {s}\n", .{u.string});
-            }
+    try stdout("  range: {s}..{s}\n", .{ start, end });
+    try stdout("  risk: {s}\n", .{tier});
+
+    const range = stack.changeDiffRange(v, id);
+    if (range.from.len > 0 and range.to.len > 0) {
+        const stat = try git.run(allocator, &.{ "git", "diff", "--stat", range.from, range.to }, 8192);
+        if (stat.exit_code == 0 and std.mem.trim(u8, stat.stdout, " \n\r").len > 0) {
+            try stdout("{s}\n", .{stat.stdout});
         }
     }
 }
@@ -611,7 +592,7 @@ fn cmdVerify(allocator: std.mem.Allocator, id_arg: ?[]const u8, all: bool, force
     defer parsed.deinit();
     const v = parsed.value;
     const root = &v.object;
-    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
+    const base = stack.integrationBranch(v);
 
     if (all) {
         var total_pass = true;
@@ -625,6 +606,32 @@ fn cmdVerify(allocator: std.mem.Allocator, id_arg: ?[]const u8, all: bool, force
             if (std.mem.eql(u8, cstatus, stack.status_merged)) continue;
             const ok = try runVerifyForChange(allocator, v, cid, base, force, manual, reason);
             if (!ok) total_pass = false;
+        }
+
+        // Bound each change's scope to the next checkpoint so earlier changes
+        // don't inherit later work after a bulk verify.
+        if (changes == .array) {
+            for (changes.array.items, 0..) |*c, i| {
+                if (c.* != .object) continue;
+                const cid = if (c.object.get("id")) |x| if (x == .string) x.string else "" else "";
+                if (cid.len == 0) continue;
+                const cstatus = if (c.object.get("status")) |x| if (x == .string) x.string else "" else "";
+                if (std.mem.eql(u8, cstatus, stack.status_merged)) continue;
+                const next_start = blk: {
+                    if (i + 1 < changes.array.items.len) {
+                        const nx = changes.array.items[i + 1];
+                        if (nx == .object) {
+                            if (nx.object.get("start_sha")) |s| {
+                                if (s == .string and s.string.len > 0) break :blk s.string;
+                            }
+                        }
+                    }
+                    break :blk "";
+                };
+                if (next_start.len > 0) {
+                    _ = try stack.setChangeEndSha(allocator, v, cid, next_start);
+                }
+            }
         }
         try stack.save(allocator, v);
         if (!total_pass) return error.VerifyFailed;
@@ -642,11 +649,15 @@ fn cmdVerify(allocator: std.mem.Allocator, id_arg: ?[]const u8, all: bool, force
 }
 
 fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []const u8, base: []const u8, force: bool, manual: ?[]const u8, reason: ?[]const u8) !bool {
-    // Check out the change branch so tests run against its code
+    // v3: there is no per-change branch — gates run on the feature branch.
+    // Legacy v2 changes still get their branch checked out.
     const m = stack.getChange(v, id).?;
-    const branch = if (m.get("branch")) |b| if (b == .string) b.string else "" else "";
-    if (branch.len > 0) {
-        _ = try git.checkoutBranch(allocator, branch);
+    _ = m; // assertion: change exists
+    if (stack.legacyChangeBranch(v, id)) |cbranch| {
+        const cur = (try git.currentBranch(allocator)) orelse "";
+        if (!std.mem.eql(u8, cur, cbranch)) {
+            _ = try git.checkoutBranch(allocator, cbranch);
+        }
     }
 
     var all_ok = true;
@@ -655,9 +666,12 @@ fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []con
     if (manual) |evidence| {
         _ = try stack.setVerifyForced(allocator, v, id, "manual", evidence);
         _ = try stack.setChangeString(v, id, "status", stack.status_verified);
+        const head = try git.headSha(allocator);
+        if (head.len > 0) _ = try stack.setChangeEndSha(allocator, v, id, head);
         const base_sha = try git.refSha(allocator, base);
         if (base_sha.len > 0) _ = try stack.setVerifyBaseSha(allocator, v, id, base_sha);
-        const tier = try computeRiskForChange(allocator, v, id, branch, base);
+        const range = stack.changeDiffRange(v, id);
+        const tier = try computeRiskForChange(allocator, v, id, range.from, range.to);
         _ = try stack.setRisk(v, id, tier.label());
         try stdout("  manual verification recorded: {s}\n", .{evidence});
         try stdout("  risk: {s}\n", .{tier.label()});
@@ -693,13 +707,16 @@ fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []con
         }
     }
 
+    // Freeze the change's scope at the verified HEAD first, so the risk range
+    // and force attribution match the persisted scope (never a stale end_sha).
+    const head = try git.headSha(allocator);
+    if (head.len > 0) _ = try stack.setChangeEndSha(allocator, v, id, head);
+
+    const range = stack.changeDiffRange(v, id);
+
     // ── Force override with enforcement ──
-    // Force is only allowed when the failures are attributable to files OUTSIDE
-    // this change's diff (e.g. pre-existing files owned by another change), or
-    // when no file can be attributed (broken/wrong gate tooling). If a failing
-    // file is owned by THIS change, force is refused — the code must be fixed.
     if (!all_ok and force) {
-        const fail_owned = try failingFilesOwnedByChange(allocator, base, branch, failing_outputs.items);
+        const fail_owned = try failingFilesOwnedByChange(allocator, range.from, range.to, failing_outputs.items);
         if (fail_owned) {
             try stderr("force denied: the failing gate output includes files this change owns.\n", .{});
             try stderr("  Fix the code or correct the gate config (`.acts/acts.json` quality_gate), then re-verify.\n", .{});
@@ -714,13 +731,12 @@ fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []con
         _ = try stack.setChangeString(v, id, "status", new_status);
     }
 
-    // Record the base SHA verification ran against, so stale verification can
-    // be detected later, and (re)compute the risk tier from the final diff.
+    // Record the integration SHA verification ran against (stale-verify guard).
     const base_sha = try git.refSha(allocator, base);
     if (base_sha.len > 0) {
         _ = try stack.setVerifyBaseSha(allocator, v, id, base_sha);
     }
-    const tier = try computeRiskForChange(allocator, v, id, branch, base);
+    const tier = try computeRiskForChange(allocator, v, id, range.from, range.to);
     _ = try stack.setRisk(v, id, tier.label());
     try stdout("  risk: {s}\n", .{tier.label()});
 
@@ -728,9 +744,9 @@ fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []con
 }
 
 /// Return true if any failing file (path:line tokens in the gate output) is
-/// owned by this change (i.e. present in `git diff --name-only base branch`).
-fn failingFilesOwnedByChange(allocator: std.mem.Allocator, base: []const u8, branch: []const u8, output: []const u8) !bool {
-    const owned = try git.diffNameOnly(allocator, base, branch);
+/// owned by this change (i.e. present in `git diff --name-only from to`).
+fn failingFilesOwnedByChange(allocator: std.mem.Allocator, from: []const u8, to: []const u8, output: []const u8) !bool {
+    const owned = if (from.len > 0) try git.diffNameOnly(allocator, from, to) else &[_][]const u8{};
     return failingFilesOwnedByChangeWithOwned(output, owned);
 }
 
@@ -769,32 +785,45 @@ fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
     defer parsed.deinit();
     const v = parsed.value;
 
-    const m = stack.getChange(v, id) orelse return error.ChangeNotFound;
-    if (!stack.verifyAllPassed(v, id)) return error.VerifyRequired;
+    // The change id is accepted for familiarity but review covers the whole stack.
+    if (stack.getChange(v, id) == null) return error.ChangeNotFound;
 
-    const branch = if (m.get("branch")) |b| if (b == .string) b.string else "" else "";
-    const ctitle = if (m.get("title")) |s| if (s == .string) s.string else "" else "";
-    const root = &v.object;
-    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
+    const feat = stack.branchOf(v) orelse return error.ManifestInvalid;
+    const integ = stack.integrationBranch(v);
+    if (integ.len == 0) return error.ManifestInvalid;
+    const stitle = if (v.object.get("title")) |s| if (s == .string) s.string else "" else "";
+    const pr_title = if (stitle.len == 0) feat else stitle;
 
-    // Ensure we're on the change's branch so the PR reflects its code.
+    // Every non-merged change must be verified before the PR is reviewable.
+    if (!stack.allVerified(v)) return error.VerifyRequired;
+
+    // Ensure we're on the feature branch so the PR reflects its code.
     const cur_branch = (try git.currentBranch(allocator)) orelse "";
-    if (!std.mem.eql(u8, cur_branch, branch)) {
-        _ = try git.checkoutBranch(allocator, branch);
+    if (!std.mem.eql(u8, cur_branch, feat)) {
+        _ = try git.checkoutBranch(allocator, feat);
     }
 
-    // Compute risk tier early (used for the PR body and auto-land).
-    const tier = try computeRiskForChange(allocator, v, id, branch, base);
-    _ = try stack.setRisk(v, id, tier.label());
+    // Compute risk for every change (whole-stack summary).
+    const changes = v.object.get("changes") orelse return error.ManifestInvalid;
+    if (changes == .array) {
+        for (changes.array.items) |*c| {
+            if (c.* != .object) continue;
+            const cid = if (c.object.get("id")) |x| if (x == .string) x.string else "" else "";
+            if (cid.len == 0) continue;
+            const range = stack.changeDiffRange(v, cid);
+            const tier = try computeRiskForChange(allocator, v, cid, range.from, range.to);
+            _ = try stack.setRisk(v, cid, tier.label());
+        }
+    }
 
-    // Push the branch (and, when using git-spice, the rest of the stack).
+    // Push the feature branch.
     var pr_submitted = false;
     const remote = git.defaultRemote(allocator) orelse blk: {
         try stdout("note: no git remote configured — cannot submit PR. Commit and push manually.\n", .{});
         break :blk "";
     };
     if (remote.len > 0) {
-        const push_res = try git.pushBranch(allocator, remote, branch);
+        const push_res = try git.pushBranch(allocator, remote, feat);
         if (push_res.exit_code != 0) {
             try stderr("git push: {s}\n", .{std.mem.trim(u8, push_res.stderr, " \n\r")});
             return error.PushFailed;
@@ -802,116 +831,66 @@ fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
         pr_submitted = true;
     }
 
-    // Build PR body from the context pack, plus risk tier + escalation notes.
-    var body_buf = std.ArrayList(u8).init(allocator);
-    const pack = try context.buildContextPack(allocator, v, id);
-    try body_buf.appendSlice(pack);
-    try body_buf.writer().print("\n## Risk Tier: {s}\n", .{tier.label()});
-    if (tier == .HIGH or tier == .CRITICAL) {
-        try body_buf.appendSlice(
-            "\n## ⚠️ Escalation Checklist (mandatory human review)\n" ++
-            "- [ ] Deployment coordination across services\n" ++
-            "- [ ] Backward compatibility verified for high-caller-count symbols\n" ++
-            "- [ ] Rollback plan confirmed\n",
-        );
-    } else if (tier == .LOW) {
-        try body_buf.appendSlice("\n> LOW risk — eligible for auto-land once CI passes.\n");
-    }
-    const body = body_buf.items;
+    // Build the whole-stack PR body.
+    const body = try buildReviewBody(allocator, v);
 
     const tools = git.detectTools(allocator);
-    var pr_url: ?[]const u8 = null;
+    var pr_url = stack.stackPrUrl(v);
+    const existing = pr_url != null;
 
-    if (pr_submitted and tools.git_spice) {
-        // git-spice handles the full stack of PRs bottom-up.
-        const res = try git.run(allocator, &.{ "gs", "stack", "submit" }, 16384);
-        if (res.exit_code == 0) {
-            const trimmed = std.mem.trim(u8, res.stdout, " \n\r");
-            if (trimmed.len > 0) {
-                // Best-effort: surface any PR URL in gs output.
-                var it = std.mem.tokenizeAny(u8, trimmed, " \n\r");
-                while (it.next()) |tok| {
-                    if (std.mem.indexOf(u8, tok, "github.com/") != null or std.mem.indexOf(u8, tok, "gitlab.com/") != null) {
-                        pr_url = tok;
-                        break;
-                    }
-                }
+    if (pr_submitted and tools.gh) {
+        if (existing) {
+            const edit = try git.run(allocator, &.{ "gh", "pr", "edit", pr_url.?, "--body", body }, 16384);
+            if (edit.exit_code != 0) {
+                try stderr("gh pr edit: {s}\n", .{std.mem.trim(u8, edit.stderr, " \n\r")});
             }
-            try stdout("{s}\n", .{trimmed});
         } else {
-            try stderr("gs stack submit: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
-            try stdout("note: git-spice failed — falling back to gh pr create.\n", .{});
+            const create = try git.run(allocator, &.{
+                "gh", "pr", "create",
+                "--head", feat,
+                "--base", integ,
+                "--title", pr_title,
+                "--body", body,
+            }, 16384);
+            if (create.exit_code == 0) {
+                const trimmed = std.mem.trim(u8, create.stdout, " \n\r");
+                if (trimmed.len > 0) {
+                    pr_url = trimmed;
+                    _ = try stack.setStackPrUrl(allocator, &parsed.value, trimmed);
+                }
+            } else {
+                try stderr("gh pr create: {s}\n", .{std.mem.trim(u8, create.stderr, " \n\r")});
+            }
         }
+    } else if (pr_submitted and !tools.gh) {
+        try stdout("note: `gh` not found — branch pushed to {s}; create the PR manually.\n", .{remote});
     }
 
-    if (pr_url == null and pr_submitted and tools.gh) {
-        const res = try git.run(allocator, &.{
-            "gh",
-            "pr",
-            "create",
-            "--head",
-            branch,
-            "--base",
-            base,
-            "--title",
-            try std.fmt.allocPrint(allocator, "{s}: {s}", .{ id, ctitle }),
-            "--body",
-            body,
-        }, 16384);
-        if (res.exit_code == 0) {
-            const trimmed = std.mem.trim(u8, res.stdout, " \n\r");
-            if (trimmed.len > 0) pr_url = trimmed;
-        } else {
-            try stderr("gh pr create: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
+    // The whole stack is under review via the one PR. Only transition to
+    // IN_REVIEW when a PR was actually submitted, and never downgrade MERGED
+    // or APPROVED changes (which would clear human approval).
+    if (pr_submitted) {
+        if (changes == .array) {
+            for (changes.array.items) |*c| {
+                if (c.* != .object) continue;
+                const st = c.object.get("status") orelse continue;
+                const s = if (st == .string) st.string else "";
+                if (std.mem.eql(u8, s, stack.status_merged) or std.mem.eql(u8, s, stack.status_approved)) continue;
+                const cid = if (c.object.get("id")) |x| if (x == .string) x.string else "" else "";
+                _ = try stack.setChangeString(v, cid, "status", stack.status_in_review);
+            }
         }
-    } else if (pr_url == null and pr_submitted and !tools.gh and !tools.git_spice) {
-        try stdout("note: neither gh nor gs CLI found — branch pushed to {s}; submit PR manually.\n", .{remote});
     }
+    try stack.save(allocator, parsed.value);
 
     if (pr_url) |url| {
-        _ = try stack.setPrUrl(allocator, v, id, url);
         try stdout("PR submitted: {s}\n", .{url});
-    }
-    _ = try stack.setChangeString(v, id, "status", stack.status_in_review);
-    try stack.save(allocator, v);
-
-    // Best-effort, non-blocking: attach an archify architecture-delta comment
-    // to the submitted PR so reviewers see the change's architecture impact.
-    if (pr_url != null) {
+        // Attach the whole-stack archify delta (best-effort, non-blocking).
         const cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch ".";
-        diagram.attachToPr(allocator, cwd, id, true) catch |err| {
+        diagram.cmdStackDiagram(allocator, cwd, true, true) catch |err| {
             try stderr("note: archify attach skipped ({s}) — review is not blocked.\n", .{@errorName(err)});
         };
     }
-
-    // Risk-based HITL: LOW-risk verified changes are eligible for auto-land.
-    // gated by .acts/acts.json `hilt.auto_land_low` (default true).
-    if (tier == .LOW and autoLandLowEnabled(allocator)) {
-        try stdout("LOW risk + verified — auto-landing.\n", .{});
-        _ = try stack.appendApproval(allocator, v, id, "approve", "__auto__", "LOW", "auto-land: low risk, verified");
-        _ = try stack.setPrApproved(allocator, v, id, true);
-        _ = try stack.setChangeString(v, id, "status", stack.status_approved);
-        try stack.save(allocator, v);
-        try stdout("change {s} auto-approved (LOW risk)\n", .{id});
-    }
-}
-
-/// Read `.acts/acts.json` `hilt.auto_land_low` (default true).
-fn autoLandLowEnabled(allocator: std.mem.Allocator) bool {
-    const file = std.fs.cwd().openFile(".acts/acts.json", .{}) catch return true;
-    defer file.close();
-    const content = file.readToEndAlloc(allocator, 65536) catch return true;
-    defer allocator.free(content);
-    const parsed = std.json.parseFromSlice(std.json.Value, allocator, content, .{}) catch return true;
-    defer parsed.deinit();
-    const v = parsed.value;
-    if (v != .object) return true;
-    const hilt = v.object.get("hilt") orelse return true;
-    if (hilt != .object) return true;
-    if (hilt.object.get("auto_land_low")) |a| {
-        if (a == .bool) return a.bool;
-    }
-    return true;
 }
 
 fn cmdApprove(allocator: std.mem.Allocator, id: []const u8) !void {
@@ -922,7 +901,6 @@ fn cmdApprove(allocator: std.mem.Allocator, id: []const u8) !void {
     if (stack.getChange(v, id) == null) return error.ChangeNotFound;
     const tier = stack.getRisk(v, id) orelse "UNKNOWN";
     _ = try stack.appendApproval(allocator, v, id, "approve", "developer", tier, "human PR approval");
-    _ = try stack.setPrApproved(allocator, v, id, true);
     _ = try stack.setChangeString(v, id, "status", stack.status_approved);
     try stack.save(allocator, v);
     try stdout("change {s} approved (risk: {s})\n", .{ id, tier });
@@ -936,48 +914,60 @@ fn cmdRework(allocator: std.mem.Allocator, id: []const u8) !void {
     if (stack.getChange(v, id) == null) return error.ChangeNotFound;
     const tier = stack.getRisk(v, id) orelse "UNKNOWN";
     _ = try stack.appendApproval(allocator, v, id, "rework", "developer", tier, "reopened for rework");
-    _ = try stack.setPrApproved(allocator, v, id, false);
     _ = try stack.setChangeString(v, id, "status", stack.status_in_progress);
     try stack.save(allocator, v);
     try stdout("change {s} reopened for rework\n", .{id});
+}
+
+/// Count of added lines between two refs (range version of git.diffAdditions).
+fn diffAdditionsRange(allocator: std.mem.Allocator, from: []const u8, to: []const u8) !usize {
+    const res = try git.run(allocator, &.{ "git", "diff", "--numstat", from, to }, 65536);
+    if (res.exit_code != 0) return 0;
+    var total: usize = 0;
+    var it = std.mem.tokenizeAny(u8, res.stdout, "\n");
+    while (it.next()) |line| {
+        var f = std.mem.tokenizeAny(u8, line, "\t ");
+        if (f.next()) |add| {
+            if (std.mem.eql(u8, add, "-")) continue;
+            total += std.fmt.parseInt(usize, add, 10) catch 0;
+        }
+    }
+    return total;
 }
 
 fn cmdRisk(allocator: std.mem.Allocator, id: []const u8) !void {
     var parsed = try stack.load(allocator);
     defer parsed.deinit();
     const v = parsed.value;
-    const root = &v.object;
 
-    const m = stack.getChange(v, id) orelse return error.ChangeNotFound;
-    const branch = if (m.get("branch")) |b| if (b == .string) b.string else "" else "";
-    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
+    if (stack.getChange(v, id) == null) return error.ChangeNotFound;
+    const range = stack.changeDiffRange(v, id);
 
-    const tier = try computeRiskForChange(allocator, v, id, branch, base);
+    const tier = try computeRiskForChange(allocator, v, id, range.from, range.to);
     _ = try stack.setRisk(v, id, tier.label());
     try stack.save(allocator, v);
 
-    const cross = try crossRepoEdgeCount(allocator, branch, base);
-    const files = try git.changedFilesSince(allocator, base);
-    const adds = try git.diffAdditions(allocator, base);
+    const files = if (range.from.len > 0) try git.diffNameOnly(allocator, range.from, range.to) else &[_][]const u8{};
+    const adds = try diffAdditionsRange(allocator, range.from, range.to);
     const verified = stack.verifyAllPassed(v, id);
 
     try stdout("risk for {s}: {s}\n", .{ id, tier.label() });
-    try stdout("  files: {d} | additions: {d} | cross-repo edges: {d} | verified: {s}\n", .{ files.len, adds, cross, if (verified) "yes" else "no" });
+    try stdout("  files: {d} | additions: {d} | verified: {s}\n", .{ files.len, adds, if (verified) "yes" else "no" });
     if (tier == .LOW) {
-        try stdout("  → LOW: eligible for auto-land after verification\n", .{});
+        try stdout("  → LOW: eligible for auto-land after all changes approved\n", .{});
     } else if (tier == .HIGH or tier == .CRITICAL) {
         try stdout("  → {s}: requires human review + escalation checklist\n", .{tier.label()});
     }
 }
 
-/// Compute the risk tier for a change from git-derived heuristics plus any
-/// cross-repo data the CBM plugin has stored on the change under `risk`
+/// Compute the risk tier for a change from the change's checkpoint range plus
+/// any cross-repo data the CBM plugin has stored on the change under `risk`
 /// (object with `cross_repo_edges`, `high_complexity_symbols`).
-fn computeRiskForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []const u8, branch: []const u8, base: []const u8) !risk.RiskTier {
-    const files = try git.changedFilesSince(allocator, base);
-    const adds = try git.diffAdditions(allocator, base);
+fn computeRiskForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []const u8, from: []const u8, to: []const u8) !risk.RiskTier {
+    const files = if (from.len > 0) try git.diffNameOnly(allocator, from, to) else &[_][]const u8{};
+    const adds = if (from.len > 0) try diffAdditionsRange(allocator, from, to) else 0;
 
-    var cross: usize = try crossRepoEdgeCount(allocator, branch, base);
+    var cross: usize = try crossRepoEdgeCount(allocator, from, to);
     var high_complexity: usize = 0;
     const meta = stack.getRiskMeta(v, id);
     if (meta.cross_repo_edges > 0) cross = meta.cross_repo_edges;
@@ -992,13 +982,74 @@ fn computeRiskForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []c
     });
 }
 
-/// Number of files in this change that live in a repo outside the current one.
-/// For a single-repo stack this is always 0; the CBM plugin can supply the
-/// true cross-repo edge count via `acts risk <id> --cross-repo <n>`. We detect
-/// files under a sibling repo layout heuristically (paths under ../*).
-fn crossRepoEdgeCount(allocator: std.mem.Allocator, branch: []const u8, base: []const u8) !usize {
-    _ = branch;
-    const files = try git.changedFilesSince(allocator, base);
+/// Build the ONE-PR body for a stack: all changes with acceptance, verification
+/// evidence, and risk. No per-change branches involved.
+fn buildReviewBody(allocator: std.mem.Allocator, v: std.json.Value) ![]const u8 {
+    var buf = std.ArrayList(u8).init(allocator);
+    const w = buf.writer();
+    const sid = if (v.object.get("id")) |s| if (s == .string) s.string else "" else "";
+    const stitle = if (v.object.get("title")) |s| if (s == .string) s.string else "" else "";
+    const feat = stack.branchOf(v) orelse "";
+    const integ = stack.integrationBranch(v);
+    try w.print("# Stack: {s} — {s}\n\n", .{ sid, stitle });
+    try w.print("**Feature branch:** `{s}` → `{s}`\n\n", .{ integ, feat });
+    try w.writeAll("One PR for the whole stack. Each change is a checkpoint on the feature branch.\n\n");
+
+    const changes = v.object.get("changes") orelse return buf.toOwnedSlice();
+    if (changes != .array) return buf.toOwnedSlice();
+    var idx: usize = 0;
+    for (changes.array.items) |*c| {
+        if (c.* != .object) continue;
+        const m = &c.*.object;
+        const cid = if (m.get("id")) |s| if (s == .string) s.string else "" else "";
+        const ctitle = if (m.get("title")) |s| if (s == .string) s.string else "" else "";
+        const cstatus = if (m.get("status")) |s| if (s == .string) s.string else "" else "";
+        const crisk = stack.getRisk(v, cid) orelse "UNKNOWN";
+        idx += 1;
+        try w.print("\n## {d}. {s}: {s} — {s} (risk: {s})\n", .{ idx, cid, ctitle, cstatus, crisk });
+        if (m.get("acceptance")) |acc| {
+            if (acc == .array and acc.array.items.len > 0) {
+                try w.writeAll("- Acceptance: ");
+                var first = true;
+                for (acc.array.items) |item| {
+                    const s = if (item == .string) item.string else "?";
+                    if (!first) try w.writeAll("; ");
+                    try w.print("`{s}`", .{s});
+                    first = false;
+                }
+                try w.writeAll("\n");
+            }
+        }
+        if (m.get("verify")) |ver| {
+            if (ver == .object) {
+                for (stack.verify_stages) |stage| {
+                    if (ver.object.get(stage)) |r| {
+                        if (r == .object) {
+                            const ok = if (r.object.get("ok")) |o| o == .bool and o.bool else false;
+                            const cmd = if (r.object.get("cmd")) |cc| if (cc == .string) cc.string else "" else "";
+                            try w.print("  - {s}: {s} `{s}`\n", .{ stage, if (ok) "PASS" else "FAIL", cmd });
+                        }
+                    }
+                }
+                if (ver.object.get("forced")) |f| {
+                    if (f == .bool and f.bool) {
+                        const reason = if (ver.object.get("force_reason")) |fr| if (fr == .string) fr.string else "" else "";
+                        try w.print("  - forced verification: {s}\n", .{reason});
+                    }
+                }
+            }
+        }
+    }
+    try w.writeAll("\n---\nGenerated by ACTS. Review the changes and approve each checkpoint before `acts stack land`.\n");
+    return buf.toOwnedSlice();
+}
+
+/// Number of files in this change's range that live in a repo outside the
+/// current one. For a single-repo stack this is always 0; the CBM plugin can
+/// supply the true cross-repo edge count via `acts risk <id> --cross-repo <n>`.
+/// We detect files under a sibling repo layout heuristically (paths under ../*).
+fn crossRepoEdgeCount(allocator: std.mem.Allocator, from: []const u8, to: []const u8) !usize {
+    const files = if (from.len > 0) try git.diffNameOnly(allocator, from, to) else &[_][]const u8{};
     var count: usize = 0;
     for (files) |f| {
         if (std.mem.startsWith(u8, f, "../")) count += 1;
@@ -1192,24 +1243,24 @@ fn cmdScope(allocator: std.mem.Allocator, id: []const u8, file: []const u8) !voi
     defer parsed.deinit();
     const v = parsed.value;
 
-    const m = stack.getChange(v, id) orelse return error.ChangeNotFound;
-    const branch = if (m.get("branch")) |b| if (b == .string) b.string else "" else "";
-    const root = &v.object;
-    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
-
-    const cur_branch = (try git.currentBranch(allocator)) orelse "";
-    if (!std.mem.eql(u8, cur_branch, branch)) {
-        _ = try git.checkoutBranch(allocator, branch);
+    if (stack.getChange(v, id) == null) return error.ChangeNotFound;
+    const range = stack.changeDiffRange(v, id);
+    if (range.from.len == 0) {
+        try stdout("{{\n  \"file_path\": \"{s}\",\n  \"action\": \"warn\",\n  \"message\": \"No commit range recorded for change {s} — verify it belongs to this task before editing\"\n}}\n", .{ file, id });
+        return;
     }
 
-    const files = try git.changedFilesSince(allocator, base);
+    const files = if (stack.changeEndSha(v, id) != null)
+        try git.diffNameOnly(allocator, range.from, range.to)
+    else
+        try git.changedFilesSince(allocator, range.from);
     for (files) |f| {
         if (std.mem.eql(u8, f, file)) {
-            try stdout("{{\n  \"file_path\": \"{s}\",\n  \"action\": \"ok\",\n  \"message\": \"File is part of change {s}'s diff\"\n}}\n", .{ file, id });
+            try stdout("{{\n  \"file_path\": \"{s}\",\n  \"action\": \"ok\",\n  \"message\": \"File is part of change {s}'s range\"\n}}\n", .{ file, id });
             return;
         }
     }
-    try stdout("{{\n  \"file_path\": \"{s}\",\n  \"action\": \"warn\",\n  \"message\": \"File not in change {s}'s diff — verify it belongs to this task before editing\"\n}}\n", .{ file, id });
+    try stdout("{{\n  \"file_path\": \"{s}\",\n  \"action\": \"warn\",\n  \"message\": \"File not in change {s}'s range — verify it belongs to this task before editing\"\n}}\n", .{ file, id });
 }
 
 fn cmdValidate(allocator: std.mem.Allocator) !void {
@@ -1232,19 +1283,26 @@ fn cmdValidate(allocator: std.mem.Allocator) !void {
 
     // Branch consistency
     const root = &v.object;
-    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
-    if (!git.branchExists(allocator, base)) {
-        try stdout("warn: base branch {s} does not exist\n", .{base});
+    const feat = stack.branchOf(v) orelse "";
+    if (feat.len > 0 and !git.branchExists(allocator, feat)) {
+        try stdout("warn: feature branch {s} does not exist\n", .{feat});
     }
     if (root.get("changes")) |changes| {
         if (changes == .array) {
             for (changes.array.items) |*c| {
                 if (c.* != .object) continue;
                 const m = &c.*.object;
-                const cid = if (m.get("id")) |s| if (s == .string) s.string else "" else "";
-                const cbranch = if (m.get("branch")) |s| if (s == .string) s.string else "" else "";
-                if (!git.branchExists(allocator, cbranch)) {
-                    try stdout("warn: change {s} branch {s} does not exist\n", .{ cid, cbranch });
+                const cid = if (m.get("id")) |x| if (x == .string) x.string else "" else "";
+                if (stack.changeStartSha(v, cid)) |sha| {
+                    const rs = git.refSha(allocator, sha) catch "";
+                    if (rs.len == 0) {
+                        try stdout("warn: change {s} start_sha {s} is not a valid git ref\n", .{ cid, sha });
+                    }
+                }
+                if (stack.legacyChangeBranch(v, cid)) |cb| {
+                    if (!git.branchExists(allocator, cb)) {
+                        try stdout("warn: change {s} branch {s} does not exist\n", .{ cid, cb });
+                    }
                 }
             }
         }
@@ -1348,21 +1406,26 @@ fn cmdMigrate(allocator: std.mem.Allocator, args: *const Args) !void {
     const sstatus = fields.next() orelse "";
     _ = sstatus;
 
-    // ── Create the v2 stack ───────────────────
+    // ── Create the v3 stack ───────────────────
     if (!git.isGitRepo(allocator)) return error.NotGitRepo;
     if (!validId(sid)) return error.InvalidStackId;
-    const base_branch = try std.fmt.allocPrint(allocator, "acts/{s}/base", .{sid});
-    const res = try git.createBranch(allocator, base_branch, "");
+    const feat = try std.fmt.allocPrint(allocator, "acts/{s}/feature", .{sid});
+    const integ = (try git.currentBranch(allocator)) orelse "master";
+    const res = try git.createBranch(allocator, feat, "");
     if (res.exit_code != 0) {
         try stderr("git: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
         return error.BranchConflict;
     }
 
     var root_map = std.json.ObjectMap.init(allocator);
-    try root_map.put("version", .{ .integer = 2 });
+    try root_map.put("version", .{ .integer = 3 });
     try root_map.put("id", .{ .string = sid });
     try root_map.put("title", .{ .string = stitle });
-    try root_map.put("base_branch", .{ .string = base_branch });
+    try root_map.put("branch", .{ .string = feat });
+    try root_map.put("base_branch", .{ .string = integ });
+    var pr0 = std.json.ObjectMap.init(allocator);
+    try pr0.put("url", .null);
+    try root_map.put("pr", .{ .object = pr0 });
     var changes = std.json.Array.init(allocator);
 
     // ── Query tasks for this story ────────────
@@ -1380,7 +1443,6 @@ fn cmdMigrate(allocator: std.mem.Allocator, args: *const Args) !void {
 
     var tasks_it = std.mem.tokenizeAny(u8, tasks_res.stdout, "\n");
     var idx: usize = 0;
-    var prev_tid: ?[]const u8 = null;
     while (tasks_it.next()) |line| {
         var f = std.mem.splitScalar(u8, line, '|');
         const tid = f.next() orelse continue;
@@ -1389,29 +1451,17 @@ fn cmdMigrate(allocator: std.mem.Allocator, args: *const Args) !void {
         const treview = f.next() orelse "";
 
         idx += 1;
-        const slug = try slugify(allocator, ttitle);
-        const branch = try std.fmt.allocPrint(allocator, "acts/{s}/c{d}-{s}", .{ sid, idx, slug });
 
         var entry = std.json.ObjectMap.init(allocator);
         try entry.put("id", .{ .string = tid });
         try entry.put("title", .{ .string = ttitle });
-        try entry.put("branch", .{ .string = branch });
-        if (prev_tid) |pt| {
-            try entry.put("parent", .{ .string = pt });
-        } else {
-            try entry.put("parent", .null);
-        }
-        prev_tid = tid;
+        try entry.put("status", .{ .string = statusFromV1(tstatus, treview) });
+        try entry.put("start_sha", .null);
+        try entry.put("end_sha", .null);
         try entry.put("acceptance", .{ .array = std.json.Array.init(allocator) });
         try entry.put("verify", .{ .object = std.json.ObjectMap.init(allocator) });
         try entry.put("notes", .{ .array = std.json.Array.init(allocator) });
         try entry.put("checkpoint", .null);
-        try entry.put("status", .{ .string = statusFromV1(tstatus, treview) });
-
-        var pr = std.json.ObjectMap.init(allocator);
-        try pr.put("url", .null);
-        try pr.put("approved", .{ .bool = std.mem.eql(u8, treview, "approved") });
-        try entry.put("pr", .{ .object = pr });
 
         // Preserve v1 file ownership as a session note
         const files = try queryV1Files(allocator, v1_db, tid);
@@ -1425,7 +1475,9 @@ fn cmdMigrate(allocator: std.mem.Allocator, args: *const Args) !void {
             std.fs.cwd().makePath(dir) catch {};
             const fname = try std.fmt.allocPrint(allocator, "{s}/v1-files.md", .{dir});
             try std.fs.cwd().writeFile(.{ .sub_path = fname, .data = note.items });
-            _ = try stack.appendNote(allocator, .{ .object = root_map }, tid, fname);
+            // Link the note directly on this entry's notes array (root changes not yet set).
+            const notes_arr = entry.getPtr("notes") orelse return error.MigrationFailed;
+            try notes_arr.array.append(.{ .string = fname });
         }
 
         try changes.append(.{ .object = entry });
@@ -1434,7 +1486,7 @@ fn cmdMigrate(allocator: std.mem.Allocator, args: *const Args) !void {
     try root_map.put("changes", .{ .array = changes });
     try stack.save(allocator, .{ .object = root_map });
 
-    try stdout("migrated v1 story {s} → v2 stack (base branch {s}, {d} changes)\n", .{ sid, base_branch, idx });
+    try stdout("migrated v1 story {s} → v3 stack (feature branch {s}, {d} changes)\n", .{ sid, feat, idx });
     try stdout("  next: acts change status c1  |  acts verify --all  |  acts review <id>\n", .{});
 }
 
@@ -1518,15 +1570,19 @@ fn slugify(allocator: std.mem.Allocator, title: []const u8) ![]const u8 {
     return out.toOwnedSlice();
 }
 
-/// Resolve the active change id from the currently checked-out git branch.
-fn resolveCurrentChange(allocator: std.mem.Allocator, v: std.json.Value) ?[]const u8 {
-    const branch = git.currentBranch(allocator) catch null orelse return null;
-    const root = &v.object;
-    const changes = root.get("changes") orelse return null;
+fn activeChangeForBranch(v: std.json.Value, branch: []const u8) ?[]const u8 {
+    const changes = v.object.get("changes") orelse return null;
     if (changes != .array) return null;
+    const feat = stack.branchOf(v) orelse "";
+    if (std.mem.eql(u8, branch, feat)) {
+        return stack.topChange(v);
+    }
     for (changes.array.items) |*c| {
         if (c.* != .object) continue;
         const m = &c.*.object;
+        if (m.get("status")) |st| {
+            if (st == .string and std.mem.eql(u8, st.string, stack.status_merged)) continue;
+        }
         if (m.get("branch")) |b| {
             if (b == .string and std.mem.eql(u8, b.string, branch)) {
                 if (m.get("id")) |idv| {
@@ -1536,6 +1592,12 @@ fn resolveCurrentChange(allocator: std.mem.Allocator, v: std.json.Value) ?[]cons
         }
     }
     return null;
+}
+
+/// Resolve the active change id from the currently checked-out git branch.
+fn resolveCurrentChange(allocator: std.mem.Allocator, v: std.json.Value) ?[]const u8 {
+    const branch = git.currentBranch(allocator) catch null orelse return null;
+    return activeChangeForBranch(v, branch);
 }
 
 // Swallow broken-pipe errors: piping to `grep -q` / `head` closes stdout early,
@@ -1698,4 +1760,103 @@ test "usage text documents diagram and archify install" {
     try std.testing.expect(std.mem.indexOf(u8, usage_text, "--delta") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage_text, "--attach") != null);
     try std.testing.expect(std.mem.indexOf(u8, usage_text, "archify install") != null);
+}
+
+test "activeChangeForBranch picks top non-merged change on the feature branch" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var r = std.json.ObjectMap.init(a);
+    try r.put("version", .{ .integer = 3 });
+    try r.put("branch", .{ .string = "acts/auth/feature" });
+    try r.put("base_branch", .{ .string = "master" });
+    var ch = std.json.Array.init(a);
+    var c1 = std.json.ObjectMap.init(a);
+    try c1.put("id", .{ .string = "c1" });
+    try c1.put("status", .{ .string = "VERIFIED" });
+    try ch.append(.{ .object = c1 });
+    var c2 = std.json.ObjectMap.init(a);
+    try c2.put("id", .{ .string = "c2" });
+    try c2.put("status", .{ .string = "TODO" });
+    try ch.append(.{ .object = c2 });
+    var c3 = std.json.ObjectMap.init(a);
+    try c3.put("id", .{ .string = "c3" });
+    try c3.put("status", .{ .string = "MERGED" });
+    try ch.append(.{ .object = c3 });
+    try r.put("changes", .{ .array = ch });
+    const v: std.json.Value = .{ .object = r };
+
+    try std.testing.expectEqualStrings("c2", activeChangeForBranch(v, "acts/auth/feature").?);
+    try std.testing.expect(activeChangeForBranch(v, "master") == null);
+
+    // Legacy v2: a change with a per-change `branch` resolves when checked out.
+    var rl = std.json.ObjectMap.init(a);
+    try rl.put("version", .{ .integer = 2 });
+    try rl.put("base_branch", .{ .string = "acts/x/base" });
+    var chl = std.json.Array.init(a);
+    var lc = std.json.ObjectMap.init(a);
+    try lc.put("id", .{ .string = "c1" });
+    try lc.put("status", .{ .string = "TODO" });
+    try lc.put("branch", .{ .string = "acts/x/c1" });
+    try chl.append(.{ .object = lc });
+    var lc2 = std.json.ObjectMap.init(a);
+    try lc2.put("id", .{ .string = "c2" });
+    try lc2.put("status", .{ .string = "MERGED" });
+    try lc2.put("branch", .{ .string = "acts/x/c2" });
+    try chl.append(.{ .object = lc2 });
+    try rl.put("changes", .{ .array = chl });
+    const vl: std.json.Value = .{ .object = rl };
+    try std.testing.expectEqualStrings("c1", activeChangeForBranch(vl, "acts/x/c1").?);
+    try std.testing.expect(activeChangeForBranch(vl, "acts/x/other") == null);
+    try std.testing.expect(activeChangeForBranch(vl, "acts/x/c2") == null);
+}
+
+test "buildReviewBody renders stack summary with per-change sections" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var r = std.json.ObjectMap.init(a);
+    try r.put("version", .{ .integer = 3 });
+    try r.put("id", .{ .string = "auth" });
+    try r.put("title", .{ .string = "Add auth" });
+    try r.put("branch", .{ .string = "acts/auth/feature" });
+    try r.put("base_branch", .{ .string = "master" });
+    var ch = std.json.Array.init(a);
+    var c1 = std.json.ObjectMap.init(a);
+    try c1.put("id", .{ .string = "c1" });
+    try c1.put("title", .{ .string = "JWT middleware" });
+    try c1.put("status", .{ .string = "VERIFIED" });
+    try c1.put("risk", .{ .string = "LOW" });
+    var acc = std.json.Array.init(a);
+    try acc.append(.{ .string = "token validated" });
+    try c1.put("acceptance", .{ .array = acc });
+    var ver = std.json.ObjectMap.init(a);
+    var v1 = std.json.ObjectMap.init(a);
+    try v1.put("ok", .{ .bool = true });
+    try v1.put("cmd", .{ .string = "npm test" });
+    try ver.put("test", .{ .object = v1 });
+    try c1.put("verify", .{ .object = ver });
+    try ch.append(.{ .object = c1 });
+    var c2 = std.json.ObjectMap.init(a);
+    try c2.put("id", .{ .string = "c2" });
+    try c2.put("title", .{ .string = "Ops changes" });
+    try c2.put("status", .{ .string = "VERIFIED" });
+    var ver2 = std.json.ObjectMap.init(a);
+    try ver2.put("forced", .{ .bool = true });
+    try ver2.put("force_reason", .{ .string = "lint fails outside change" });
+    try c2.put("verify", .{ .object = ver2 });
+    try ch.append(.{ .object = c2 });
+    try r.put("changes", .{ .array = ch });
+    const v: std.json.Value = .{ .object = r };
+
+    const body = try buildReviewBody(a, v);
+    try std.testing.expect(std.mem.indexOf(u8, body, "Add auth") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "JWT middleware") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "token validated") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "npm test") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "LOW") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "forced verification") != null);
+    try std.testing.expect(std.mem.indexOf(u8, body, "lint fails outside change") != null);
 }

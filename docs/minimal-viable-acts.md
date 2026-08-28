@@ -62,13 +62,13 @@ This project uses ACTS v2 — a git-native coordination protocol for agent-aided
 - Agent MUST run `acts validate` before finishing
 
 ### ACTS Commands
-- `acts stack create <id> [-t <title>]` — Start a new stack (base branch + manifest)
+- `acts stack create <id> [-t <title>]` — Start a new stack (feature branch + manifest)
 - `acts stack status` — Show stack tree + change statuses
-- `acts stack land` — Merge APPROVED changes bottom-up
-- `acts change add <id> -t <title> [--accept <criteria>]` — Add a change on top of the stack
+- `acts stack land` — Merge the whole feature branch once all changes are APPROVED
+- `acts change add <id> -t <title> [--accept <criteria>]` — Add a change (checkpoint on the feature branch)
 - `acts change status [<id>]` — Show change details
 - `acts verify [<id>] [--all]` — Run quality gates; record evidence (GATE for review)
-- `acts review <id>` — Submit stacked PR (requires verify to pass)
+- `acts review <id>` — Submit/update the stack's ONE PR (feature vs base; requires verify to pass)
 - `acts approve <id>` — Mark approved after human PR review
 - `acts rework <id>` — Reopen for rework (clears approval)
 - `acts context [<id>]` — Emit scoped context pack (durable task state)
@@ -110,7 +110,7 @@ Status Values: TODO, IN_PROGRESS, VERIFIED, IN_REVIEW, APPROVED, MERGED
 
 ## What You Can Skip Initially
 
-- ❌ Stacked PRs (run `acts review` later; `acts verify` works locally)
+- ❌ The stack's ONE PR (run `acts review` later; `acts verify` works locally)
 - ❌ OpenCode plugin (the CLI is enough)
 - ❌ Cross-repo memory (`cbm` plugin — add when you have multiple repos)
 
@@ -120,7 +120,7 @@ Status Values: TODO, IN_PROGRESS, VERIFIED, IN_REVIEW, APPROVED, MERGED
 
 Once basics work, add:
 
-1. **Stacked PRs** — `acts review c1` (needs `gh` or git-spice)
+1. **The stack's ONE PR** — `acts review c1` (needs `gh`)
 2. **Context continuity** — `acts note`, `acts checkpoint`, `acts redirect`
 3. **Cross-repo memory** — the `cbm` OpenCode plugin + `references`
 4. **Custom quality gates** — configure `.acts/acts.json`

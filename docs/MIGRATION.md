@@ -1,23 +1,23 @@
 # Migration Guide
 
-## Upgrading from v1.x to v2.0
+## Upgrading from v1.x to v3.0
 
-ACTS v2.0.0 replaced the SQLite-backed coordination model (stories, tasks, gates) with a **git-native** model (stacks, changes). This guide covers migrating an existing v1 project.
+ACTS v3 replaced the SQLite-backed coordination model (stories, tasks, gates) with a **git-native** model (stacks, changes). This guide covers migrating an existing v1 project.
 
 ### What Changed
 
-| v1.x | v2.0 |
+| v1.x | v3 |
 |------|------|
 | `.acts/acts.db` (SQLite) — stories, tasks, gates | `.acts/stack.json` (manifest) — stacks, changes |
-| `acts init <story>` — create story | `acts stack create <id>` — create stack (base branch) |
+| `acts init <story>` — create story | `acts stack create <id>` — create stack (feature branch) |
 | `acts state read` / `acts state write` | `acts stack status` / `acts change status` |
-| `acts task create/update` | `acts change add/status` |
+| `acts task create/update` | `acts change add/status` (a change = a checkpoint, `start_sha`/`end_sha`) |
 | `acts gate add` (preflight, task-review) | `acts verify` (quality gates; evidence is the gate) |
-| `acts review` (terminal HRE) | `acts review` (stacked PR via `gh`/git-spice) |
+| `acts review` (terminal HRE) | `acts review` (the stack's ONE PR via `gh`) |
 | `acts scope check --task T1 --file X` | `acts scope c1 src/x.ts` |
 | `acts override request/approve` | Removed — ownership derived from git diffs |
-| Story worktrees | Stacked branches |
-| `acts story merge --into master` | `acts stack land` |
+| Story worktrees | One feature branch (changes = checkpoints on it) |
+| `acts story merge --into master` | `acts stack land` (merges the whole feature branch) |
 
 ### Migration Steps
 
@@ -27,11 +27,11 @@ ACTS v2.0.0 replaced the SQLite-backed coordination model (stories, tasks, gates
 cp -r .acts/ .acts.backup/
 ```
 
-#### 2. Install the v2 Binary
+#### 2. Install the v3 Binary
 
 ```bash
 cd acts-core
-zig build release -Dversion=2.0.0
+zig build release -Dversion=3.0.0
 sudo cp zig-out/bin/acts /usr/local/bin/
 ```
 
@@ -49,13 +49,13 @@ acts migrate LEGACY-42
 
 `acts migrate` reads `.acts/acts.db` and:
 
-- Creates a v2 stack whose base branch is `acts/<story-id>/base`
-- Maps each v1 task → a v2 change (preserving parent chains and ordering)
+- Creates a v3 stack whose feature branch is `acts/<story-id>/feature` (off `master`)
+- Maps each v1 task → a change: a checkpoint (`start_sha`/`end_sha`) on the feature branch, preserving ordering
 - Maps statuses:
-  - v1 `DONE` + `approved` review → v2 `APPROVED`
-  - v1 `DONE` + no approval → v2 `VERIFIED`
-  - v1 `IN_PROGRESS` / `BLOCKED` → v2 `IN_PROGRESS`
-  - v1 `TODO` → v2 `TODO`
+  - v1 `DONE` + `approved` review → `APPROVED`
+  - v1 `DONE` + no approval → `VERIFIED`
+  - v1 `IN_PROGRESS` / `BLOCKED` → `IN_PROGRESS`
+  - v1 `TODO` → `TODO`
 - Preserves v1 file ownership as a session note (`.acts/changes/<id>/notes/v1-files.md`)
 
 Verify:
@@ -77,7 +77,7 @@ rm .acts/acts.db
 
 #### 5. Update AGENTS.md
 
-Replace the v1 ACTS section with the v2 rules + commands (see [docs/templates/agents-minimal.md](templates/agents-minimal.md)).
+Replace the v1 ACTS section with the v3 rules + commands (see [docs/templates/agents-minimal.md](templates/agents-minimal.md)).
 
 ---
 
@@ -93,6 +93,10 @@ cp acts-core/zig-out/bin/acts /usr/local/bin/acts
 acts validate
 ```
 
+### Legacy v2 manifests still work
+
+Manifests written by v2 (a stack whose `base_branch` is the stack's own branch, each change living on its own `branch`) still parse and validate — `acts validate` accepts both v2 and v3 shapes. You can keep working with a v2 manifest, or migrate it to the single-branch v3 shape (`branch` = the feature branch, `base_branch` = the integration target such as `master`, per-change `start_sha`/`end_sha` checkpoints).
+
 ---
 
 ## FAQ on Migration
@@ -103,8 +107,8 @@ No. You can start fresh with `acts stack create`. Migration is only needed if yo
 
 ### What happens to my v1 decisions and rejected approaches?
 
-They are not imported into v2. The v2 model keeps coordination state minimal (in `.acts/stack.json`) and durable narrative in session notes. If you need the history, keep the `.acts.backup/` copy.
+They are not imported. The git-native model keeps coordination state minimal (in `.acts/stack.json`) and durable narrative in session notes. If you need the history, keep the `.acts.backup/` copy.
 
 ### Why was SQLite removed?
 
-The v1 sidecar database could drift from the repo and be bypassed. In v2, git branches/PRs are the system of record — a stack is just branches, and the manifest is a diffable file committed to the base branch.
+The v1 sidecar database could drift from the repo and be bypassed. In v3, git branches/PRs are the system of record — a stack is one feature branch, and the manifest is a diffable file committed to it.

@@ -1,6 +1,6 @@
 # ACTS v2.0.0
 
-**Agent Collaborative Tracking Standard** — A git-native coordination protocol for agent-aided development. Git is the system of record: a *stack* is a feature (base branch); a *change* is one unit of agent work (a stacked branch + PR). Verification is the gate; context is served on demand.
+**Agent Collaborative Tracking Standard** — A git-native coordination protocol for agent-aided development. Git is the system of record: a *stack* is a feature (a **feature branch** off `master`); a *change* is one unit of agent work (**a checkpoint on that branch**). Verification is the gate; context is served on demand.
 
 [![CI](https://github.com/tommasop/acts-spec/actions/workflows/ci.yml/badge.svg)](https://github.com/tommasop/acts-spec/actions/workflows/ci.yml)
 [![Release](https://github.com/tommasop/acts-spec/actions/workflows/release.yml/badge.svg)](https://github.com/tommasop/acts-spec/releases)
@@ -11,12 +11,12 @@ ACTS is a protocol for coordinating AI-assisted software development across mult
 
 **Key features:**
 
-- **Git-native state** — A *stack* is a feature (a base branch off `main`); a *change* is one unit of agent work (a stacked branch + PR). Progress is the git ref state itself — there is no sidecar database to drift or bypass.
-- **Manifest**: `.acts/stack.json` — the durable coordination board. Human-readable, diffable, committed to the base branch.
+- **Git-native state** — A *stack* is a feature (a feature branch off `master`); a *change* is one unit of agent work (a checkpoint, `start_sha..end_sha`, on that branch). Progress is the git ref state itself — there is no sidecar database to drift or bypass.
+- **Manifest**: `.acts/stack.json` — the durable coordination board. Human-readable, diffable, committed to the stack's feature branch.
 - **Verification is the gate** — `acts verify` runs quality gates (test/lint/typecheck/build), records evidence, and **blocks review until it passes**. No manual preflight ceremony.
 - **Risk-based human-in-the-loop** — `acts risk` classifies each change (LOW/MEDIUM/HIGH/CRITICAL) from diff size + cross-repo blast radius. LOW-risk verified changes **auto-approve and auto-land**; HIGH/CRITICAL require mandatory human review with an escalation checklist. Every approval/rework is audited in the manifest.
-- **PR-native review** — `acts review` pushes the branch and submits a stacked PR via `gh` (or git-spice `gs`), with the body = agent rationale + verification evidence + acceptance criteria + risk tier.
-- **Durable context** — `acts context` emits a scoped context pack (acceptance criteria, parent chain, verification status, notes, changed files); the OpenCode plugin **auto-injects** the active change's pack at session start, with optional CBM blast-radius.
+- **PR-native review** — `acts review` pushes the stack's feature branch and submits/updates the stack's ONE PR via `gh`, with the body = agent rationale + verification evidence + acceptance criteria + risk tier.
+- **Durable context** — `acts context` emits a scoped context pack (acceptance criteria, preceding changes, verification status, notes, changed files); the OpenCode plugin **auto-injects** the active change's pack at session start, with optional CBM blast-radius.
 - **Ownership derived from git** — `acts scope` checks whether a file belongs to a change's diff; no manual ownership tables.
 - **v1 → v2 migration** — `acts migrate` imports an existing v1 SQLite story into a v2 stack.
 - **Cross-repo orchestration** — [codebase-memory-mcp](https://github.com/DeusData/codebase-memory-mcp) is a **native OpenCode MCP server** (no plugin): the binary is installed **once per machine** (`~/.local/bin` / `~/.cache/codebase-memory-mcp`), the fleet shares **one knowledge graph**, and `acts graph bootstrap` idempotently rebuilds it on CI/fresh machines. Native tools (`trace_path`, `query_graph`, …) trace calls across repos (`CROSS_*` edges); `acts graph span` maps a change to its repos, `acts tech-lead` runs pre-flight risk, `acts doc-risk` evaluates a spec against the code.
@@ -89,14 +89,14 @@ A local host-only archive (for testing) is available via `make package VERSION=2
 ### Start a Stack (a feature)
 
 ```bash
-# 1. Start a stack — creates the base branch + manifest
+# 1. Start a stack — creates the feature branch + manifest
 acts stack create auth -t "Add user authentication"
-# → stack auth created on branch acts/auth/base
+# → stack auth created on branch acts/auth/feature
 
-# 2. Add a change (one unit of agent work) on top of the stack
+# 2. Add a change (one unit of agent work — a checkpoint on the feature branch)
 acts change add c1 -t "JWT middleware" --accept "token validated on /api/*
 unit tests"
-# → change c1 added on branch acts/auth/c1-jwt-middleware
+# → change c1 added (checkpoint) on feature branch acts/auth/feature
 ```
 
 ### Work a Change
@@ -105,7 +105,7 @@ unit tests"
 # Load the durable context pack (acceptance criteria, notes, files, verification)
 acts context c1
 
-# ... agent writes code on the change branch ...
+# ... agent writes code; its commits become change c1's checkpoint on the feature branch ...
 
 # Run quality gates — records evidence; gates review
 acts verify c1
@@ -114,17 +114,17 @@ acts verify c1
 #   build: PASS (npm run build) [135ms]
 ```
 
-### Review (stacked PR)
+### Review (the stack's ONE PR)
 
 ```bash
-# Submit a stacked PR (verify must pass; pushes branch, then gh/gs)
+# Submit/update the stack's ONE PR (feature → master); verify must pass
 acts review c1
 # → PR submitted: https://github.com/you/repo/pull/12
 
 # Human reviews on GitHub → approve
 acts approve c1
 
-# Merge approved changes bottom-up
+# Merge the whole feature branch once all changes are approved; closes the PR
 acts stack land
 ```
 
@@ -132,14 +132,16 @@ acts stack land
 
 ```bash
 acts stack status
-# Stack: auth — Add user authentication (base: acts/auth/base)
-#   └ VERIFIED  JWT middleware
+# Stack: auth — Add user authentication
+#   feature: acts/auth/feature (off master)
+#   PR: https://github.com/you/repo/pull/12
+#   [ ] VERIFIED  JWT middleware  (abc1234..def5678)
 
 acts change status c1
 # Change: c1 — JWT middleware
 #   status: VERIFIED
-#   branch: acts/auth/c1-jwt-middleware
-#   verified: yes
+#   range: abc1234..def5678
+#   risk: LOW
 ```
 
 ### Context Continuity
@@ -159,18 +161,18 @@ In OpenCode, the active change's context pack (plus optional CBM blast radius) i
 
 | Command | Description |
 |---------|-------------|
-| `stack create <id> [-t <title>]` | Start a new stack (base branch + manifest) |
+| `stack create <id> [-t <title>]` | Start a new stack (feature branch + manifest) |
 | `stack status [--json]` | Show stack tree + change statuses |
-| `stack land` | Merge APPROVED changes bottom-up |
+| `stack land` | Merge the whole feature branch (all changes APPROVED) |
 
 ### Change Lifecycle
 
 | Command | Description |
 |---------|-------------|
-| `change add <id> -t <title> [--accept <criteria>]` | Add a change (branch) on top of the stack |
+| `change add <id> -t <title> [--accept <criteria>]` | Add a change (checkpoint on the feature branch) |
 | `change status [<id>]` | Show change details |
 | `verify [<id>] [--all] [--force -m <reason> \| --manual <evidence>]` | Run quality gates; record evidence (**gate for review**). `--force` overrides failures outside the change; `--manual` skips gates |
-| `review <id>` | Submit stacked PR (requires verify to pass); auto-lands LOW-risk |
+| `review <id>` | Submit/update the stack's ONE PR (feature vs base; requires verify to pass); auto-lands LOW-risk |
 | `approve <id>` | Mark approved after human PR review |
 | `rework <id>` | Reopen for rework (clears approval) |
 | `risk <id>` | Compute + show the change's risk tier (LOW/MEDIUM/HIGH/CRITICAL) |
@@ -208,31 +210,29 @@ In OpenCode, the active change's context pack (plus optional CBM blast radius) i
 
 ```json
 {
-  "version": 2,
+  "version": 3,
   "id": "auth",
   "title": "Add user authentication",
-  "base_branch": "acts/auth/base",
+  "branch": "acts/auth/feature",
+  "base_branch": "master",
+  "pr": { "url": "https://github.com/you/repo/pull/12" },
   "changes": [
     {
       "id": "c1",
       "title": "JWT middleware",
-      "branch": "acts/auth/c1-jwt-middleware",
-      "parent": null,
-      "status": "VERIFIED",
-      "acceptance": ["token validated on /api/*", "unit tests"],
-      "verify": {
-        "test": { "cmd": "npm test", "ok": true, "exit_code": 0, "duration_ms": 107 },
-        "lint": { "cmd": "npm run lint", "ok": true, "exit_code": 0, "duration_ms": 99 }
-      },
-      "notes": [".acts/changes/c1/notes/1785920187.md"],
-      "checkpoint": "done: middleware core; blocked: caching; next: tests",
-      "pr": { "url": "https://github.com/you/repo/pull/12", "approved": true }
+      "status": "APPROVED",
+      "start_sha": "abc…",
+      "end_sha": "def…",
+      "acceptance": ["token validated on /api/*"],
+      "verify": { "test": { "cmd": "npm test", "ok": true, "exit_code": 0, "duration_ms": 107 } },
+      "checkpoint": "done: middleware core"
     }
   ]
 }
 ```
 
-- **Git branches** — the actual code truth. Each change is a stacked branch; landing merges it into the base branch.
+- **Git branches** — the actual code truth. The stack lives on one feature branch; a change is a commit range on it; landing merges the feature branch into `master`.
+- **Checkpoints** — A change is a checkpoint: `start_sha..end_sha` on the feature branch. The stack has ONE PR.
 - **Session notes** — `.acts/changes/<id>/notes/*.md`, referenced from the manifest.
 - **Cross-repo knowledge graph** — `.acts/cbm/` (gitignored), built by the `cbm` OpenCode plugin.
 
@@ -241,7 +241,7 @@ In OpenCode, the active change's context pack (plus optional CBM blast radius) i
 `acts verify` runs quality gates and records evidence into the manifest. A change **cannot be reviewed** until verification passes:
 
 - `review` refuses with `VerifyRequired` if any configured gate failed.
-- `verify --all` walks the stack bottom-up.
+- `verify --all` walks the stack's checkpoints in order.
 - Quality gates are auto-detected from the repo (`Makefile`, `package.json`, `Cargo.toml`, `go.mod`, `pyproject.toml`, …) or configured explicitly via `.acts/acts.json`:
 
 ```json
@@ -312,7 +312,7 @@ To override manually (e.g. to unblock review when tooling can't run), add to the
 ```
 
 - Every approve/rework (human or `__auto__`) is recorded in the change's `approvals[]` audit log with its tier.
-- **Stale-verification guard**: if the base branch moves after a change was verified, `stack land` requires `acts verify` again.
+- **Stale-verification guard**: if the integration branch (`master`) moves after a change was verified, `stack land` requires `acts verify` again.
 
 ### File Ownership
 
@@ -362,7 +362,7 @@ The OpenCode plugin provides automatic context injection and native tools; a sup
 ```
 acts_context            # Load the context pack for the active change before coding
 acts "verify c1"        # Run quality gates (records evidence)
-acts "review c1"        # Submit the stacked PR
+acts "review c1"        # Submit/update the stack's ONE PR
 acts "stack status"     # Show stack + change statuses
 ```
 
@@ -433,10 +433,10 @@ ACTS v2 replaces the v1 SQLite-backed model (stories/tasks/gates) with a git-nat
 ```bash
 # Requires the `sqlite3` CLI
 acts migrate LEGACY-42
-# → migrated v1 story LEGACY-42 → v2 stack (base branch acts/LEGACY-42/base, 3 changes)
+# → migrated v1 story LEGACY-42 → v3 stack (feature branch acts/LEGACY-42/feature, 3 changes)
 ```
 
-`acts migrate` maps v1 tasks → v2 changes (preserving parent chains, statuses, and file ownership as session notes). See [docs/MIGRATION.md](docs/MIGRATION.md).
+`acts migrate` maps v1 tasks → changes (preserving statuses and file ownership as session notes). See [docs/MIGRATION.md](docs/MIGRATION.md).
 
 ## License
 
@@ -452,6 +452,7 @@ MIT License — See [LICENSE](LICENSE)
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
+| 2.3.0 | 2026-08 | Single-branch stacks: a stack is one feature branch, a change is a checkpoint (commit range), review is ONE PR per stack (feature → base), and stack land merges the whole branch once all changes are approved (then closes the PR). Legacy v2 manifests still validate |
 | 2.2.0 | 2026-08 | **archify diagrams**: new `acts diagram <id>` renders a change's architecture impact as a self-contained interactive HTML via the [archify](https://github.com/tt-a1i/archify) skill (`--delta` = Before/Delta/After, `--attach` = PR comment). `acts review` auto-attaches the delta. `acts archify install` / `acts setup --with-archify` install the renderer; `acts_archify` plugin tool validates/delivers IR. Degrades to a textual delta when the renderer is missing |
 | 2.1.6 | 2026-08 | **CBM without the plugin**: removed `cbm.js` — CBM is now a native OpenCode MCP server (`mcp.codebase-memory-mcp`, wired by `acts setup`). Fleet helpers moved into the Zig binary: `acts graph repos/index --all/bootstrap/span`, plus `acts tech-lead <id>` (pre-flight risk report) and `acts doc-risk <file>` (static + code-intelligence doc risk evaluation). Shared CBM client (`cbm.zig`) used across all commands |
 | 2.1.0 | 2026-08 | **Risk-based HITL + centralized CBM + `acts setup`**: risk tiering (LOW/MEDIUM/HIGH/CRITICAL), auto-land LOW-risk verified changes, escalation checklist, approval audit log, stale-verification guard; CBM binary installed once per machine with one shared graph + `cbm_bootstrap` for CI; plugin auto-injects the active change's context pack with optional CBM blast-radius; per-change cost tracking; `acts setup` bootstraps a project without cloning (global binary install + plugins/skill/commands + opencode.json + AGENTS.md + GitHub workflow) |

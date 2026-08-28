@@ -25,10 +25,12 @@ Let me read the current stack state to understand what's been done.
 
 > acts stack status
 
-Stack: cart — Add shopping cart (base: acts/cart/base)
-  └ MERGED  Cart model
-  ├ MERGED  Cart API endpoints
-  ├ IN_PROGRESS  Cart frontend component
+Stack: cart — Add shopping cart
+  feature: acts/cart/feature (off master)
+  PR: https://github.com/you/ecommerce/pull/21
+  [x] MERGED  Cart model
+  [x] MERGED  Cart API endpoints
+  [ ] IN_PROGRESS  Cart frontend component
 ```
 
 ---
@@ -46,19 +48,19 @@ Let me load the durable context pack for c3.
 ## Stack
 - id: cart
 - title: Add shopping cart
-- base branch: acts/cart/base
+- feature branch: acts/cart/feature
 
 ## Change: c3
 - title: Cart frontend component
 - status: IN_PROGRESS
-- branch: acts/cart/c3-cart-frontend-component
+- checkpoint: on feature branch acts/cart/feature
 
 ## Acceptance Criteria
 - Cart.jsx renders cart items with quantities
 - Add/remove item buttons call existing API
 - Show total price
 
-## Parent Chain
+## Preceding Changes
 - c1: Cart model (MERGED)
 - c2: Cart API endpoints (MERGED)
 
@@ -114,7 +116,7 @@ or open a new change.
 
 ## Step 4: Implement c3
 
-**Agent:** [Implements code on the c3 branch]
+**Agent:** [Implements code on the feature branch — its commits become c3's checkpoint range]
 
 ```
 Creating src/components/Cart.jsx...
@@ -140,16 +142,16 @@ change c3 verified
 
 ---
 
-## Step 6: Review (Stacked PR)
+## Step 6: Review (the stack's ONE PR)
 
 **Agent:**
 ```
 > acts review c3
 
-PR submitted: https://github.com/you/ecommerce/pull/21
+PR for stack cart submitted: https://github.com/you/ecommerce/pull/21
 ```
 
-The PR body includes the context pack: acceptance criteria, verification evidence, and notes. Bob (or a reviewer) reviews on GitHub.
+The PR body includes the context pack: acceptance criteria, verification evidence, and notes. This is the stack's ONE PR (feature → master). Bob (or a reviewer) reviews on GitHub.
 
 ---
 
@@ -181,7 +183,7 @@ manifest OK
 change c3 approved
 
 > acts stack land
-landed c3 onto acts/cart/base
+merged feature branch acts/cart/feature into master; PR closed
 ```
 
 ---
@@ -190,11 +192,11 @@ landed c3 onto acts/cart/base
 
 ### What the agent did right:
 1. ✅ Read stack state first (`acts stack status`)
-2. ✅ Loaded the context pack (`acts context c3`) — acceptance criteria, parent chain, notes
+2. ✅ Loaded the context pack (`acts context c3`) — acceptance criteria, preceding changes, notes
 3. ✅ Checked file ownership (`acts scope c3 <file>`)
 4. ✅ Respected merged-change boundaries (didn't modify c1/c2 files)
 5. ✅ Verified quality gates before review (`acts verify c3`)
-6. ✅ Submitted a stacked PR (`acts review c3`)
+6. ✅ Submitted the stack's ONE PR (`acts review c3`)
 7. ✅ Recorded note + checkpoint (`acts note` / `acts checkpoint`)
 
 ### What could have gone wrong:
@@ -211,7 +213,7 @@ In this session:
 2. ✅ Loaded the c3 context pack (durable task state)
 3. ✅ Checked file ownership via `acts scope`
 4. ✅ Implemented c3 while respecting existing change boundaries
-5. ✅ Verified quality gates → submitted stacked PR
+5. ✅ Verified quality gates → submitted the stack's ONE PR
 6. ✅ Recorded note + checkpoint, ran `acts validate`
 
 **Next:** After PR approval, `acts approve c3` + `acts stack land`.

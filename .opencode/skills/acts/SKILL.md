@@ -9,7 +9,7 @@ metadata:
 
 # ACTS v2 — Git-Native Coordination Protocol
 
-ACTS coordinates human + agent development on a shared repo. **Git is the system of record.** A *stack* is a feature (a base branch); a *change* is one unit of agent work (a stacked branch + PR). Verification is the gate. Context is served on demand.
+ACTS coordinates human + agent development on a shared repo. **Git is the system of record.** A *stack* is a feature (a feature branch off `master`); a *change* is one unit of agent work (a checkpoint on that branch). Verification is the gate. Context is served on demand.
 
 ## Rules
 
@@ -24,13 +24,13 @@ ACTS coordinates human + agent development on a shared repo. **Git is the system
 
 | Command | Purpose |
 |---------|---------|
-| `acts stack create <id> [-t <title>]` | Start a new stack (base branch + manifest). |
+| `acts stack create <id> [-t <title>]` | Start a new stack (feature branch + manifest). |
 | `acts stack status [--json]` | Show stack tree + change statuses. |
-| `acts stack land` | Merge APPROVED changes bottom-up. |
-| `acts change add <id> -t <title> [--accept <criteria>]` | Add a change on top of the stack. |
+| `acts stack land` | Merge the whole feature branch once all changes are APPROVED. |
+| `acts change add <id> -t <title> [--accept <criteria>]` | Add a change (checkpoint on the feature branch). |
 | `acts change status [<id>]` | Show change details. |
 | `acts verify [<id>] [--all]` | Run quality gates; record evidence. **Gate for review.** |
-| `acts review <id>` | Submit stacked PR (requires verify to pass). |
+| `acts review <id>` | Submit/update the stack's ONE PR (feature vs base; requires verify to pass). |
 | `acts approve <id>` | Mark approved after human PR review. |
 | `acts rework <id>` | Reopen for rework (clears approval). |
 | `acts context [<id>]` | Emit scoped context pack (durable task state). |
@@ -47,22 +47,22 @@ ACTS coordinates human + agent development on a shared repo. **Git is the system
 
 1. **Plan** — use spec-kit / superpowers for spec, plan, task breakdown (outside ACTS).
    - If a **Zeplin design link** is given, extract the API contract first: `acts_zeplin <url>` (or `node acts-zeplin-contract.mjs --flow <url>` / `--scenario <url>`). Feed the inferred endpoints + fields into acceptance criteria and use the flow path to sequence changes.
-2. **Start a stack**: `acts stack create <id> -t "<title>"`.
-3. **Add a change**: `acts change add <id> -t "<title>" --accept "<criteria>"`. This checks out the new branch.
-4. **Load context**: `acts context <id>` — read acceptance criteria, parent chain, verification status, notes, and changed files.
+2. **Start a stack**: `acts stack create <id> -t "<title>"`. This creates the feature branch `acts/<id>/feature` off `master`.
+3. **Add a change**: `acts change add <id> -t "<title>" --accept "<criteria>"`. This records a checkpoint on the feature branch (no branch switch).
+4. **Load context**: `acts context <id>` — read acceptance criteria, preceding changes, verification status, notes, and changed files.
 5. **Implement** — write code, staying within scope. Check `acts scope <id> <file>` before touching files outside the diff.
 6. **Verify**: `acts verify <id>`. Fix failures. **Do NOT review until verify passes.**
-7. **Commit** — commit your work with a descriptive message.
-8. **Review**: `acts review <id>` — submits a stacked PR via `gh` (requires verify to pass). Push branch if no `gh`.
+7. **Commit** — commit your work with a descriptive message; your commits become the change's checkpoint range.
+8. **Review**: `acts review <id>` — submits/updates the stack's ONE PR (feature vs base) via `gh` (requires verify to pass). Push the feature branch if no `gh`.
 9. **Iterate** on PR comments, re-verify, `acts rework` then re-review as needed.
-10. **Approve & land**: after the human approves the PR, `acts approve <id>`, then `acts stack land` merges bottom-up.
+10. **Approve & land**: after the human approves the PR, `acts approve <id>`, then `acts stack land` merges the whole feature branch once all changes are approved and closes the PR.
 11. **Close out**: `acts note` + `acts checkpoint` session summary, then `acts validate`.
 
 ## Context continuity
 
 When you start a session on an existing change, **always** run `acts context <id>` first. It surfaces:
 - Acceptance criteria (the contract you must satisfy)
-- Parent chain (what landed/coming before this change)
+- Preceding changes (what landed/coming before this checkpoint)
 - Verification status (what's already proven)
 - Checkpoint (where the previous session stopped)
 - Session notes (previous session summaries)
@@ -75,7 +75,7 @@ If the human redirects scope, use `acts redirect <id> --accept "<new criteria>"`
 Visualize what a change does to the architecture before review:
 
 - `acts diagram <id>` — render an architecture impact map (HTML) of the components the change touches.
-- `acts diagram <id> --delta` — Before/Delta/After comparison (base branch vs change branch).
+- `acts diagram <id> --delta` — Before/Delta/After comparison (master vs feature branch).
 - `acts diagram <id> --attach` — post the delta as a comment on the change's PR (also done automatically by `acts review` when the renderer is installed).
 - `acts archify install` (or `acts setup --with-archify`) — install the renderer. Without it, `acts diagram` degrades to a textual delta summary.
 - For iterative authoring, the `acts_archify` plugin tool validates/delivers a candidate IR JSON (`validate` → fix per diagnostics → `deliver`).

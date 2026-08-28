@@ -1,9 +1,9 @@
 ---
-description: Create a new ACTS v2 change (stacked branch) on top of the current stack
+description: Create a new ACTS v2 change (a checkpoint) on the stack's feature branch
 agent: build
 ---
 
-Create a new ACTS v2 change on top of the current stack.
+Create a new ACTS v2 change — a checkpoint (a commit range) on the stack's feature branch.
 
 Usage: `/acts-change add <id> -t "<title>" --accept "<criteria>"`
 

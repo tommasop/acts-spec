@@ -19,7 +19,7 @@
 
 ## ACTS Integration (v2)
 
-This project uses ACTS v2 — a **git-native coordination protocol** for agent-aided development. Git is the system of record: a *stack* is a feature (base branch), a *change* is one unit of agent work (a stacked branch + PR). Verification is the gate; context is served on demand.
+This project uses ACTS v2 — a **git-native coordination protocol** for agent-aided development. Git is the system of record: a *stack* is a feature (a **feature branch** off `master`), a *change* is one unit of agent work (**a checkpoint on that branch**). Verification is the gate; context is served on demand.
 
 ### Agent Framework
 
@@ -39,13 +39,13 @@ This project uses [superpowers](https://github.com/obra/superpowers) for agent w
 - Agent MUST run `acts validate` before finishing
 
 ### ACTS v2 Commands
-- `acts stack create <id> [-t <title>]` — Start a new stack (base branch + manifest)
+- `acts stack create <id> [-t <title>]` — Start a new stack (feature branch + manifest)
 - `acts stack status [--json]` — Show stack tree + change statuses
-- `acts stack land` — Merge APPROVED changes bottom-up
-- `acts change add <id> -t <title> [--accept <criteria>]` — Add a change on top of the stack
+- `acts stack land` — Merge the whole feature branch once all changes are APPROVED
+- `acts change add <id> -t <title> [--accept <criteria>]` — Add a change (checkpoint on the feature branch)
 - `acts change status [<id>]` — Show change details
 - `acts verify [<id>] [--all]` — Run quality gates; record evidence (GATE for review)
-- `acts review <id>` — Submit stacked PR (requires verify to pass)
+- `acts review <id>` — Submit/update the stack's ONE PR (feature vs base; requires verify to pass)
 - `acts approve <id>` — Mark approved after human PR review
 - `acts rework <id>` — Reopen for rework (clears approval)
 - `acts context [<id>]` — Emit scoped context pack (durable task state)
@@ -61,11 +61,11 @@ This project uses [superpowers](https://github.com/obra/superpowers) for agent w
 Status Values: TODO, IN_PROGRESS, VERIFIED, IN_REVIEW, APPROVED, MERGED
 
 ### Review Workflow
-1. Agent implements on the change branch (loaded via `acts context`).
+1. Agent implements on the stack's feature branch (change loaded via `acts context`); its commits become the change's checkpoint range.
 2. `acts verify <change>` runs quality gates; a change CANNOT be reviewed until verify passes.
-3. `acts review <change>` submits a stacked PR (via `gh`), body = rationale + verification evidence + acceptance criteria.
+3. `acts review <change>` submits/updates the stack's ONE PR (via `gh`), body = rationale + verification evidence + acceptance criteria.
 4. Human reviews on GitHub PR UI → `acts approve <change>`.
-5. `acts stack land` merges approved changes bottom-up.
+5. `acts stack land` merges the whole feature branch once all changes are approved, then closes the PR.
 6. Agent records `acts note` + `acts checkpoint`, then `acts validate`.
 
 ### Design Links (Zeplin)
@@ -75,8 +75,8 @@ When a Zeplin link is given, extract the API contract before planning:
 - Requires `ZEPLIN_ACCESS_TOKEN` (env or opencode.json `mcp.zeplin.environment`).
 
 ### Data Storage
-- Coordination state: `.acts/stack.json` (git-committed manifest, diffable)
-- Code truth: git branches/PRs (no sidecar database)
+- Coordination state: `.acts/stack.json` (git-committed manifest, diffable) — a change = a checkpoint (commit range `start_sha..end_sha`) on the stack's feature branch; one PR per stack
+- Code truth: the stack's feature branch + its ONE PR (no sidecar database)
 - Session notes: `.acts/changes/<id>/notes/*.md`
 - Cross-repo knowledge graph: `.acts/cbm/` (gitignored)
 
