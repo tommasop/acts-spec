@@ -4,7 +4,7 @@ const git = @import("git.zig");
 
 /// Build a scoped context pack for a change. This is the durable task state an
 /// agent consumes at session start: acceptance criteria, verification status,
-/// checkpoint, notes, changed files, commit history, and parent chain.
+/// checkpoint, notes, changed files, commit history, and preceding changes.
 pub fn buildContextPack(
     allocator: std.mem.Allocator,
     v: std.json.Value,
@@ -15,12 +15,13 @@ pub fn buildContextPack(
     const root = &v.object;
     const stack_id = if (root.get("id")) |s| if (s == .string) s.string else "" else "";
     const title = if (root.get("title")) |s| if (s == .string) s.string else "" else "";
+    const feat = stack.branchOf(v) orelse "";
+    const integ = stack.integrationBranch(v);
 
     const m = stack.getChange(v, change_id) orelse return error.ChangeNotFound;
     const change_title = if (m.get("title")) |s| if (s == .string) s.string else "" else "";
     const status = if (m.get("status")) |s| if (s == .string) s.string else "" else "";
-    const branch = if (m.get("branch")) |s| if (s == .string) s.string else "" else "";
-    const base_branch = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
+    const range = stack.changeDiffRange(v, change_id);
 
     try out.writer().print(
         \\# ACTS Context Pack
@@ -28,14 +29,14 @@ pub fn buildContextPack(
         \\## Stack
         \\- id: {s}
         \\- title: {s}
-        \\- base branch: {s}
+        \\- feature branch: {s} (off {s})
         \\
         \\## Change: {s}
         \\- title: {s}
         \\- status: {s}
-        \\- branch: {s}
+        \\- range: {s}..{s}
         \\
-    , .{ stack_id, title, base_branch, change_id, change_title, status, branch });
+    , .{ stack_id, title, feat, integ, change_id, change_title, status, range.from, range.to });
 
     // Acceptance criteria
     try out.appendSlice("\n## Acceptance Criteria\n");
@@ -56,20 +57,24 @@ pub fn buildContextPack(
         try out.appendSlice("- (none recorded)\n");
     }
 
-    // Parent chain (context continuity: what came before this change)
-    try out.appendSlice("\n## Parent Chain\n");
-    var cur: ?[]const u8 = stack.parentOf(v, change_id);
-    if (cur == null) {
-        try out.appendSlice("- (first change in stack)\n");
-    } else {
-        while (cur) |cid| {
-            const pm = stack.getChange(v, cid) orelse break;
-            const pt = if (pm.get("title")) |s| if (s == .string) s.string else "" else "";
-            const ps = if (pm.get("status")) |s| if (s == .string) s.string else "" else "";
-            try out.writer().print("- {s}: {s} ({s})\n", .{ cid, pt, ps });
-            cur = stack.parentOf(v, cid);
+    // Preceding changes (context continuity: what came before this checkpoint)
+    try out.appendSlice("\n## Preceding Changes\n");
+    var prev_found = false;
+    if (root.get("changes")) |changes| {
+        if (changes == .array) {
+            for (changes.array.items) |*c| {
+                if (c.* != .object) continue;
+                const pm = &c.*.object;
+                const pcid = if (pm.get("id")) |x| if (x == .string) x.string else "" else "";
+                if (std.mem.eql(u8, pcid, change_id)) break;
+                const pt = if (pm.get("title")) |x| if (x == .string) x.string else "" else "";
+                const ps = if (pm.get("status")) |x| if (x == .string) x.string else "" else "";
+                try out.writer().print("- {s}: {s} ({s})\n", .{ pcid, pt, ps });
+                prev_found = true;
+            }
         }
     }
+    if (!prev_found) try out.appendSlice("- (first change in stack)\n");
 
     // Verification status
     try out.appendSlice("\n## Verification\n");
@@ -117,9 +122,9 @@ pub fn buildContextPack(
         try out.appendSlice("- (no session notes)\n");
     }
 
-    // Changed files (blast radius from git)
-    if (branch.len > 0) {
-        const files = git.changedFilesSince(allocator, base_branch) catch &[_][]const u8{};
+    // Changed files (blast radius from the checkpoint range)
+    if (range.from.len > 0) {
+        const files = git.changedFilesSince(allocator, range.from) catch &[_][]const u8{};
         try out.appendSlice("\n## Changed Files\n");
         if (files.len == 0) {
             try out.appendSlice("- (no changes yet)\n");
@@ -130,11 +135,11 @@ pub fn buildContextPack(
         }
     }
 
-    // Commit history
-    if (branch.len > 0) {
-        const log = git.gitLogOneline(allocator, base_branch, 10) catch "";
+    // Commit history since the checkpoint start
+    if (range.from.len > 0) {
+        const log = git.gitLogOneline(allocator, range.from, 10) catch "";
         if (log.len > 0) {
-            try out.writer().print("\n## Commits (since {s})\n{s}\n", .{ base_branch, log });
+            try out.writer().print("\n## Commits (since {s})\n{s}\n", .{ range.from, log });
         }
     }
 
