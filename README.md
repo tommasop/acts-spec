@@ -189,8 +189,10 @@ In OpenCode, the active change's context pack (plus optional CBM blast radius) i
 | Command | Description |
 |---------|-------------|
 | `scope <id> <file>` | Check file ownership (derived from diffs) |
+| `diagram <id> [--delta] [--attach]` | Render the change's architecture impact via archify (self-contained HTML; `--delta` = Before/Delta/After; `--attach` = comment on the change's PR) |
+| `archify install` | Install the archify diagram renderer skill (`npx skills add tt-a1i/archify`) |
 | `validate` | Validate manifest + branch consistency |
-| `setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>]` | Install binaries globally + wire a project (plugins, opencode.json, AGENTS.md, GitHub workflow) |
+| `setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>] [--with-archify]` | Install binaries globally + wire a project (plugins, opencode.json, AGENTS.md, GitHub workflow). `--with-archify` also installs the archify diagram renderer skill |
 | `migrate [<story-id>]` | Import a v1 SQLite story into a v2 stack |
 | `version` / `help` | Show version / help |
 
@@ -366,6 +368,8 @@ acts "stack status"     # Show stack + change statuses
 
 **Zeplin design links** — when a design link is given, use `acts_zeplin <url>` (or `node acts-zeplin-contract.mjs --flow <url>` / `--scenario <url>`) to extract the inferred API contract and feed it into the change's acceptance criteria. Requires `ZEPLIN_ACCESS_TOKEN`.
 
+**Architecture diagrams (archify)** — visualize what a change does to the architecture before review. `acts diagram <id>` renders a self-contained HTML impact map (via the [archify](https://github.com/tt-a1i/archify) agent skill); `--delta` produces a Before/Delta/After comparison of the components the change touches. `acts review` auto-attaches the delta as a PR comment. Install the renderer with `acts archify install` (or `acts setup --with-archify`); without it `acts diagram` degrades to a textual delta summary. The `acts_archify` plugin tool validates/delivers candidate IR JSON directly.
+
 See [docs/INTEGRATION.md](docs/INTEGRATION.md) for details.
 
 ### Claude / Cursor / Other Editors (Manual)
@@ -392,6 +396,8 @@ acts-core/
 │   ├── context.zig    # Durable context pack builder
 │   ├── cbm.zig        # CBM client (acts graph / tech-lead / doc-risk)
 │   ├── graph.zig      # acts graph + acts tech-lead commands
+│   ├── archify.zig    # archify IR builder + renderer discovery
+│   ├── diagram.zig    # acts diagram + acts archify install commands
 │   └── docrisk.zig    # acts doc-risk static+code-intel analysis
 └── tests/             # Zig unit tests
 .opencode/
@@ -446,6 +452,7 @@ MIT License — See [LICENSE](LICENSE)
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
+| 2.2.0 | 2026-08 | **archify diagrams**: new `acts diagram <id>` renders a change's architecture impact as a self-contained interactive HTML via the [archify](https://github.com/tt-a1i/archify) skill (`--delta` = Before/Delta/After, `--attach` = PR comment). `acts review` auto-attaches the delta. `acts archify install` / `acts setup --with-archify` install the renderer; `acts_archify` plugin tool validates/delivers IR. Degrades to a textual delta when the renderer is missing |
 | 2.1.6 | 2026-08 | **CBM without the plugin**: removed `cbm.js` — CBM is now a native OpenCode MCP server (`mcp.codebase-memory-mcp`, wired by `acts setup`). Fleet helpers moved into the Zig binary: `acts graph repos/index --all/bootstrap/span`, plus `acts tech-lead <id>` (pre-flight risk report) and `acts doc-risk <file>` (static + code-intelligence doc risk evaluation). Shared CBM client (`cbm.zig`) used across all commands |
 | 2.1.0 | 2026-08 | **Risk-based HITL + centralized CBM + `acts setup`**: risk tiering (LOW/MEDIUM/HIGH/CRITICAL), auto-land LOW-risk verified changes, escalation checklist, approval audit log, stale-verification guard; CBM binary installed once per machine with one shared graph + `cbm_bootstrap` for CI; plugin auto-injects the active change's context pack with optional CBM blast-radius; per-change cost tracking; `acts setup` bootstraps a project without cloning (global binary install + plugins/skill/commands + opencode.json + AGENTS.md + GitHub workflow) |
 | 2.0.0 | 2026-08 | **Git-native redesign**: SQLite replaced by `.acts/stack.json` manifest; story/task/gate model replaced by **stack** (base branch) + **change** (stacked branch + PR); verification gates (`acts verify`) replace preflight/review ceremony; review via standard stacked PRs (gh/git-spice); durable context packs (`acts context`) with notes/checkpoint/redirect; ownership derived from git diffs; OpenCode skill + slash commands; greenfield Zig core |

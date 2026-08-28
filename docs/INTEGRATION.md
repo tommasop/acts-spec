@@ -353,6 +353,53 @@ Zig-side tests (`zig build test`) cover the CBM client (`cbm.zig`), doc-risk ana
 
 ---
 
+## Architecture Diagrams (archify)
+
+Visualize what a change does to the architecture before review. ACTS renders a change's architecture impact as a self-contained interactive HTML via the [archify](https://github.com/tt-a1i/archify) agent skill (typed JSON IR → validated HTML/SVG).
+
+### Commands
+
+| Command | Purpose |
+|---------|---------|
+| `acts diagram <id>` | Render an architecture impact map of the components the change touches |
+| `acts diagram <id> --delta` | Before/Delta/After comparison (base branch vs change branch) |
+| `acts diagram <id> --attach` | Post the delta as a comment on the change's PR |
+| `acts archify install` | Install the archify renderer skill (`npx skills add tt-a1i/archify`) |
+| `acts setup --with-archify` | Wire a project AND install the renderer in one step |
+
+`acts review <id>` auto-attaches the architecture-delta comment (best-effort, non-blocking) once the PR exists and the renderer is installed.
+
+### How it works
+
+1. `acts diagram` reads the change's committed diff (`git diff --name-status base..branch`).
+2. Files are grouped into **components** by top-level directory (or configured reference alias for cross-repo paths), typed by directory heuristics (`backend`, `database`, `security`, …).
+3. `--delta` emits `base.json` (deleted ∪ modified components) and `head.json` (added ∪ modified components), then runs archify `compare architecture base.json head.json delta.html`.
+4. Output lands in `.acts/changes/<id>/archify/*.html` (self-contained, shareable).
+
+### Installation
+
+```bash
+acts archify install          # after setup
+# or
+acts setup . --with-archify   # at setup time
+```
+
+Requires `node` + `npx`. Without the renderer, `acts diagram` degrades to a **textual delta summary** (component | status | kind) and hints at `acts archify install`.
+
+### Plugin tool
+
+`acts_archify` (registered by the OpenCode plugin) runs the renderer directly on a candidate IR JSON:
+
+```json
+{ "action": "validate", "type": "architecture", "input": "candidate.json" }
+{ "action": "deliver",  "type": "architecture", "input": "candidate.json", "output": "out.html" }
+{ "action": "compare",  "type": "architecture", "input": "base.json", "second": "head.json", "output": "delta.html" }
+```
+
+Use it to iterate: `validate` → fix per the machine-readable diagnostics → `deliver`.
+
+---
+
 ## Troubleshooting
 
 ### Binary not found
@@ -394,6 +441,18 @@ Commands with shell metacharacters are run via `sh -c`.
 ```bash
 acts validate   # reports structural problems
 ```
+
+### `acts diagram` prints only a textual summary
+
+The archify renderer is not installed. Install it:
+
+```bash
+acts archify install
+# or
+acts setup . --with-archify
+```
+
+Requires `node`/`npx`. The renderer is looked up in `.opencode/skills/archify`, `.agents/skills/archify`, `~/.config/opencode/skills/archify`, `~/.agents/skills/archify`, and `~/.claude/skills/archify`.
 
 ---
 

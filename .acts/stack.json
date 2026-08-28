@@ -165,6 +165,26 @@
           "note": "auto-land: low risk, verified"
         }
       ]
+    },
+    {
+      "id": "c1",
+      "title": "archify: acts diagram + acts_archify tool + PR attach",
+      "branch": "acts/acts-v2/c4-archify-acts-diagram-acts-archify-tool-pr-attach",
+      "parent": null,
+      "status": "TODO",
+      "acceptance": [
+        "acts diagram renders architecture delta",
+        "acts review attaches PNG+HTML PR comment",
+        "acts setup --with-archify and acts archify install work",
+        "tests pass (zig build test + npm test)"
+      ],
+      "verify": {},
+      "notes": [],
+      "checkpoint": null,
+      "pr": {
+        "url": null,
+        "approved": false
+      }
     }
   ]
 }

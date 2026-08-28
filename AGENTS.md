@@ -53,6 +53,8 @@ This project uses [superpowers](https://github.com/obra/superpowers) for agent w
 - `acts checkpoint <id> -s <summary>` — Record a status checkpoint
 - `acts redirect <id> --accept <criteria>` — Update scope mid-flight without context loss
 - `acts scope <id> <file>` — Check file ownership (derived from diffs)
+- `acts diagram <id> [--delta] [--attach]` — Render the change's architecture impact via archify (HTML; `--attach` comments on the PR)
+- `acts archify install` — Install the archify diagram renderer skill (`npx skills add tt-a1i/archify`)
 - `acts migrate [<story-id>]` — Import a v1 SQLite story into a v2 stack (reads `.acts/acts.db` via `sqlite3`)
 - `acts validate` — Validate manifest + branch consistency
 

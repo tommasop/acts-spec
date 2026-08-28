@@ -1,4 +1,5 @@
 import path from 'path';
+import os from 'os';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { execFileSync, execSync } from 'child_process';
@@ -41,6 +42,22 @@ export const ActsPlugin = async ({ directory }) => {
   };
 
   const actsBinary = findActsBinary();
+
+  // ─── Archify Renderer Discovery ────────────
+  // Locate archify/bin/archify.mjs (the tt-a1i/archify skill) in the standard
+  // skill install locations, mirroring the Zig binary's discovery.
+  const findArchifyRenderer = (cwd) => {
+    const candidates = [
+      path.join(cwd, '.opencode', 'skills', 'archify', 'bin', 'archify.mjs'),
+      path.join(cwd, '.agents', 'skills', 'archify', 'bin', 'archify.mjs'),
+      path.join(cwd, 'archify', 'bin', 'archify.mjs'),
+      path.join(os.homedir(), '.config', 'opencode', 'skills', 'archify', 'bin', 'archify.mjs'),
+      path.join(os.homedir(), '.agents', 'skills', 'archify', 'bin', 'archify.mjs'),
+      path.join(os.homedir(), '.claude', 'skills', 'archify', 'bin', 'archify.mjs'),
+    ];
+    for (const c of candidates) if (fs.existsSync(c)) return c;
+    return null;
+  };
 
   // ─── Safe Command Runner ────────────────────
   const runActs = (args, options = {}) => {
@@ -493,6 +510,57 @@ verify -> review (PR) -> approve -> stack land -> note + checkpoint + validate.
             } catch (error) {
               return {
                 content: [{ type: 'text', text: `acts_zeplin error: ${error.stderr || error.message}\n\nSet ZEPLIN_ACCESS_TOKEN or configure the zeplin MCP server in opencode.json.` }],
+                isError: true
+              };
+            }
+          }
+        },
+
+        // ─── Archify Diagram Tool ─────────────
+        acts_archify: {
+          description: 'Validate or render an archify diagram (architecture/workflow/sequence/dataflow/lifecycle) ' +
+            'from typed JSON IR (tt-a1i/archify). Install the renderer with `acts archify install`. ' +
+            'Use after building a candidate JSON IR to check it, then deliver HTML.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              action: { type: 'string', enum: ['validate', 'deliver', 'compare'], description: 'Operation to run' },
+              type: { type: 'string', enum: ['architecture', 'workflow', 'sequence', 'dataflow', 'lifecycle'], description: 'Diagram type' },
+              input: { type: 'string', description: 'Path to the IR JSON (for compare: the base/before JSON)' },
+              second: { type: 'string', description: 'For compare: the head/after JSON path' },
+              output: { type: 'string', description: 'Output HTML path (deliver/compare)' }
+            },
+            required: ['action', 'type', 'input']
+          },
+          handler: async ({ action, type, input, second, output }) => {
+            const renderer = findArchifyRenderer(directory);
+            if (!renderer) {
+              return {
+                content: [{ type: 'text', text: 'archify renderer not found. Install it with `acts archify install` (or `acts setup --with-archify`).' }],
+                isError: true
+              };
+            }
+            const args = [renderer, action, type, input];
+            if (action === 'compare') {
+              if (!second) {
+                return { content: [{ type: 'text', text: 'acts_archify: compare requires `second` (the head/after JSON path).' }], isError: true };
+              }
+              args.push(second);
+            }
+            if ((action === 'deliver' || action === 'compare') && output) args.push(output);
+            if (action === 'validate' || action === 'deliver') args.push('--quality', 'showcase');
+            args.push('--json');
+            try {
+              const result = execFileSync('node', args, {
+                encoding: 'utf8',
+                cwd: directory,
+                timeout: 120000,
+                stdio: ['pipe', 'pipe', 'pipe']
+              });
+              return { content: [{ type: 'text', text: result }] };
+            } catch (error) {
+              return {
+                content: [{ type: 'text', text: `acts_archify error: ${error.stderr || error.message}\n\nInstall the renderer with: acts archify install` }],
                 isError: true
               };
             }
