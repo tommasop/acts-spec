@@ -351,25 +351,33 @@ fn cmdStackCreate(allocator: std.mem.Allocator, id: []const u8, args: *const Arg
     if (stack.manifestExists()) return error.StackAlreadyExists;
 
     const title = args.flag("--title") orelse args.flag("-t") orelse id;
-    const base_branch = try std.fmt.allocPrint(allocator, "acts/{s}/base", .{id});
+    // The integration branch is whatever we're on now (master/main).
+    const integ = (try git.currentBranch(allocator)) orelse "master";
+    const integ_sha = try git.refSha(allocator, integ);
+    const feat = try std.fmt.allocPrint(allocator, "acts/{s}/feature", .{id});
 
-    // Create the base branch from current HEAD
-    const res = try git.createBranch(allocator, base_branch, "");
+    // Create the feature branch from current HEAD.
+    const res = try git.createBranch(allocator, feat, "");
     if (res.exit_code != 0) {
         try stderr("git: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
         return error.BranchConflict;
     }
 
     var root = std.json.ObjectMap.init(allocator);
-    try root.put("version", .{ .integer = 2 });
+    try root.put("version", .{ .integer = 3 });
     try root.put("id", .{ .string = id });
     try root.put("title", .{ .string = title });
-    try root.put("base_branch", .{ .string = base_branch });
+    try root.put("branch", .{ .string = feat });
+    try root.put("base_branch", .{ .string = integ });
+    if (integ_sha.len > 0) try root.put("base_sha", .{ .string = integ_sha });
+    var pr = std.json.ObjectMap.init(allocator);
+    try pr.put("url", .null);
+    try root.put("pr", .{ .object = pr });
     try root.put("changes", .{ .array = std.json.Array.init(allocator) });
 
     try stack.save(allocator, .{ .object = root });
 
-    try stdout("stack {s} created on branch {s}\n", .{ id, base_branch });
+    try stdout("stack {s} created on feature branch {s} (off {s})\n", .{ id, feat, integ });
     try stdout("  next: acts change add c1 -t \"<title>\" --accept \"<criteria>\"\n", .{});
 }
 
