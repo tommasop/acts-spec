@@ -48,8 +48,10 @@
         },
         "base_sha": "c138179704922df8e43f84ea8a90306af175e2ac"
       },
-      "notes": [],
-      "checkpoint": null,
+      "notes": [
+        ".acts/changes/c1/notes/1787952926.md"
+      ],
+      "checkpoint": "done: global skills landed; release 2.5.0 installed globally",
       "risk": "MEDIUM",
       "approvals": [
         {
