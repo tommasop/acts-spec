@@ -202,7 +202,7 @@ export const ActsPlugin = async ({ directory }) => {
     let files = [];
     try {
       const from = change.start_sha || manifest.base_branch || '';
-      const to = change.end_sha || 'HEAD';
+      const to = change.end_sha || change.branch || 'HEAD';
       files = execFileSync('git', ['diff', '--name-only', from, to], {
         encoding: 'utf8', cwd: directory, stdio: ['pipe', 'pipe', 'pipe']
       }).split('\n').map(s => s.trim()).filter(Boolean);

@@ -7,6 +7,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { execFileSync } from 'child_process';
 import assert from 'assert';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,6 +34,16 @@ fs.writeFileSync(path.join(tmp, '.acts', 'stack.json'), JSON.stringify({
     { id: 'c2', title: 'Login endpoint', status: 'TODO', start_sha: 'def', end_sha: null },
   ],
 }, null, 2));
+
+// Make the fixture a real git repo on the feature branch so the plugin's
+// feature-branch active-change resolution path is exercised.
+const gitIn = (args) => execFileSync('git', args, { cwd: tmp, stdio: ['pipe', 'pipe', 'ignore'] });
+gitIn(['init', '-q']);
+gitIn(['config', 'user.email', 'test@example.com']);
+gitIn(['config', 'user.name', 'test']);
+gitIn(['add', '.']);
+gitIn(['commit', '-qm', 'init']);
+gitIn(['checkout', '-qb', 'acts/auth/feature']);
 
 // Dummy acts binary: echoes args so we can assert what the plugin invokes,
 // and returns valid stack JSON for `stack status --json`. Reports a v2 version
@@ -102,6 +113,7 @@ try {
   assert.ok(sys.includes('Active Change'), 'system context auto-injects the active change pack');
   assert.ok(sys.includes('Feature branch'), 'system context shows the feature branch');
   assert.ok(sys.includes('acts/auth/feature'), 'system context names the feature branch');
+  assert.ok(sys.includes('Active Change: c2'), 'active change is the top non-MERGED change on the feature branch');
   ok('system transform injects v3 stack context + auto-injects active change');
 
   // 6b. acts_context with blast_radius falls back gracefully when no CBM binary
