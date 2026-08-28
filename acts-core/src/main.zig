@@ -885,7 +885,6 @@ fn cmdApprove(allocator: std.mem.Allocator, id: []const u8) !void {
     if (stack.getChange(v, id) == null) return error.ChangeNotFound;
     const tier = stack.getRisk(v, id) orelse "UNKNOWN";
     _ = try stack.appendApproval(allocator, v, id, "approve", "developer", tier, "human PR approval");
-    _ = try stack.setPrApproved(allocator, v, id, true);
     _ = try stack.setChangeString(v, id, "status", stack.status_approved);
     try stack.save(allocator, v);
     try stdout("change {s} approved (risk: {s})\n", .{ id, tier });
@@ -899,7 +898,6 @@ fn cmdRework(allocator: std.mem.Allocator, id: []const u8) !void {
     if (stack.getChange(v, id) == null) return error.ChangeNotFound;
     const tier = stack.getRisk(v, id) orelse "UNKNOWN";
     _ = try stack.appendApproval(allocator, v, id, "rework", "developer", tier, "reopened for rework");
-    _ = try stack.setPrApproved(allocator, v, id, false);
     _ = try stack.setChangeString(v, id, "status", stack.status_in_progress);
     try stack.save(allocator, v);
     try stdout("change {s} reopened for rework\n", .{id});
