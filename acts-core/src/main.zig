@@ -21,13 +21,13 @@ const usage_text =
     \\Usage: acts <command> [args]
     \\
     \\Stack lifecycle:
-    \\  stack create <id> [-t <title>]          Start a new stack (base branch + manifest)
+    \\  stack create <id> [-t <title>]          Start a new stack (feature branch + manifest)
     \\  stack status                            Show stack and change status tree
-    \\  stack land                              Merge approved changes bottom-up
+    \\  stack land                              Merge the whole feature branch (all changes APPROVED)
     \\
     \\Change lifecycle:
     \\  change add <id> -t <title> [--accept <criteria>]
-    \\                                          Add a change (branch) on top of the stack
+    \\                                          Add a change (checkpoint on the feature branch)
     \\  change status [<id>]                    Show change details
     \\  verify [<id>] [--all] [--force -m <reason> | --manual <evidence>]
     \\                                          Run quality gates, record evidence
@@ -35,7 +35,7 @@ const usage_text =
     \\                                            outside this change (refused if a
     \\                                            change-owned file fails)
     \\                                          --manual: skip gates, record evidence
-    \\  review <id>                             Submit stacked PR (requires verify to pass)
+    \\  review <id>                             Submit/update the stack's ONE PR (feature vs base; requires verify to pass)
     \\  approve <id>                            Mark change approved (after human PR review)
     \\  rework <id>                             Reopen for rework (clears approval)
     \\  risk <id>                               Compute + show the change's risk tier

@@ -33,13 +33,13 @@ pub const agents_section =
     \\- Agent MUST run `acts validate` before finishing
     \\
     \\### ACTS v2 Commands
-    \\- `acts stack create <id> [-t <title>]` — Start a new stack (base branch + manifest)
+    \\- `acts stack create <id> [-t <title>]` — Start a new stack (feature branch + manifest)
     \\- `acts stack status [--json]` — Show stack tree + change statuses
-    \\- `acts stack land` — Merge APPROVED changes bottom-up
-    \\- `acts change add <id> -t <title> [--accept <criteria>]` — Add a change on top of the stack
+    \\- `acts stack land` — Merge the whole feature branch once all changes are APPROVED
+    \\- `acts change add <id> -t <title> [--accept <criteria>]` — Add a change (checkpoint on the feature branch)
     \\- `acts change status [<id>]` — Show change details
     \\- `acts verify [<id>] [--all]` — Run quality gates; record evidence (GATE for review)
-    \\- `acts review <id>` — Submit stacked PR (requires verify to pass)
+    \\- `acts review <id>` — Submit/update the stack's ONE PR (feature vs base; requires verify to pass)
     \\- `acts approve <id>` — Mark approved after human PR review
     \\- `acts rework <id>` — Reopen for rework (clears approval)
     \\- `acts risk <id>` — Compute the change's risk tier (LOW/MEDIUM/HIGH/CRITICAL)
