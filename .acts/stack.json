@@ -48,8 +48,10 @@
         },
         "base_sha": "d31cfca759904f04ece0230805b0479e6e45cfe6"
       },
-      "notes": [],
-      "checkpoint": null,
+      "notes": [
+        ".acts/changes/c1/notes/1787951859.md"
+      ],
+      "checkpoint": "done: landed onto master; PR closed automatically; release 2.4.0 installed globally",
       "risk": "MEDIUM",
       "approvals": [
         {
