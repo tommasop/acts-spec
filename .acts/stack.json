@@ -19,9 +19,10 @@
       ],
       "verify": {},
       "notes": [
-        ".acts/changes/c1/notes/1787936777.md"
+        ".acts/changes/c1/notes/1787936777.md",
+        ".acts/changes/c1/notes/1787937329.md"
       ],
-      "checkpoint": "done: design + spec written; next: user reviews spec, then writing-plans",
+      "checkpoint": "done: spec + implementation plan; next: execute plan (subagent-driven or inline)",
       "pr": {
         "url": null,
         "approved": false
