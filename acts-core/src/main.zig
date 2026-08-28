@@ -386,6 +386,16 @@ fn cmdStackStatus(allocator: std.mem.Allocator, args: *const Args) !void {
     defer parsed.deinit();
     const v = parsed.value;
 
+    // --json contract: pure JSON (the plugin JSON.parses this output).
+    if (args.has("--json")) {
+        var buf = std.ArrayList(u8).init(allocator);
+        defer buf.deinit();
+        try std.json.stringify(v, .{ .whitespace = .indent_2 }, buf.writer());
+        try buf.append('\n');
+        try stdout("{s}", .{buf.items});
+        return;
+    }
+
     const root = &v.object;
     const sid = if (root.get("id")) |s| if (s == .string) s.string else "" else "";
     const stitle = if (root.get("title")) |s| if (s == .string) s.string else "" else "";
@@ -409,13 +419,6 @@ fn cmdStackStatus(allocator: std.mem.Allocator, args: *const Args) !void {
         const start = if (stack.changeStartSha(v, cid)) |s| s[0..@min(@as(usize, 7), s.len)] else "-";
         const end = if (stack.changeEndSha(v, cid)) |s| s[0..@min(@as(usize, 7), s.len)] else "…";
         try stdout("  [{s}] {s}  {s}  ({s}..{s})\n", .{ if (std.mem.eql(u8, cstatus, stack.status_merged)) "x" else " ", cstatus, ctitle, start, end });
-    }
-
-    if (args.has("--json")) {
-        var buf = std.ArrayList(u8).init(allocator);
-        defer buf.deinit();
-        try std.json.stringify(v, .{ .whitespace = .indent_2 }, buf.writer());
-        try stdout("{s}\n", .{buf.items});
     }
 }
 
