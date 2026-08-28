@@ -136,7 +136,7 @@ export const ActsPlugin = async ({ directory }) => {
   }
 
   // ─── Active change resolution ───────────────
-  // The active change is the change whose branch matches the current git HEAD.
+  // The active change on the feature branch is the last non-MERGED change.
   const resolveActiveChange = () => {
     const status = refreshStackStatus();
     if (!status || !Array.isArray(status.changes)) return null;
@@ -145,8 +145,13 @@ export const ActsPlugin = async ({ directory }) => {
       branch = execSync('git rev-parse --abbrev-ref HEAD', { encoding: 'utf8', cwd: directory, stdio: ['pipe', 'pipe', 'ignore'] }).trim();
     } catch { /* not a git repo or no HEAD */ }
     if (!branch) {
-      // Fall back to the first non-terminal change (IN_PROGRESS preferred).
-      return status.changes.find(c => !['MERGED', 'APPROVED'].includes(c.status || ''))?.id || null;
+      // Fall back to the last non-terminal change.
+      return [...status.changes].reverse().find(c => !['MERGED', 'APPROVED'].includes(c.status || ''))?.id || null;
+    }
+    if (branch === status.branch) {
+      // On the feature branch → top (last) non-merged change.
+      const open = status.changes.filter(c => (c.status || '') !== 'MERGED');
+      return open.length ? open[open.length - 1].id : null;
     }
     const match = status.changes.find(c => c.branch === branch);
     return match ? match.id : null;
@@ -193,11 +198,12 @@ export const ActsPlugin = async ({ directory }) => {
     const manifest = readStackManifest();
     if (!manifest) return null;
     const change = (manifest.changes || []).find(c => c.id === changeId);
-    if (!change || !change.branch) return null;
-    const base = manifest.base_branch || '';
+    if (!change) return null;
     let files = [];
     try {
-      files = execFileSync('git', ['diff', '--name-only', base, change.branch], {
+      const from = change.start_sha || manifest.base_branch || '';
+      const to = change.end_sha || 'HEAD';
+      files = execFileSync('git', ['diff', '--name-only', from, to], {
         encoding: 'utf8', cwd: directory, stdio: ['pipe', 'pipe', 'pipe']
       }).split('\n').map(s => s.trim()).filter(Boolean);
     } catch { /* fall through */ }
@@ -314,14 +320,15 @@ verify -> review (PR) -> approve -> stack land -> note + checkpoint + validate.
     const lines = [];
     lines.push(`# ACTS v2 Stack Context`);
     lines.push(`- Stack: ${status.id} — ${status.title}`);
-    lines.push(`- Base branch: ${status.base_branch}`);
+    lines.push(`- Feature branch: ${status.branch} (off ${status.base_branch})`);
     lines.push(`- ACTS Mode: ${pluginState.mode}`);
 
     if (Array.isArray(status.changes) && status.changes.length > 0) {
       lines.push(`## Changes`);
       for (const c of status.changes) {
         const st = c.status || 'TODO';
-        lines.push(`- ${c.id}: ${c.title} [${st}] branch=${c.branch}`);
+        const range = c.start_sha ? `${(c.start_sha || '').slice(0, 7)}..${(c.end_sha || '…').slice(0, 7)}` : '';
+        lines.push(`- ${c.id}: ${c.title} [${st}] ${range}`);
       }
     }
 
