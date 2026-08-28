@@ -286,6 +286,18 @@ pub fn diffNameStatus(arena: std.mem.Allocator, from: []const u8, to: []const u8
     return parseNameStatus(arena, res.stdout);
 }
 
+/// Full SHA of HEAD. Empty on failure.
+pub fn headSha(arena: std.mem.Allocator) ![]const u8 {
+    const res = try run(arena, &.{ "git", "rev-parse", "HEAD" }, 512);
+    if (res.exit_code != 0) return "";
+    return std.mem.trim(u8, res.stdout, " \n\r");
+}
+
+/// Merge `branch` into the current branch with --no-ff (used by stack land).
+pub fn mergeNoFf(arena: std.mem.Allocator, branch: []const u8, message: []const u8) !CmdResult {
+    return run(arena, &.{ "git", "merge", "--no-ff", branch, "-m", message }, 8192);
+}
+
 /// Count of added lines between base and HEAD (for risk heuristics).
 pub fn diffAdditions(arena: std.mem.Allocator, base: []const u8) !usize {
     const res = try run(arena, &.{ "git", "diff", "--numstat", base, "HEAD" }, 65536);
