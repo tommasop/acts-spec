@@ -1,5 +1,4 @@
 const std = @import("std");
-const git = @import("git.zig");
 
 /// archify — a bounded client for the archify agent-skill renderer
 /// (tt-a1i/archify). Agents emit typed JSON IR; archify deterministically
@@ -166,11 +165,6 @@ pub fn buildArchitectureIR(
     const v: std.json.Value = .{ .object = root };
     try std.json.stringify(v, .{ .whitespace = .indent_2 }, buf.writer());
     return buf.toOwnedSlice();
-}
-
-/// Whether the archify renderer is installed for this project.
-pub fn available(allocator: std.mem.Allocator, cwd: []const u8) bool {
-    return findRenderer(allocator, cwd) != null;
 }
 
 /// Build argv for the archify `npx skills add` install (used by
