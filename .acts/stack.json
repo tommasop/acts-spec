@@ -12,7 +12,7 @@
     {
       "id": "c1",
       "title": "Single-branch stacks redesign",
-      "status": "APPROVED",
+      "status": "MERGED",
       "start_sha": "de798570e8ed635fe2fcd2050f32d74d1b47a63b",
       "end_sha": "de798570e8ed635fe2fcd2050f32d74d1b47a63b",
       "acceptance": [
