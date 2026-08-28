@@ -379,10 +379,14 @@ Visualize what a change does to the architecture before review. ACTS renders a c
 ### Installation
 
 ```bash
-acts archify install          # after setup
+acts archify install            # after setup (per-project)
+acts archify install --global   # once per machine — every project can render diagrams
 # or
-acts setup . --with-archify   # at setup time
+acts setup . --with-archify             # wire a project
+acts setup . --with-archify --global    # wire a project AND install machine-wide
 ```
+
+`--global` installs the archify skill to `~/.agents/skills/archify` (auto-loaded by opencode and found by `acts diagram` in any project).
 
 Requires `node` + `npx`. Without the renderer, `acts diagram` degrades to a **textual delta summary** (component | status | kind) and hints at `acts archify install`.
 
@@ -407,10 +411,14 @@ Use it to iterate: `validate` → fix per the machine-readable diagnostics → `
 ### Install
 
 ```bash
-acts ponytail install          # after setup
+acts ponytail install          # after setup (per-project)
+acts ponytail install --global # once per machine — every project gets /ponytail* + the review checklist
 # or
-acts setup . --with-ponytail   # at setup time
+acts setup . --with-ponytail           # wire a project
+acts setup . --with-ponytail --global  # wire a project AND install machine-wide
 ```
+
+`--global` installs into opencode's global config (`~/.config/opencode/{command,plugin,agents}`) and registers the frontmatter plugin in the global `opencode.json`, so every project detects ponytail.
 
 Installs `.agents/rules/ponytail.md`, the `/ponytail*` slash commands, and the frontmatter plugin into the project.
 

@@ -326,9 +326,10 @@ fn stackPrUrl(allocator: std.mem.Allocator) ?[]const u8 {
     return allocator.dupe(u8, url) catch null;
 }
 
-/// `acts archify install` — install the archify renderer via `npx skills add`
-/// into the project's `.opencode/skills/`. Idempotent; also usable after setup.
-pub fn cmdArchifyInstall(allocator: std.mem.Allocator, cwd: []const u8) !void {
+/// `acts archify install` — install the archify renderer via `npx skills add`.
+/// Project-local into `.opencode/skills/` by default; with `global` installs
+/// machine-wide (`~/.agents/skills/archify`, auto-loaded by opencode). Idempotent.
+pub fn cmdArchifyInstall(allocator: std.mem.Allocator, cwd: []const u8, global: bool) !void {
     if (archify.findRenderer(allocator, cwd)) |r| {
         print("archify renderer already installed: {s}\n", .{r});
         return;
@@ -342,7 +343,7 @@ pub fn cmdArchifyInstall(allocator: std.mem.Allocator, cwd: []const u8) !void {
         return error.ToolMissing;
     }
     print("installing archify skill via npx (this downloads the renderer)…\n", .{});
-    const res = try git.run(allocator, archify.installCmdArgs(), 1 << 24);
+    const res = try git.run(allocator, archify.installCmdArgs(global), 1 << 24);
     if (res.exit_code != 0) {
         print("npx skills add failed: {s}\n", .{std.mem.trim(u8, res.stderr, " \n\r")});
         return error.InstallFailed;
@@ -350,7 +351,7 @@ pub fn cmdArchifyInstall(allocator: std.mem.Allocator, cwd: []const u8) !void {
     if (archify.findRenderer(allocator, cwd)) |r| {
         print("archify installed: {s}\n", .{r});
     } else {
-        print("note: install ran but no renderer found under `.opencode/skills/archify` — re-run `acts archify install` or install manually.\n", .{});
+        print("note: install ran but no renderer found — re-run `acts archify install` or install manually.\n", .{});
     }
 }
 

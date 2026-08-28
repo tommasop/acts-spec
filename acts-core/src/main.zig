@@ -55,8 +55,8 @@ const usage_text =
     \\  diagram <id> [--delta] [--attach]       Render change architecture impact via
     \\                                          archify (HTML; --delta = Before/Delta/
     \\                                          After, --attach = comment on the PR)
-    \\  archify install                         Install the archify renderer skill
-    \\  ponytail install                        Install the ponytail minimality skill
+    \\  archify install [--global]              Install the archify renderer skill
+    \\  ponytail install [--global]             Install the ponytail minimality skill
     \\  validate                                Validate manifest + branch consistency
     \\  setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>]
     \\                                          Install binaries globally + wire a project
@@ -101,7 +101,7 @@ fn parseArgs(allocator: std.mem.Allocator, argv: []const []const u8) !Args {
     errdefer args.deinit();
 
     const long_value_flags = [_][]const u8{ "--title", "--accept", "--message", "--cost", "--source", "--bin-dir", "--manual", "--reason", "--type", "-t", "-m" };
-    const bool_flags = [_][]const u8{ "--all", "--json", "--github", "--force", "--no-install", "--delta", "--attach", "--with-archify", "--with-ponytail" };
+    const bool_flags = [_][]const u8{ "--all", "--json", "--github", "--force", "--no-install", "--delta", "--attach", "--with-archify", "--with-ponytail", "--global" };
     var i: usize = 0;
     while (i < argv.len) : (i += 1) {
         const a = argv[i];
@@ -304,7 +304,7 @@ fn runCommand(allocator: std.mem.Allocator, cmd: []const u8, args: *const Args) 
         if (args.positional.items.len < 1) return error.MissingSubcommand;
         const cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch ".";
         if (std.mem.eql(u8, args.positional.items[0], "install")) {
-            return diagram.cmdArchifyInstall(allocator, cwd);
+            return diagram.cmdArchifyInstall(allocator, cwd, args.has("--global"));
         }
         return error.UnknownSubcommand;
     }
@@ -312,7 +312,7 @@ fn runCommand(allocator: std.mem.Allocator, cmd: []const u8, args: *const Args) 
         if (args.positional.items.len < 1) return error.MissingSubcommand;
         const cwd = std.fs.cwd().realpathAlloc(allocator, ".") catch ".";
         if (std.mem.eql(u8, args.positional.items[0], "install")) {
-            return cmdPonytailInstall(allocator, cwd);
+            return cmdPonytailInstall(allocator, cwd, args.has("--global"));
         }
         return error.UnknownSubcommand;
     }
@@ -1344,6 +1344,7 @@ fn cmdSetup(allocator: std.mem.Allocator, args: *const Args) !void {
         .bin_dir = args.flag("--bin-dir") orelse "~/.local/bin",
         .with_archify = args.has("--with-archify"),
         .with_ponytail = args.has("--with-ponytail"),
+        .global = args.has("--global"),
     });
     try stdout("setup complete for {s}\n", .{target});
     try stdout("  next: open a session with OpenCode — the acts skill + tools are wired.\n", .{});
@@ -1357,9 +1358,12 @@ fn cmdSetup(allocator: std.mem.Allocator, args: *const Args) !void {
 // ---------------------------------------------------------------------------
 
 /// `acts ponytail install` — fetch ponytail's opencode files (rules + slash
-/// commands + frontmatter plugin) into the project. Idempotent; offline-safe.
-fn cmdPonytailInstall(allocator: std.mem.Allocator, cwd: []const u8) !void {
-    if (ponytail.findPonytail(allocator, cwd)) |p| {
+/// commands + frontmatter plugin). Project-local by default; with `global`
+/// installs into opencode's global config dir (`~/.config/opencode`) so every
+/// project detects it. Idempotent; offline-safe.
+fn cmdPonytailInstall(allocator: std.mem.Allocator, cwd: []const u8, global: bool) !void {
+    const root = if (global) globalConfigRoot(allocator) else cwd;
+    if (ponytail.findPonytailIn(allocator, &.{root})) |p| {
         try stdout("ponytail already installed: {s}\n", .{p});
         return;
     }
@@ -1368,16 +1372,25 @@ fn cmdPonytailInstall(allocator: std.mem.Allocator, cwd: []const u8) !void {
         return error.ToolMissing;
     }
     try stdout("fetching ponytail skill files (rules + commands + plugin)…\n", .{});
-    const written = try ponytail.installFiles(allocator, cwd);
+    const written = if (global)
+        try ponytail.installFilesGlobal(allocator, root)
+    else
+        try ponytail.installFiles(allocator, root);
     if (written == 0) {
         try stderr("note: could not fetch ponytail (offline?) — re-run `acts ponytail install` later.\n", .{});
         return;
     }
-    if (ponytail.findPonytail(allocator, cwd)) |p| {
+    if (ponytail.findPonytailIn(allocator, &.{root})) |p| {
         try stdout("ponytail installed ({d} files; {s})\n", .{ written, p });
     } else {
         try stdout("ponytail install wrote {d} files — re-run `acts ponytail install` if a file is missing.\n", .{written});
     }
+}
+
+/// opencode's global config root (`~/.config/opencode`).
+fn globalConfigRoot(allocator: std.mem.Allocator) []const u8 {
+    const home = std.posix.getenv("HOME") orelse "";
+    return std.fs.path.join(allocator, &.{ home, ".config", "opencode" }) catch (allocator.dupe(u8, home) catch "");
 }
 
 /// Diff stats per change (files + additions) for the ponytail review section.

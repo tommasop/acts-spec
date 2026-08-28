@@ -168,13 +168,35 @@ pub fn buildArchitectureIR(
 }
 
 /// Build argv for the archify `npx skills add` install (used by
-/// `acts archify install` and `acts setup --with-archify`).
-pub fn installCmdArgs() []const []const u8 {
+/// `acts archify install` and `acts setup --with-archify`). With `global` the
+/// skill is installed machine-wide (opencode auto-loads `~/.agents/skills/`),
+/// so every project's `acts diagram` finds the renderer.
+pub fn installCmdArgs(global: bool) []const []const u8 {
+    if (global) {
+        return &[_][]const u8{
+            "npx", "-y", "skills", "add",
+            "tt-a1i/archify", "--skill", "archify",
+            "--agent", "opencode", "--copy", "--yes", "--global",
+        };
+    }
     return &[_][]const u8{
         "npx", "-y", "skills", "add",
         "tt-a1i/archify", "--skill", "archify",
         "--agent", "opencode", "--copy", "--yes",
     };
+}
+
+test "installCmdArgs adds --global only when requested" {
+    const g = installCmdArgs(true);
+    var seen_global = false;
+    for (g) |a| {
+        if (std.mem.eql(u8, a, "--global")) seen_global = true;
+    }
+    try std.testing.expect(seen_global);
+    const l = installCmdArgs(false);
+    for (l) |a| {
+        try std.testing.expect(!std.mem.eql(u8, a, "--global"));
+    }
 }
 
 test "componentId sanitizes keys into stable ids" {

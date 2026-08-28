@@ -1,0 +1,65 @@
+{
+  "version": 3,
+  "id": "global-skills",
+  "title": "Global availability: archify + cbm + ponytail for all projects",
+  "branch": "acts/global-skills/feature",
+  "base_branch": "master",
+  "base_sha": "c138179704922df8e43f84ea8a90306af175e2ac",
+  "pr": {
+    "url": "https://github.com/tommasop/acts-spec/pull/6"
+  },
+  "changes": [
+    {
+      "id": "c1",
+      "title": "global skill install (archify + ponytail; cbm already global)",
+      "status": "APPROVED",
+      "start_sha": "c138179704922df8e43f84ea8a90306af175e2ac",
+      "end_sha": "fecf8c393831419a7446c81063737ad7ef77841b",
+      "acceptance": [
+        "acts archify install --global installs to ~/.config/opencode/skills",
+        "acts ponytail install --global installs commands+plugin+rules globally",
+        "findPonytail detects global installs in any project",
+        "tests pass (zig build test + npm test)"
+      ],
+      "verify": {
+        "test": {
+          "cmd": "npm test && cd acts-core && zig build test",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 312
+        },
+        "lint": {
+          "cmd": "node --check .opencode/plugins/acts.js",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 19
+        },
+        "typecheck": {
+          "cmd": "skipped",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 0
+        },
+        "build": {
+          "cmd": "cd acts-core && zig build",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 23
+        },
+        "base_sha": "c138179704922df8e43f84ea8a90306af175e2ac"
+      },
+      "notes": [],
+      "checkpoint": null,
+      "risk": "MEDIUM",
+      "approvals": [
+        {
+          "action": "approve",
+          "by": "developer",
+          "tier": "MEDIUM",
+          "ts": 1787952908,
+          "note": "human PR approval"
+        }
+      ]
+    }
+  ]
+}

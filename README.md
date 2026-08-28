@@ -47,6 +47,18 @@ curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/master/install.s
 curl -fsSL https://raw.githubusercontent.com/tommasop/acts-spec/master/install.sh | bash -s -- --update --with-cbm
 ```
 
+### Global AI skills (archify, cbm, ponytail)
+
+The three companion skills are **available to every project** when installed once per machine:
+
+| Skill | What it gives every project | Global install |
+|-------|-----------------------------|----------------|
+| **cbm** (codebase-memory-mcp) | Cross-repo knowledge graph, `acts graph` / `tech-lead` / `doc-risk` | Already global — `acts setup` installs the binary + shared graph at `~/.cache/codebase-memory-mcp` |
+| **archify** | `acts diagram` renders architecture HTML; `acts review` attaches the delta | `acts archify install --global` → `~/.agents/skills/archify` (auto-loaded by opencode) |
+| **ponytail** | `/ponytail*` commands + rules; `acts review` appends the minimality checklist | `acts ponytail install --global` → `~/.config/opencode/{command,plugin,agents}` + registered in the global `opencode.json` |
+
+`acts setup --with-archify --with-ponytail --global` wires a project AND installs both skills machine-wide. Per-project installs (no `--global`) still work and override global detection.
+
 Or, after building from source, self-install with the binary itself:
 
 ```bash
@@ -192,10 +204,10 @@ In OpenCode, the active change's context pack (plus optional CBM blast radius) i
 |---------|-------------|
 | `scope <id> <file>` | Check file ownership (derived from diffs) |
 | `diagram <id> [--delta] [--attach]` | Render the change's architecture impact via archify (self-contained HTML; `--delta` = Before/Delta/After; `--attach` = comment on the change's PR) |
-| `archify install` | Install the archify diagram renderer skill (`npx skills add tt-a1i/archify`) |
-| `ponytail install` | Install the ponytail minimality skill (rules + commands + plugin; `acts review` appends its checklist to the PR) |
+| `archify install [--global]` | Install the archify diagram renderer skill (`npx skills add tt-a1i/archify`; `--global` installs machine-wide) |
+| `ponytail install [--global]` | Install the ponytail minimality skill (rules + commands + plugin; `--global` installs machine-wide; `acts review` appends its checklist to the PR) |
 | `validate` | Validate manifest + branch consistency |
-| `setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>] [--with-archify] [--with-ponytail]` | Install binaries globally + wire a project (plugins, opencode.json, AGENTS.md, GitHub workflow). `--with-archify` also installs the archify diagram renderer skill; `--with-ponytail` the ponytail minimality skill |
+| `setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>] [--with-archify] [--with-ponytail] [--global]` | Install binaries globally + wire a project (plugins, opencode.json, AGENTS.md, GitHub workflow). `--with-archify` also installs the archify diagram renderer skill; `--with-ponytail` the ponytail minimality skill; `--global` installs those two machine-wide instead of per-project |
 | `migrate [<story-id>]` | Import a v1 SQLite story into a v2 stack |
 | `version` / `help` | Show version / help |
 
@@ -455,6 +467,7 @@ MIT License — See [LICENSE](LICENSE)
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
+| 2.5.0 | 2026-08 | **Global skills**: `acts archify install --global` / `acts ponytail install --global` (and `acts setup --global`) install archify + ponytail machine-wide (`~/.agents/skills/archify`, `~/.config/opencode/{command,plugin,agents}`) so every project gets them; cbm was already global; global ponytail detection added to `findPonytail` |
 | 2.4.0 | 2026-08 | **ponytail minimality skill**: `acts ponytail install` / `acts setup --with-ponytail` fetch the ponytail rules + `/ponytail*` slash commands + frontmatter plugin; `acts review` appends a ponytail minimality checklist (YAGNI, reuse, shortest diff, no new deps, one runnable check) with per-change diff stats to the stack's PR |
 | 2.3.0 | 2026-08 | Single-branch stacks: a stack is one feature branch, a change is a checkpoint (commit range), review is ONE PR per stack (feature → base), and stack land merges the whole branch once all changes are approved (then closes the PR). Legacy v2 manifests still validate |
 | 2.2.0 | 2026-08 | **archify diagrams**: new `acts diagram <id>` renders a change's architecture impact as a self-contained interactive HTML via the [archify](https://github.com/tt-a1i/archify) skill (`--delta` = Before/Delta/After, `--attach` = PR comment). `acts review` auto-attaches the delta. `acts archify install` / `acts setup --with-archify` install the renderer; `acts_archify` plugin tool validates/delivers IR. Degrades to a textual delta when the renderer is missing |
