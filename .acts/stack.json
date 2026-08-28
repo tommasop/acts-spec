@@ -183,13 +183,13 @@
           "cmd": "npm test && cd acts-core && zig build test",
           "ok": true,
           "exit_code": 0,
-          "duration_ms": 178
+          "duration_ms": 194
         },
         "lint": {
           "cmd": "node --check .opencode/plugins/acts.js",
           "ok": true,
           "exit_code": 0,
-          "duration_ms": 20
+          "duration_ms": 16
         },
         "typecheck": {
           "cmd": "skipped",
