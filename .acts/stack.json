@@ -1,0 +1,29 @@
+{
+  "version": 3,
+  "id": "ponytail",
+  "title": "Integrate ponytail: minimality skill + review pass",
+  "branch": "acts/ponytail/feature",
+  "base_branch": "master",
+  "base_sha": "d31cfca759904f04ece0230805b0479e6e45cfe6",
+  "pr": {
+    "url": null
+  },
+  "changes": [
+    {
+      "id": "c1",
+      "title": "ponytail integration (setup install + review pass + docs)",
+      "status": "TODO",
+      "start_sha": "d31cfca759904f04ece0230805b0479e6e45cfe6",
+      "end_sha": null,
+      "acceptance": [
+        "acts ponytail install fetches rules+commands+plugin",
+        "acts setup --with-ponytail wires it",
+        "acts review appends ponytail minimality checklist (best-effort)",
+        "tests pass (zig build test + npm test)"
+      ],
+      "verify": {},
+      "notes": [],
+      "checkpoint": null
+    }
+  ]
+}

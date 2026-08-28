@@ -193,8 +193,9 @@ In OpenCode, the active change's context pack (plus optional CBM blast radius) i
 | `scope <id> <file>` | Check file ownership (derived from diffs) |
 | `diagram <id> [--delta] [--attach]` | Render the change's architecture impact via archify (self-contained HTML; `--delta` = Before/Delta/After; `--attach` = comment on the change's PR) |
 | `archify install` | Install the archify diagram renderer skill (`npx skills add tt-a1i/archify`) |
+| `ponytail install` | Install the ponytail minimality skill (rules + commands + plugin; `acts review` appends its checklist to the PR) |
 | `validate` | Validate manifest + branch consistency |
-| `setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>] [--with-archify]` | Install binaries globally + wire a project (plugins, opencode.json, AGENTS.md, GitHub workflow). `--with-archify` also installs the archify diagram renderer skill |
+| `setup [dir] [--source <acts-spec>] [--github] [--force] [--bin-dir <dir>] [--with-archify] [--with-ponytail]` | Install binaries globally + wire a project (plugins, opencode.json, AGENTS.md, GitHub workflow). `--with-archify` also installs the archify diagram renderer skill; `--with-ponytail` the ponytail minimality skill |
 | `migrate [<story-id>]` | Import a v1 SQLite story into a v2 stack |
 | `version` / `help` | Show version / help |
 
@@ -370,6 +371,8 @@ acts "stack status"     # Show stack + change statuses
 
 **Architecture diagrams (archify)** — visualize what a change does to the architecture before review. `acts diagram <id>` renders a self-contained HTML impact map (via the [archify](https://github.com/tt-a1i/archify) agent skill); `--delta` produces a Before/Delta/After comparison of the components the change touches. `acts review` auto-attaches the delta as a PR comment. Install the renderer with `acts archify install` (or `acts setup --with-archify`); without it `acts diagram` degrades to a textual delta summary. The `acts_archify` plugin tool validates/delivers candidate IR JSON directly.
 
+**Minimality (ponytail)** — keep each change the smallest thing that works. `acts ponytail install` (or `acts setup --with-ponytail`) fetches the [ponytail](https://github.com/DietrichGebert/ponytail) rules, `/ponytail*` slash commands, and frontmatter plugin; with it installed, `acts review` appends a ponytail minimality checklist (YAGNI, reuse, shortest diff, no new deps, one runnable check) with per-change diff stats to the stack's PR.
+
 See [docs/INTEGRATION.md](docs/INTEGRATION.md) for details.
 
 ### Claude / Cursor / Other Editors (Manual)
@@ -452,6 +455,7 @@ MIT License — See [LICENSE](LICENSE)
 
 | Version | Date | Key Changes |
 |---------|------|-------------|
+| 2.4.0 | 2026-08 | **ponytail minimality skill**: `acts ponytail install` / `acts setup --with-ponytail` fetch the ponytail rules + `/ponytail*` slash commands + frontmatter plugin; `acts review` appends a ponytail minimality checklist (YAGNI, reuse, shortest diff, no new deps, one runnable check) with per-change diff stats to the stack's PR |
 | 2.3.0 | 2026-08 | Single-branch stacks: a stack is one feature branch, a change is a checkpoint (commit range), review is ONE PR per stack (feature → base), and stack land merges the whole branch once all changes are approved (then closes the PR). Legacy v2 manifests still validate |
 | 2.2.0 | 2026-08 | **archify diagrams**: new `acts diagram <id>` renders a change's architecture impact as a self-contained interactive HTML via the [archify](https://github.com/tt-a1i/archify) skill (`--delta` = Before/Delta/After, `--attach` = PR comment). `acts review` auto-attaches the delta. `acts archify install` / `acts setup --with-archify` install the renderer; `acts_archify` plugin tool validates/delivers IR. Degrades to a textual delta when the renderer is missing |
 | 2.1.6 | 2026-08 | **CBM without the plugin**: removed `cbm.js` — CBM is now a native OpenCode MCP server (`mcp.codebase-memory-mcp`, wired by `acts setup`). Fleet helpers moved into the Zig binary: `acts graph repos/index --all/bootstrap/span`, plus `acts tech-lead <id>` (pre-flight risk report) and `acts doc-risk <file>` (static + code-intelligence doc risk evaluation). Shared CBM client (`cbm.zig`) used across all commands |

@@ -40,6 +40,7 @@ ACTS coordinates human + agent development on a shared repo. **Git is the system
 | `acts scope <id> <file>` | Check file ownership (derived from diffs). |
 | `acts diagram <id> [--delta] [--attach]` | Render the change's architecture impact via archify (HTML). `--delta` = Before/Delta/After; `--attach` = comment on the change's PR. |
 | `acts archify install` | Install the archify diagram renderer skill (`npx skills add tt-a1i/archify`). |
+| `acts ponytail install` | Install the ponytail minimality skill (rules + commands + plugin; `acts review` then appends its checklist to the PR). |
 | `acts migrate [<story-id>]` | Import a v1 SQLite story into a v2 stack. |
 | `acts validate` | Validate manifest + branch consistency. |
 
@@ -79,3 +80,11 @@ Visualize what a change does to the architecture before review:
 - `acts diagram <id> --attach` — post the delta as a comment on the change's PR (also done automatically by `acts review` when the renderer is installed).
 - `acts archify install` (or `acts setup --with-archify`) — install the renderer. Without it, `acts diagram` degrades to a textual delta summary.
 - For iterative authoring, the `acts_archify` plugin tool validates/delivers a candidate IR JSON (`validate` → fix per diagnostics → `deliver`).
+
+## Minimality (ponytail)
+
+Keep each change the smallest thing that works — complementary to ACTS checkpoint scoping:
+
+- `acts ponytail install` (or `acts setup --with-ponytail`) installs the ponytail rules, `/ponytail*` slash commands, and frontmatter plugin.
+- With ponytail installed, `acts review` appends a **minimality checklist** (YAGNI, reuse, shortest diff, no new deps, one runnable check) with per-change diff stats to the stack's PR.
+- Use `/ponytail-review` during review to audit a change's diff for over-engineering.

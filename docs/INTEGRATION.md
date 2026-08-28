@@ -400,6 +400,34 @@ Use it to iterate: `validate` → fix per the machine-readable diagnostics → `
 
 ---
 
+## Minimality (ponytail)
+
+[ponytail](https://github.com/DietrichGebert/ponytail) is a "lazy senior dev" skill — a YAGNI/simplicity ladder that keeps agent code minimal. It is complementary to ACTS checkpoint scoping: the smallest diff keeps a change's range tight and its risk tier low.
+
+### Install
+
+```bash
+acts ponytail install          # after setup
+# or
+acts setup . --with-ponytail   # at setup time
+```
+
+Installs `.agents/rules/ponytail.md`, the `/ponytail*` slash commands, and the frontmatter plugin into the project.
+
+### Review integration
+
+When ponytail is installed, `acts review` appends a **minimality checklist** to the stack's one PR:
+
+- YAGNI — does this need to be built at all?
+- Reuses existing helpers / stdlib / installed deps
+- Shortest working diff; deletions over additions; fewest files
+- No new dependency unless unavoidable
+- Non-trivial logic leaves ONE runnable check behind
+
+plus a per-change diff-stat table. Use `/ponytail-review` (installed by the skill) to audit a change's diff during review.
+
+---
+
 ## Troubleshooting
 
 ### Binary not found

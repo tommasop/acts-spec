@@ -13,6 +13,16 @@ dist/
 .opencode/skills/archify/
 .acts/changes/*/archify/
 
+# ponytail skill (installed via `acts ponytail install`, not committed)
+.agents/rules/ponytail.md
+.opencode/command/ponytail.md
+.opencode/command/ponytail-audit.md
+.opencode/command/ponytail-debt.md
+.opencode/command/ponytail-gain.md
+.opencode/command/ponytail-help.md
+.opencode/command/ponytail-review.md
+.opencode/plugins/ponytail-frontmatter.cjs
+
 # Zig build artifacts
 acts-core/.zig-cache/
 acts-core/zig-out/
