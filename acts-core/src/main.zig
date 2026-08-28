@@ -447,6 +447,8 @@ fn cmdStackLand(allocator: std.mem.Allocator) !void {
             if (c.* != .object) continue;
             const cid = if (c.object.get("id")) |x| if (x == .string) x.string else "" else "";
             if (cid.len == 0) continue;
+            const cst = if (c.object.get("status")) |x| if (x == .string) x.string else "" else "";
+            if (std.mem.eql(u8, cst, stack.status_merged)) continue;
             const verified_sha = stack.getVerifyBaseSha(v, cid);
             if (verified_sha != null and cur_integ_sha.len > 0 and !std.mem.eql(u8, verified_sha.?, cur_integ_sha)) {
                 try stdout("skip {s}: integration branch moved since verify — run `acts verify {s}` before landing\n", .{ cid, cid });
@@ -475,6 +477,7 @@ fn cmdStackLand(allocator: std.mem.Allocator) !void {
     }
     const mr = try git.mergeNoFf(allocator, feat, try std.fmt.allocPrint(allocator, "acts: land {s}", .{sid}));
     if (mr.exit_code != 0) {
+        _ = try git.run(allocator, &.{ "git", "merge", "--abort" }, 8192);
         try stderr("merge failed: {s}\n", .{std.mem.trim(u8, mr.stderr, " \n\r")});
         return error.MergeFailed;
     }
@@ -784,7 +787,9 @@ fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
 
     const feat = stack.branchOf(v) orelse return error.ManifestInvalid;
     const integ = stack.integrationBranch(v);
+    if (integ.len == 0) return error.ManifestInvalid;
     const stitle = if (v.object.get("title")) |s| if (s == .string) s.string else "" else "";
+    const pr_title = if (stitle.len == 0) feat else stitle;
 
     // Every non-merged change must be verified before the PR is reviewable.
     if (!stack.allVerified(v)) return error.VerifyRequired;
@@ -841,7 +846,7 @@ fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
                 "gh", "pr", "create",
                 "--head", feat,
                 "--base", integ,
-                "--title", stitle,
+                "--title", pr_title,
                 "--body", body,
             }, 16384);
             if (create.exit_code == 0) {
@@ -858,19 +863,22 @@ fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
         try stdout("note: `gh` not found — branch pushed to {s}; create the PR manually.\n", .{remote});
     }
 
-    // The whole stack is under review via the one PR.
-    if (changes == .array) {
-        for (changes.array.items) |*c| {
-            if (c.* != .object) continue;
-            const st = c.object.get("status") orelse continue;
-            const s = if (st == .string) st.string else "";
-            if (!std.mem.eql(u8, s, stack.status_merged)) {
+    // The whole stack is under review via the one PR. Only transition to
+    // IN_REVIEW when a PR was actually submitted, and never downgrade MERGED
+    // or APPROVED changes (which would clear human approval).
+    if (pr_submitted) {
+        if (changes == .array) {
+            for (changes.array.items) |*c| {
+                if (c.* != .object) continue;
+                const st = c.object.get("status") orelse continue;
+                const s = if (st == .string) st.string else "";
+                if (std.mem.eql(u8, s, stack.status_merged) or std.mem.eql(u8, s, stack.status_approved)) continue;
                 const cid = if (c.object.get("id")) |x| if (x == .string) x.string else "" else "";
                 _ = try stack.setChangeString(v, cid, "status", stack.status_in_review);
             }
         }
     }
-    try stack.save(allocator, v);
+    try stack.save(allocator, parsed.value);
 
     if (pr_url) |url| {
         try stdout("PR submitted: {s}\n", .{url});
