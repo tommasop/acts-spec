@@ -1240,24 +1240,21 @@ fn cmdScope(allocator: std.mem.Allocator, id: []const u8, file: []const u8) !voi
     defer parsed.deinit();
     const v = parsed.value;
 
-    const m = stack.getChange(v, id) orelse return error.ChangeNotFound;
-    const branch = if (m.get("branch")) |b| if (b == .string) b.string else "" else "";
-    const root = &v.object;
-    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
-
-    const cur_branch = (try git.currentBranch(allocator)) orelse "";
-    if (!std.mem.eql(u8, cur_branch, branch)) {
-        _ = try git.checkoutBranch(allocator, branch);
+    if (stack.getChange(v, id) == null) return error.ChangeNotFound;
+    const range = stack.changeDiffRange(v, id);
+    if (range.from.len == 0) {
+        try stdout("{{\n  \"file_path\": \"{s}\",\n  \"action\": \"warn\",\n  \"message\": \"No commit range recorded for change {s} — verify it belongs to this task before editing\"\n}}\n", .{ file, id });
+        return;
     }
 
-    const files = try git.changedFilesSince(allocator, base);
+    const files = try git.changedFilesSince(allocator, range.from);
     for (files) |f| {
         if (std.mem.eql(u8, f, file)) {
-            try stdout("{{\n  \"file_path\": \"{s}\",\n  \"action\": \"ok\",\n  \"message\": \"File is part of change {s}'s diff\"\n}}\n", .{ file, id });
+            try stdout("{{\n  \"file_path\": \"{s}\",\n  \"action\": \"ok\",\n  \"message\": \"File is part of change {s}'s range\"\n}}\n", .{ file, id });
             return;
         }
     }
-    try stdout("{{\n  \"file_path\": \"{s}\",\n  \"action\": \"warn\",\n  \"message\": \"File not in change {s}'s diff — verify it belongs to this task before editing\"\n}}\n", .{ file, id });
+    try stdout("{{\n  \"file_path\": \"{s}\",\n  \"action\": \"warn\",\n  \"message\": \"File not in change {s}'s range — verify it belongs to this task before editing\"\n}}\n", .{ file, id });
 }
 
 fn cmdValidate(allocator: std.mem.Allocator) !void {
@@ -1280,19 +1277,26 @@ fn cmdValidate(allocator: std.mem.Allocator) !void {
 
     // Branch consistency
     const root = &v.object;
-    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
-    if (!git.branchExists(allocator, base)) {
-        try stdout("warn: base branch {s} does not exist\n", .{base});
+    const feat = stack.branchOf(v) orelse "";
+    if (feat.len > 0 and !git.branchExists(allocator, feat)) {
+        try stdout("warn: feature branch {s} does not exist\n", .{feat});
     }
     if (root.get("changes")) |changes| {
         if (changes == .array) {
             for (changes.array.items) |*c| {
                 if (c.* != .object) continue;
                 const m = &c.*.object;
-                const cid = if (m.get("id")) |s| if (s == .string) s.string else "" else "";
-                const cbranch = if (m.get("branch")) |s| if (s == .string) s.string else "" else "";
-                if (!git.branchExists(allocator, cbranch)) {
-                    try stdout("warn: change {s} branch {s} does not exist\n", .{ cid, cbranch });
+                const cid = if (m.get("id")) |x| if (x == .string) x.string else "" else "";
+                if (stack.changeStartSha(v, cid)) |sha| {
+                    const rs = git.refSha(allocator, sha) catch "";
+                    if (rs.len == 0) {
+                        try stdout("warn: change {s} start_sha {s} is not a valid git ref\n", .{ cid, sha });
+                    }
+                }
+                if (stack.legacyChangeBranch(v, cid)) |cb| {
+                    if (!git.branchExists(allocator, cb)) {
+                        try stdout("warn: change {s} branch {s} does not exist\n", .{ cid, cb });
+                    }
                 }
             }
         }
