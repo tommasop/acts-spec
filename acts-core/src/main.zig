@@ -581,7 +581,7 @@ fn cmdVerify(allocator: std.mem.Allocator, id_arg: ?[]const u8, all: bool, force
     defer parsed.deinit();
     const v = parsed.value;
     const root = &v.object;
-    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
+    const base = stack.integrationBranch(v);
 
     if (all) {
         var total_pass = true;
@@ -612,11 +612,15 @@ fn cmdVerify(allocator: std.mem.Allocator, id_arg: ?[]const u8, all: bool, force
 }
 
 fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []const u8, base: []const u8, force: bool, manual: ?[]const u8, reason: ?[]const u8) !bool {
-    // Check out the change branch so tests run against its code
+    // v3: there is no per-change branch — gates run on the feature branch.
+    // Legacy v2 changes still get their branch checked out.
     const m = stack.getChange(v, id).?;
-    const branch = if (m.get("branch")) |b| if (b == .string) b.string else "" else "";
-    if (branch.len > 0) {
-        _ = try git.checkoutBranch(allocator, branch);
+    _ = m; // assertion: change exists
+    if (stack.legacyChangeBranch(v, id)) |cbranch| {
+        const cur = (try git.currentBranch(allocator)) orelse "";
+        if (!std.mem.eql(u8, cur, cbranch)) {
+            _ = try git.checkoutBranch(allocator, cbranch);
+        }
     }
 
     var all_ok = true;
@@ -625,9 +629,12 @@ fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []con
     if (manual) |evidence| {
         _ = try stack.setVerifyForced(allocator, v, id, "manual", evidence);
         _ = try stack.setChangeString(v, id, "status", stack.status_verified);
+        const head = try git.headSha(allocator);
+        if (head.len > 0) _ = try stack.setChangeEndSha(allocator, v, id, head);
         const base_sha = try git.refSha(allocator, base);
         if (base_sha.len > 0) _ = try stack.setVerifyBaseSha(allocator, v, id, base_sha);
-        const tier = try computeRiskForChange(allocator, v, id, branch, base);
+        const range = stack.changeDiffRange(v, id);
+        const tier = try computeRiskForChange(allocator, v, id, range.from, range.to);
         _ = try stack.setRisk(v, id, tier.label());
         try stdout("  manual verification recorded: {s}\n", .{evidence});
         try stdout("  risk: {s}\n", .{tier.label()});
@@ -663,13 +670,11 @@ fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []con
         }
     }
 
+    const range = stack.changeDiffRange(v, id);
+
     // ── Force override with enforcement ──
-    // Force is only allowed when the failures are attributable to files OUTSIDE
-    // this change's diff (e.g. pre-existing files owned by another change), or
-    // when no file can be attributed (broken/wrong gate tooling). If a failing
-    // file is owned by THIS change, force is refused — the code must be fixed.
     if (!all_ok and force) {
-        const fail_owned = try failingFilesOwnedByChange(allocator, base, branch, failing_outputs.items);
+        const fail_owned = try failingFilesOwnedByChange(allocator, range.from, range.to, failing_outputs.items);
         if (fail_owned) {
             try stderr("force denied: the failing gate output includes files this change owns.\n", .{});
             try stderr("  Fix the code or correct the gate config (`.acts/acts.json` quality_gate), then re-verify.\n", .{});
@@ -684,13 +689,16 @@ fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []con
         _ = try stack.setChangeString(v, id, "status", new_status);
     }
 
-    // Record the base SHA verification ran against, so stale verification can
-    // be detected later, and (re)compute the risk tier from the final diff.
+    // Freeze the change's scope at the verified HEAD.
+    const head = try git.headSha(allocator);
+    if (head.len > 0) _ = try stack.setChangeEndSha(allocator, v, id, head);
+
+    // Record the integration SHA verification ran against (stale-verify guard).
     const base_sha = try git.refSha(allocator, base);
     if (base_sha.len > 0) {
         _ = try stack.setVerifyBaseSha(allocator, v, id, base_sha);
     }
-    const tier = try computeRiskForChange(allocator, v, id, branch, base);
+    const tier = try computeRiskForChange(allocator, v, id, range.from, range.to);
     _ = try stack.setRisk(v, id, tier.label());
     try stdout("  risk: {s}\n", .{tier.label()});
 
@@ -698,9 +706,9 @@ fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []con
 }
 
 /// Return true if any failing file (path:line tokens in the gate output) is
-/// owned by this change (i.e. present in `git diff --name-only base branch`).
-fn failingFilesOwnedByChange(allocator: std.mem.Allocator, base: []const u8, branch: []const u8, output: []const u8) !bool {
-    const owned = try git.diffNameOnly(allocator, base, branch);
+/// owned by this change (i.e. present in `git diff --name-only from to`).
+fn failingFilesOwnedByChange(allocator: std.mem.Allocator, from: []const u8, to: []const u8, output: []const u8) !bool {
+    const owned = if (from.len > 0) try git.diffNameOnly(allocator, from, to) else &[_][]const u8{};
     return failingFilesOwnedByChangeWithOwned(output, owned);
 }
 
