@@ -12,7 +12,7 @@
     {
       "id": "c1",
       "title": "ponytail integration (setup install + review pass + docs)",
-      "status": "APPROVED",
+      "status": "MERGED",
       "start_sha": "d31cfca759904f04ece0230805b0479e6e45cfe6",
       "end_sha": "eb807ebc2b7f667d7845b5f54bace7e986366c8a",
       "acceptance": [
