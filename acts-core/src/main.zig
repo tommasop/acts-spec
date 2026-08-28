@@ -596,6 +596,32 @@ fn cmdVerify(allocator: std.mem.Allocator, id_arg: ?[]const u8, all: bool, force
             const ok = try runVerifyForChange(allocator, v, cid, base, force, manual, reason);
             if (!ok) total_pass = false;
         }
+
+        // Bound each change's scope to the next checkpoint so earlier changes
+        // don't inherit later work after a bulk verify.
+        if (changes == .array) {
+            for (changes.array.items, 0..) |*c, i| {
+                if (c.* != .object) continue;
+                const cid = if (c.object.get("id")) |x| if (x == .string) x.string else "" else "";
+                if (cid.len == 0) continue;
+                const cstatus = if (c.object.get("status")) |x| if (x == .string) x.string else "" else "";
+                if (std.mem.eql(u8, cstatus, stack.status_merged)) continue;
+                const next_start = blk: {
+                    if (i + 1 < changes.array.items.len) {
+                        const nx = changes.array.items[i + 1];
+                        if (nx == .object) {
+                            if (nx.object.get("start_sha")) |s| {
+                                if (s == .string and s.string.len > 0) break :blk s.string;
+                            }
+                        }
+                    }
+                    break :blk "";
+                };
+                if (next_start.len > 0) {
+                    _ = try stack.setChangeEndSha(allocator, v, cid, next_start);
+                }
+            }
+        }
         try stack.save(allocator, v);
         if (!total_pass) return error.VerifyFailed;
         try stdout("all changes verified\n", .{});
@@ -670,6 +696,11 @@ fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []con
         }
     }
 
+    // Freeze the change's scope at the verified HEAD first, so the risk range
+    // and force attribution match the persisted scope (never a stale end_sha).
+    const head = try git.headSha(allocator);
+    if (head.len > 0) _ = try stack.setChangeEndSha(allocator, v, id, head);
+
     const range = stack.changeDiffRange(v, id);
 
     // ── Force override with enforcement ──
@@ -688,10 +719,6 @@ fn runVerifyForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []con
         const new_status: []const u8 = if (all_ok) stack.status_verified else stack.status_in_progress;
         _ = try stack.setChangeString(v, id, "status", new_status);
     }
-
-    // Freeze the change's scope at the verified HEAD.
-    const head = try git.headSha(allocator);
-    if (head.len > 0) _ = try stack.setChangeEndSha(allocator, v, id, head);
 
     // Record the integration SHA verification ran against (stale-verify guard).
     const base_sha = try git.refSha(allocator, base);
