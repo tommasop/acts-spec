@@ -97,13 +97,13 @@ Rules:
 - Agent MUST run acts validate before finishing.
 
 Commands:
-- acts stack create <id> [-t <title>]     Start a new stack
+- acts stack create <id> [-t <title>]     Start a new stack (feature branch)
 - acts stack status [--json]              Show stack tree + change statuses
-- acts stack land                         Merge APPROVED changes bottom-up
-- acts change add <id> -t <title> [--accept <criteria>]  Add a change
+- acts stack land                         Merge the whole feature branch once all changes are APPROVED
+- acts change add <id> -t <title> [--accept <criteria>]  Add a change (checkpoint on the feature branch)
 - acts change status [<id>]               Show change details
 - acts verify [<id>] [--all]              Run quality gates; record evidence (GATE for review)
-- acts review <id>                        Submit stacked PR (requires verify to pass)
+- acts review <id>                        Submit/update the stack's ONE PR (feature vs base; requires verify to pass)
 - acts approve <id>                       Mark approved after human PR review
 - acts rework <id>                        Reopen for rework
 - acts context [<id>]                     Emit scoped context pack
@@ -131,23 +131,23 @@ User: "Work on change c1 — implement the JWT middleware"
 
 Agent:
 1. calls acts_context (or acts "context c1")
-   → Receives the context pack (acceptance criteria, parent chain, notes, files)
+   → Receives the context pack (acceptance criteria, preceding changes, notes, files)
 
 2. calls acts "scope c1 src/auth.ts"
    → { "action": "ok" }
 
-3. [Implements code on the change branch...]
+3. [Implements code; its commits become c1's checkpoint on the feature branch...]
 
 4. calls acts "verify c1"
    → Records quality-gate evidence; status → VERIFIED
 
 5. calls acts "review c1"
-   → Pushes branch, submits stacked PR; status → IN_REVIEW
+   → Submits/updates the stack's ONE PR (feature → master); status → IN_REVIEW
 
 6. Human reviews on GitHub → calls acts "approve c1"
 
 7. calls acts "stack land"
-   → Merges approved changes bottom-up
+   → Merges the whole feature branch once all changes are approved; closes the PR
 ```
 
 ### ACTS Mode Control
@@ -237,10 +237,10 @@ Agent:
    → Verification evidence recorded
 
 5. Bash: acts review c1
-   → Submits stacked PR
+   → Submits/updates the stack's ONE PR (feature → master)
 
 6. Bash: acts approve c1   (after human review)
-7. Bash: acts stack land
+7. Bash: acts stack land   (merges the whole feature branch once all changes are approved)
 ```
 
 ### ACTS Mode (Manual)
@@ -362,7 +362,7 @@ Visualize what a change does to the architecture before review. ACTS renders a c
 | Command | Purpose |
 |---------|---------|
 | `acts diagram <id>` | Render an architecture impact map of the components the change touches |
-| `acts diagram <id> --delta` | Before/Delta/After comparison (base branch vs change branch) |
+| `acts diagram <id> --delta` | Before/Delta/After comparison (master vs feature branch) |
 | `acts diagram <id> --attach` | Post the delta as a comment on the change's PR |
 | `acts archify install` | Install the archify renderer skill (`npx skills add tt-a1i/archify`) |
 | `acts setup --with-archify` | Wire a project AND install the renderer in one step |
@@ -458,6 +458,6 @@ Requires `node`/`npx`. The renderer is looked up in `.opencode/skills/archify`, 
 
 ## Migration from Legacy ACTS
 
-See [docs/MIGRATION.md](MIGRATION.md) for importing a v1 SQLite story into a v2 stack.
+See [docs/MIGRATION.md](MIGRATION.md) for importing a v1 SQLite story into a v3 stack.
 
 Track progress: [GitHub Issues](https://github.com/tommasop/acts-spec/issues)

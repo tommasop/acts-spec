@@ -11,7 +11,7 @@ ACTS defines:
 1. **State** — A git-native manifest (`.acts/stack.json`) tracking stacks and changes
 2. **Verification** — `acts verify` runs quality gates and blocks review until they pass (the gate is evidence, not ceremony)
 3. **Context** — Scoped context packs (`acts context`) that survive session boundaries
-4. **Review** — Changes map to stacked PRs; review happens on GitHub/GitLab
+4. **Review** — Changes map to ONE PR per stack (feature → base); review happens on GitHub/GitLab
 5. **Ownership** — Which change owns which files, derived from git diffs
 
 Your AI agent reads the manifest and follows the rules. Git is the source of truth — there is no sidecar database to drift or bypass.
@@ -88,6 +88,10 @@ acts diagram c1 --delta --attach        # also comment it on the change's PR
 
 `acts review` attaches the delta automatically when the renderer is installed. Without it, `acts diagram` prints a textual delta summary (component | status | kind).
 
+## One feature = one branch = one PR?
+
+Yes. A stack is one feature branch (`acts/<id>/feature`) off `master`. Each change is a checkpoint (a commit range) on that branch. `acts review` opens ONE PR for the whole stack (feature → `master`); `acts stack land` merges the whole branch once all changes are APPROVED and closes the PR. No nested branches, no PR chains.
+
 ## What's the minimum to try ACTS?
 
 Two commands:
@@ -97,7 +101,7 @@ acts stack create demo -t "My First Stack"
 acts change add c1 -t "First change" --accept "works"
 ```
 
-Then work on the change branch, `acts verify c1`, `acts review c1`.
+Then work on the feature branch (c1 is a checkpoint), `acts verify c1`, `acts review c1`.
 
 See [Minimal Viable ACTS](minimal-viable-acts.md).
 
@@ -121,7 +125,7 @@ You install a single binary (`acts`). Everything else lives in your repo:
 
 ## Can I use ACTS without git?
 
-No. ACTS is git-native. State lives in git branches and a manifest committed to the base branch.
+No. ACTS is git-native. State lives in git branches and a manifest committed to the stack's feature branch.
 
 ## What happens if my agent doesn't follow ACTS?
 
@@ -134,10 +138,10 @@ Your AI agent tool may have costs.
 
 ## What are stacks and changes?
 
-- A **stack** is a feature: a base branch off `main` plus an ordered list of changes.
-- A **change** is one unit of agent work: a stacked branch + a PR.
+- A **stack** is a feature: a feature branch (`acts/<id>/feature`) off `master` plus an ordered list of changes.
+- A **change** is one unit of agent work: a checkpoint (a commit range) on the feature branch.
 
-The stack is like a PR stack (Graphite/git-spice style) — each change is a small, reviewable slice that CI and humans can verify independently.
+The stack is one PR — each change is a small, reviewable slice that CI and humans can verify independently.
 
 ## How does verification work?
 
