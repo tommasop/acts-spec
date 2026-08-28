@@ -389,24 +389,28 @@ fn cmdStackStatus(allocator: std.mem.Allocator, args: *const Args) !void {
     const root = &v.object;
     const sid = if (root.get("id")) |s| if (s == .string) s.string else "" else "";
     const stitle = if (root.get("title")) |s| if (s == .string) s.string else "" else "";
-    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
+    const feat = stack.branchOf(v) orelse "";
+    const integ = stack.integrationBranch(v);
 
-    try stdout("Stack: {s} — {s} (base: {s})\n", .{ sid, stitle, base });
+    try stdout("Stack: {s} — {s}\n", .{ sid, stitle });
+    try stdout("  feature: {s} (off {s})\n", .{ feat, integ });
+    if (stack.stackPrUrl(v)) |url| {
+        try stdout("  PR: {s}\n", .{url});
+    }
 
     const changes = root.get("changes") orelse return;
     if (changes != .array) return;
-    var idx: usize = 0;
     for (changes.array.items) |*c| {
         if (c.* != .object) continue;
         const m = &c.*.object;
         const cid = if (m.get("id")) |s| if (s == .string) s.string else "" else "";
         const ctitle = if (m.get("title")) |s| if (s == .string) s.string else "" else "";
         const cstatus = if (m.get("status")) |s| if (s == .string) s.string else "" else "";
-        const marker: []const u8 = if (cstatus.len == 0) "  " else cstatus;
-        try stdout("  {s} {s}  {s}\n", .{ if (idx == 0) "└" else "├", marker, ctitle });
-        _ = cid;
-        idx += 1;
+        const start = if (stack.changeStartSha(v, cid)) |s| s[0..@min(@as(usize, 7), s.len)] else "-";
+        const end = if (stack.changeEndSha(v, cid)) |s| s[0..@min(@as(usize, 7), s.len)] else "…";
+        try stdout("  [{s}] {s}  {s}  ({s}..{s})\n", .{ if (std.mem.eql(u8, cstatus, stack.status_merged)) "x" else " ", cstatus, ctitle, start, end });
     }
+
     if (args.has("--json")) {
         var buf = std.ArrayList(u8).init(allocator);
         defer buf.deinit();
@@ -554,37 +558,20 @@ fn cmdChangeStatus(allocator: std.mem.Allocator, id_arg: ?[]const u8) !void {
 
     const ctitle = if (m.get("title")) |s| if (s == .string) s.string else "" else "";
     const cstatus = if (m.get("status")) |s| if (s == .string) s.string else "" else "";
-    const cbranch = if (m.get("branch")) |s| if (s == .string) s.string else "" else "";
-    const parent = stack.parentOf(v, id) orelse "";
+    const start = stack.changeStartSha(v, id) orelse "-";
+    const end = stack.changeEndSha(v, id) orelse "HEAD";
+    const tier = stack.getRisk(v, id) orelse "UNKNOWN";
 
     try stdout("Change: {s} — {s}\n", .{ id, ctitle });
     try stdout("  status: {s}\n", .{cstatus});
-    try stdout("  branch: {s}\n", .{cbranch});
-    try stdout("  parent: {s}\n", .{parent});
-    if (m.get("acceptance")) |acc| {
-        if (acc == .array) {
-            try stdout("  acceptance:\n", .{});
-            for (acc.array.items) |item| {
-                if (item == .string) try stdout("    - {s}\n", .{item.string});
-            }
-        }
-    }
-    if (stack.getCheckpoint(v, id)) |cp| {
-        try stdout("  checkpoint: {s}\n", .{cp});
-    }
-    const verified = stack.verifyAllPassed(v, id);
-    try stdout("  verified: {s}\n", .{if (verified) "yes" else "no"});
-    if (stack.getRisk(v, id)) |tier| {
-        try stdout("  risk: {s}\n", .{tier});
-    }
-    if (stack.getCost(v, id)) |cost| {
-        try stdout("  cost: ${d:.2}\n", .{cost});
-    }
-    if (m.get("pr")) |pr| {
-        if (pr == .object) {
-            if (pr.object.get("url")) |u| {
-                if (u == .string and u.string.len > 0) try stdout("  pr: {s}\n", .{u.string});
-            }
+    try stdout("  range: {s}..{s}\n", .{ start, end });
+    try stdout("  risk: {s}\n", .{tier});
+
+    const range = stack.changeDiffRange(v, id);
+    if (range.from.len > 0 and range.to.len > 0) {
+        const stat = try git.run(allocator, &.{ "git", "diff", "--stat", range.from, range.to }, 8192);
+        if (stat.exit_code == 0 and std.mem.trim(u8, stat.stdout, " \n\r").len > 0) {
+            try stdout("{s}\n", .{stat.stdout});
         }
     }
 }
