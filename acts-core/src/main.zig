@@ -762,7 +762,8 @@ fn cmdReview(allocator: std.mem.Allocator, id: []const u8) !void {
     }
 
     // Compute risk tier early (used for the PR body and auto-land).
-    const tier = try computeRiskForChange(allocator, v, id, branch, base);
+    const range = stack.changeDiffRange(v, id);
+    const tier = try computeRiskForChange(allocator, v, id, range.from, range.to);
     _ = try stack.setRisk(v, id, tier.label());
 
     // Push the branch (and, when using git-spice, the rest of the stack).
@@ -920,42 +921,55 @@ fn cmdRework(allocator: std.mem.Allocator, id: []const u8) !void {
     try stdout("change {s} reopened for rework\n", .{id});
 }
 
+/// Count of added lines between two refs (range version of git.diffAdditions).
+fn diffAdditionsRange(allocator: std.mem.Allocator, from: []const u8, to: []const u8) !usize {
+    const res = try git.run(allocator, &.{ "git", "diff", "--numstat", from, to }, 65536);
+    if (res.exit_code != 0) return 0;
+    var total: usize = 0;
+    var it = std.mem.tokenizeAny(u8, res.stdout, "\n");
+    while (it.next()) |line| {
+        var f = std.mem.tokenizeAny(u8, line, "\t ");
+        if (f.next()) |add| {
+            if (std.mem.eql(u8, add, "-")) continue;
+            total += std.fmt.parseInt(usize, add, 10) catch 0;
+        }
+    }
+    return total;
+}
+
 fn cmdRisk(allocator: std.mem.Allocator, id: []const u8) !void {
     var parsed = try stack.load(allocator);
     defer parsed.deinit();
     const v = parsed.value;
-    const root = &v.object;
 
-    const m = stack.getChange(v, id) orelse return error.ChangeNotFound;
-    const branch = if (m.get("branch")) |b| if (b == .string) b.string else "" else "";
-    const base = if (root.get("base_branch")) |s| if (s == .string) s.string else "" else "";
+    if (stack.getChange(v, id) == null) return error.ChangeNotFound;
+    const range = stack.changeDiffRange(v, id);
 
-    const tier = try computeRiskForChange(allocator, v, id, branch, base);
+    const tier = try computeRiskForChange(allocator, v, id, range.from, range.to);
     _ = try stack.setRisk(v, id, tier.label());
     try stack.save(allocator, v);
 
-    const cross = try crossRepoEdgeCount(allocator, branch, base);
-    const files = try git.changedFilesSince(allocator, base);
-    const adds = try git.diffAdditions(allocator, base);
+    const files = if (range.from.len > 0) try git.diffNameOnly(allocator, range.from, range.to) else &[_][]const u8{};
+    const adds = try diffAdditionsRange(allocator, range.from, range.to);
     const verified = stack.verifyAllPassed(v, id);
 
     try stdout("risk for {s}: {s}\n", .{ id, tier.label() });
-    try stdout("  files: {d} | additions: {d} | cross-repo edges: {d} | verified: {s}\n", .{ files.len, adds, cross, if (verified) "yes" else "no" });
+    try stdout("  files: {d} | additions: {d} | verified: {s}\n", .{ files.len, adds, if (verified) "yes" else "no" });
     if (tier == .LOW) {
-        try stdout("  → LOW: eligible for auto-land after verification\n", .{});
+        try stdout("  → LOW: eligible for auto-land after all changes approved\n", .{});
     } else if (tier == .HIGH or tier == .CRITICAL) {
         try stdout("  → {s}: requires human review + escalation checklist\n", .{tier.label()});
     }
 }
 
-/// Compute the risk tier for a change from git-derived heuristics plus any
-/// cross-repo data the CBM plugin has stored on the change under `risk`
+/// Compute the risk tier for a change from the change's checkpoint range plus
+/// any cross-repo data the CBM plugin has stored on the change under `risk`
 /// (object with `cross_repo_edges`, `high_complexity_symbols`).
-fn computeRiskForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []const u8, branch: []const u8, base: []const u8) !risk.RiskTier {
-    const files = try git.changedFilesSince(allocator, base);
-    const adds = try git.diffAdditions(allocator, base);
+fn computeRiskForChange(allocator: std.mem.Allocator, v: std.json.Value, id: []const u8, from: []const u8, to: []const u8) !risk.RiskTier {
+    const files = if (from.len > 0) try git.diffNameOnly(allocator, from, to) else &[_][]const u8{};
+    const adds = if (from.len > 0) try diffAdditionsRange(allocator, from, to) else 0;
 
-    var cross: usize = try crossRepoEdgeCount(allocator, branch, base);
+    var cross: usize = try crossRepoEdgeCount(allocator, from, to);
     var high_complexity: usize = 0;
     const meta = stack.getRiskMeta(v, id);
     if (meta.cross_repo_edges > 0) cross = meta.cross_repo_edges;
@@ -1032,13 +1046,12 @@ fn buildReviewBody(allocator: std.mem.Allocator, v: std.json.Value) ![]const u8 
     return buf.toOwnedSlice();
 }
 
-/// Number of files in this change that live in a repo outside the current one.
-/// For a single-repo stack this is always 0; the CBM plugin can supply the
-/// true cross-repo edge count via `acts risk <id> --cross-repo <n>`. We detect
-/// files under a sibling repo layout heuristically (paths under ../*).
-fn crossRepoEdgeCount(allocator: std.mem.Allocator, branch: []const u8, base: []const u8) !usize {
-    _ = branch;
-    const files = try git.changedFilesSince(allocator, base);
+/// Number of files in this change's range that live in a repo outside the
+/// current one. For a single-repo stack this is always 0; the CBM plugin can
+/// supply the true cross-repo edge count via `acts risk <id> --cross-repo <n>`.
+/// We detect files under a sibling repo layout heuristically (paths under ../*).
+fn crossRepoEdgeCount(allocator: std.mem.Allocator, from: []const u8, to: []const u8) !usize {
+    const files = if (from.len > 0) try git.diffNameOnly(allocator, from, to) else &[_][]const u8{};
     var count: usize = 0;
     for (files) |f| {
         if (std.mem.startsWith(u8, f, "../")) count += 1;
