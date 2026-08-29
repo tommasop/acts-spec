@@ -12,7 +12,7 @@
     {
       "id": "c1",
       "title": "acts setup --global (skill+commands+config machine-wide)",
-      "status": "APPROVED",
+      "status": "MERGED",
       "start_sha": "a1782e929c44ba324c65016d37b5494bb8a17724",
       "end_sha": "cfc882420892e21f402c86846c31c29b6c17ed31",
       "acceptance": [
