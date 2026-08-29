@@ -1346,8 +1346,13 @@ fn cmdSetup(allocator: std.mem.Allocator, args: *const Args) !void {
         .with_ponytail = args.has("--with-ponytail"),
         .global = args.has("--global"),
     });
-    try stdout("setup complete for {s}\n", .{target});
-    try stdout("  next: open a session with OpenCode — the acts skill + tools are wired.\n", .{});
+    if (args.has("--global")) {
+        try stdout("setup complete — ACTS wired into the global opencode config (all projects).\n", .{});
+        try stdout("  next: open a session with OpenCode — the acts skill + tools are wired everywhere.\n", .{});
+    } else {
+        try stdout("setup complete for {s}\n", .{target});
+        try stdout("  next: open a session with OpenCode — the acts skill + tools are wired.\n", .{});
+    }
     if (!args.has("--no-install")) {
         try stdout("  next: `acts stack create <id>` to start your first stack.\n", .{});
     }
