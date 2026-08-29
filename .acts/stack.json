@@ -47,8 +47,10 @@
         },
         "base_sha": "a1782e929c44ba324c65016d37b5494bb8a17724"
       },
-      "notes": [],
-      "checkpoint": null,
+      "notes": [
+        ".acts/changes/c1/notes/1787983747.md"
+      ],
+      "checkpoint": "done: setup-global landed; release 2.6.0 installed globally",
       "risk": "LOW",
       "approvals": [
         {

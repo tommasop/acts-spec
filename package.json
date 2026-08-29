@@ -1,6 +1,6 @@
 {
   "name": "acts-spec",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "description": "ACTS (Agent Collaborative Tracking Standard) OpenCode plugin",
   "type": "module",
   "main": ".opencode/plugins/acts.js",
