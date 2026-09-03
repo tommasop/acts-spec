@@ -12,7 +12,7 @@
     {
       "id": "c1",
       "title": "ponytail runtime plugin: per-run AGENTS.md project-rules injection",
-      "status": "APPROVED",
+      "status": "MERGED",
       "start_sha": "c291120b3409df5908ad4b06956bf9e3d3a677c1",
       "end_sha": "50fa416298206701c3380d48484fecffcb7a2575",
       "acceptance": [
