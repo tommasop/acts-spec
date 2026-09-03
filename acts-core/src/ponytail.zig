@@ -17,11 +17,15 @@ const RAW_BASE = "https://raw.githubusercontent.com/DietrichGebert/ponytail/main
 /// append a binding precedence directive + path. Installed from the binary
 /// (embedded), not fetched upstream, so it works offline and survives upgrades.
 const ponytail_rules_plugin = @embedFile("ponytail-rules.js");
+const usage_rules_command = @embedFile("usage-rules.md");
 
 const RULES_PLUGIN_REL_PROJECT = ".opencode/plugins/ponytail-rules.js";
 const RULES_PLUGIN_REL_GLOBAL = "plugin/ponytail-rules.js";
 const RULES_PLUGIN_ENTRY_PROJECT = "./.opencode/plugins/ponytail-rules.js";
 const RULES_PLUGIN_ENTRY_GLOBAL = "./plugin/ponytail-rules.js";
+
+/// `/usage-rules` slash command (all-or-some magic usage rules), acts-spec-owned.
+const USAGE_RULES_REL_PROJECT = ".opencode/commands/usage-rules.md";
 
 /// Files (relative to a project root) that make up ponytail's opencode support.
 pub const ponytail_files = [_][]const u8{
@@ -86,10 +90,14 @@ pub fn findPonytail(allocator: std.mem.Allocator, cwd: []const u8) ?[]const u8 {
 /// `.opencode/plugins/X.cjs` → `plugin/X.cjs`, `.agents/X` → `agents/X`.
 pub fn globalDestFor(allocator: std.mem.Allocator, config_root: []const u8, rel: []const u8) ?[]const u8 {
     const command_prefix = ".opencode/command/";
+    const commands_prefix = ".opencode/commands/";
     const plugin_prefix = ".opencode/plugins/";
     const agents_prefix = ".agents/";
     if (std.mem.startsWith(u8, rel, command_prefix)) {
         return tryJoin(allocator, &.{ config_root, "command", rel[command_prefix.len..] });
+    }
+    if (std.mem.startsWith(u8, rel, commands_prefix)) {
+        return tryJoin(allocator, &.{ config_root, "commands", rel[commands_prefix.len..] });
     }
     if (std.mem.startsWith(u8, rel, plugin_prefix)) {
         return tryJoin(allocator, &.{ config_root, "plugin", rel[plugin_prefix.len..] });
@@ -119,6 +127,7 @@ pub fn installFiles(allocator: std.mem.Allocator, dest_root: []const u8) !usize 
         if (res.exit_code == 0 and fileExists(dest)) written += 1;
     }
     if (try installRulesPlugin(allocator, dest_root, false)) written += 1;
+    if (try installUsageRulesCommand(allocator, dest_root, false)) written += 1;
     return written;
 }
 
@@ -135,6 +144,7 @@ pub fn installFilesGlobal(allocator: std.mem.Allocator, config_root: []const u8)
         if (res.exit_code == 0 and fileExists(dest)) written += 1;
     }
     if (try installRulesPlugin(allocator, config_root, true)) written += 1;
+    if (try installUsageRulesCommand(allocator, config_root, true)) written += 1;
     if (written > 0) try registerGlobalPlugin(allocator, config_root);
     return written;
 }
@@ -151,6 +161,19 @@ pub fn installRulesPlugin(allocator: std.mem.Allocator, root: []const u8, global
     if (std.fs.path.dirname(dest)) |d| mkdirp(d);
     std.fs.cwd().writeFile(.{ .sub_path = dest, .data = ponytail_rules_plugin }) catch return false;
     try ensurePluginEntry(allocator, root, entry);
+    return true;
+}
+
+/// Write the acts-spec `/usage-rules` command (all-or-some magic usage rules)
+/// to its install location: `.opencode/commands/` (project) or `commands/`
+/// (global, via `globalDestFor`). Embedded in the binary; idempotent.
+pub fn installUsageRulesCommand(allocator: std.mem.Allocator, root: []const u8, global: bool) !bool {
+    const dest = if (global)
+        globalDestFor(allocator, root, USAGE_RULES_REL_PROJECT) orelse return false
+    else
+        tryJoin(allocator, &.{ root, USAGE_RULES_REL_PROJECT }) orelse return false;
+    if (std.fs.path.dirname(dest)) |d| mkdirp(d);
+    std.fs.cwd().writeFile(.{ .sub_path = dest, .data = usage_rules_command }) catch return false;
     return true;
 }
 
@@ -320,6 +343,8 @@ test "globalDestFor maps ponytail files to opencode global dirs" {
     try std.testing.expectEqualStrings("/home/test/.config/opencode/plugin/ponytail-frontmatter.cjs", plugin);
     const rules = globalDestFor(a, root, ".agents/rules/ponytail.md").?;
     try std.testing.expectEqualStrings("/home/test/.config/opencode/agents/rules/ponytail.md", rules);
+    const usage = globalDestFor(a, root, ".opencode/commands/usage-rules.md").?;
+    try std.testing.expectEqualStrings("/home/test/.config/opencode/commands/usage-rules.md", usage);
     try std.testing.expect(globalDestFor(a, root, ".opencode/skills/other/SKILL.md") == null);
 }
 
@@ -384,6 +409,26 @@ test "installRulesPlugin writes the runtime plugin and registers it (project + g
     try std.testing.expect(std.mem.eql(u8, glob_body, ponytail_rules_plugin));
     const glob_cfg = try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ root, "opencode.json" }), 1 << 16);
     try std.testing.expect(std.mem.indexOf(u8, glob_cfg, "./plugin/ponytail-rules.js") != null);
+}
+
+test "installUsageRulesCommand writes the command (project + global)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmp.dir.realpathAlloc(a, ".");
+
+    try std.testing.expect(try installUsageRulesCommand(a, root, false));
+    const proj_cmd = try std.fs.path.join(a, &.{ root, ".opencode", "commands", "usage-rules.md" });
+    const proj_body = try std.fs.cwd().readFileAlloc(a, proj_cmd, 1 << 16);
+    try std.testing.expect(std.mem.indexOf(u8, proj_body, "/usage-rules") != null);
+
+    try std.testing.expect(try installUsageRulesCommand(a, root, true));
+    const glob_cmd = try std.fs.path.join(a, &.{ root, "commands", "usage-rules.md" });
+    const glob_body = try std.fs.cwd().readFileAlloc(a, glob_cmd, 1 << 16);
+    try std.testing.expect(std.mem.eql(u8, glob_body, usage_rules_command));
 }
 
 test "probe_rels detects the runtime plugin" {

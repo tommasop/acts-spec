@@ -1,65 +1,26 @@
 {
   "version": 3,
-  "id": "ponytail-agents",
-  "title": "ponytail: dynamically include AGENTS.md project rules",
-  "branch": "acts/ponytail-agents/feature",
+  "id": "usage-rules",
+  "title": "Always-load magic usage rules + /usage-rules command",
+  "branch": "acts/usage-rules/feature",
   "base_branch": "master",
-  "base_sha": "c291120b3409df5908ad4b06956bf9e3d3a677c1",
+  "base_sha": "bd5f2efad38e82279f6d2e884867dce80797c043",
   "pr": {
     "url": null
   },
   "changes": [
     {
       "id": "c1",
-      "title": "ponytail runtime plugin: per-run AGENTS.md project-rules injection",
-      "status": "MERGED",
-      "start_sha": "c291120b3409df5908ad4b06956bf9e3d3a677c1",
-      "end_sha": "50fa416298206701c3380d48484fecffcb7a2575",
+      "title": "Always-load magic usage rules (plugin) + /usage-rules command",
+      "status": "TODO",
+      "start_sha": "bd5f2efad38e82279f6d2e884867dce80797c043",
+      "end_sha": null,
       "acceptance": [
-        "ponytail install (project+global) writes a runtime plugin that per-run resolves the current project's AGENTS.md (CLAUDE.md fallback) and appends a binding precedence directive + path to the system prompt; idempotent (marker), honors PONYTAIL_DEFAULT_MODE=off; registered in opencode.json plugin array; zig tests + node --check pass; acts validate passes"
+        "ponytail-rules.js (project + acts-core embedded + global) injects the magic usage-rules core subset (coding-practices + error-handling) into the system prompt when a magic rules source resolves (usage-rules/ in magic source, deps/magic/usage-rules/ in consumers, or references.magic.path); idempotent PONYTAIL_MAGIC_RULES marker; toggle PONYTAIL_MAGIC_RULES=off; /usage-rules command (all rules by default, named rules or core subset via args) installs project+global via acts ponytail install; npm test + zig build test + node --check pass; acts validate passes"
       ],
-      "verify": {
-        "test": {
-          "cmd": "npm test && cd acts-core && zig build test",
-          "ok": true,
-          "exit_code": 0,
-          "duration_ms": 354
-        },
-        "lint": {
-          "cmd": "node --check .opencode/plugins/acts.js",
-          "ok": true,
-          "exit_code": 0,
-          "duration_ms": 20
-        },
-        "typecheck": {
-          "cmd": "skipped",
-          "ok": true,
-          "exit_code": 0,
-          "duration_ms": 0
-        },
-        "build": {
-          "cmd": "cd acts-core && zig build",
-          "ok": true,
-          "exit_code": 0,
-          "duration_ms": 25
-        },
-        "base_sha": "c291120b3409df5908ad4b06956bf9e3d3a677c1"
-      },
-      "notes": [
-        ".acts/changes/c1/notes/1788437772.md",
-        ".acts/changes/c1/notes/1788438091.md"
-      ],
-      "checkpoint": "landed: ponytail-agents merged to master; runtime plugin live (acts 2.6.1)",
-      "risk": "LOW",
-      "approvals": [
-        {
-          "action": "approve",
-          "by": "developer",
-          "tier": "LOW",
-          "ts": 1788438028,
-          "note": "human PR approval"
-        }
-      ]
+      "verify": {},
+      "notes": [],
+      "checkpoint": null
     }
   ]
 }

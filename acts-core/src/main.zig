@@ -1373,6 +1373,8 @@ fn cmdPonytailInstall(allocator: std.mem.Allocator, cwd: []const u8, global: boo
     // Always ensure the runtime plugin: it is embedded (no curl needed),
     // idempotent, and covers upgrades from before the plugin existed.
     _ = try ponytail.installRulesPlugin(allocator, root, global);
+    // Same for the acts-spec-owned /usage-rules command (embedded).
+    _ = try ponytail.installUsageRulesCommand(allocator, root, global);
 
     if (ponytail.findPonytailIn(allocator, &.{root})) |p| {
         try stdout("ponytail already installed: {s} (runtime plugin ensured)\n", .{p});

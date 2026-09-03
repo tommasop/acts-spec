@@ -19,6 +19,6 @@
   "author": "Tommaso Patrizi",
   "license": "MIT",
   "scripts": {
-    "test": "node tests/acts-plugin.test.mjs"
+    "test": "node tests/acts-plugin.test.mjs && node tests/ponytail-rules.test.mjs"
   }
 }

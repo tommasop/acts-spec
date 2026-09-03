@@ -30,6 +30,9 @@ This project uses [superpowers](https://github.com/obra/superpowers) for agent w
 - ACTS handles coordination (branch stacks, verification gates, durable context, PR review, cross-repo impact)
 - Superpowers handles single-developer agent quality (TDD, planning, code review, debugging)
 
+### Magic Usage Rules
+Elixir magic consumers get the magic usage-rules core subset (coding-practices + error-handling) injected into the system prompt automatically (ponytail-rules.js; disable with `PONYTAIL_MAGIC_RULES=off`). `/usage-rules [name...]` loads them on demand: all rules by default, the `core` subset, or specific rules (architecture, authentication, authorization, casbin, error-handling, logging, openapi, plug-patterns, saga_services).
+
 ### Rules
 - Agent MUST load context before writing code: `acts context <change>`
 - Agent MUST NOT submit a change for review until `acts verify <change>` passes
