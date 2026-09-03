@@ -422,6 +422,12 @@ acts setup . --with-ponytail --global  # wire a project AND install machine-wide
 
 Installs `.agents/rules/ponytail.md`, the `/ponytail*` slash commands, and the frontmatter plugin into the project.
 
+### Project rules (AGENTS.md) — dynamic, per run
+
+`acts ponytail install` also writes an acts-spec runtime plugin (`ponytail-rules.js`, embedded in the `acts` binary). On every turn it resolves the **current** project's `AGENTS.md` (walking up from the session directory; `CLAUDE.md` fallback) and appends a binding precedence directive + path to the system prompt: the project's ruleset is binding and takes precedence over the ponytail ladder — the ladder finds the smallest change *within* the project's constraints (build/lint/test commands, conventions, required checks), never skipping what the project requires.
+
+Because the plugin resolves the rules at run time from the working directory, one global install serves every project without baking anything in. Disable with `PONYTAIL_DEFAULT_MODE=off` (or `~/.config/ponytail/config.json` `{"defaultMode":"off"}`). The injection is idempotent (appears once per session).
+
 ### Review integration
 
 When ponytail is installed, `acts review` appends a **minimality checklist** to the stack's one PR:

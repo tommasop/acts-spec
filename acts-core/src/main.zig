@@ -1363,13 +1363,19 @@ fn cmdSetup(allocator: std.mem.Allocator, args: *const Args) !void {
 // ---------------------------------------------------------------------------
 
 /// `acts ponytail install` — fetch ponytail's opencode files (rules + slash
-/// commands + frontmatter plugin). Project-local by default; with `global`
+/// commands + frontmatter plugin) and ensure the acts-spec runtime plugin
+/// (per-run AGENTS.md project rules). Project-local by default; with `global`
 /// installs into opencode's global config dir (`~/.config/opencode`) so every
-/// project detects it. Idempotent; offline-safe.
+/// project detects it. Idempotent; offline-safe (the runtime plugin is embedded).
 fn cmdPonytailInstall(allocator: std.mem.Allocator, cwd: []const u8, global: bool) !void {
     const root = if (global) globalConfigRoot(allocator) else cwd;
+
+    // Always ensure the runtime plugin: it is embedded (no curl needed),
+    // idempotent, and covers upgrades from before the plugin existed.
+    _ = try ponytail.installRulesPlugin(allocator, root, global);
+
     if (ponytail.findPonytailIn(allocator, &.{root})) |p| {
-        try stdout("ponytail already installed: {s}\n", .{p});
+        try stdout("ponytail already installed: {s} (runtime plugin ensured)\n", .{p});
         return;
     }
     if (!git.hasTool(allocator, "curl")) {
@@ -1382,7 +1388,7 @@ fn cmdPonytailInstall(allocator: std.mem.Allocator, cwd: []const u8, global: boo
     else
         try ponytail.installFiles(allocator, root);
     if (written == 0) {
-        try stderr("note: could not fetch ponytail (offline?) — re-run `acts ponytail install` later.\n", .{});
+        try stderr("note: could not fetch ponytail rules/commands (offline?) — runtime plugin still installed.\n", .{});
         return;
     }
     if (ponytail.findPonytailIn(allocator, &.{root})) |p| {
