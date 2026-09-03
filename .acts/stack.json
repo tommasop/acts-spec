@@ -46,9 +46,10 @@
         "base_sha": "c291120b3409df5908ad4b06956bf9e3d3a677c1"
       },
       "notes": [
-        ".acts/changes/c1/notes/1788437772.md"
+        ".acts/changes/c1/notes/1788437772.md",
+        ".acts/changes/c1/notes/1788438091.md"
       ],
-      "checkpoint": "implemented + verified + locally installed (project+global, acts 2.6.1)",
+      "checkpoint": "landed: ponytail-agents merged to master; runtime plugin live (acts 2.6.1)",
       "risk": "LOW",
       "approvals": [
         {
