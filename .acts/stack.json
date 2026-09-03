@@ -1,0 +1,64 @@
+{
+  "version": 3,
+  "id": "ponytail-agents",
+  "title": "ponytail: dynamically include AGENTS.md project rules",
+  "branch": "acts/ponytail-agents/feature",
+  "base_branch": "master",
+  "base_sha": "c291120b3409df5908ad4b06956bf9e3d3a677c1",
+  "pr": {
+    "url": null
+  },
+  "changes": [
+    {
+      "id": "c1",
+      "title": "ponytail runtime plugin: per-run AGENTS.md project-rules injection",
+      "status": "APPROVED",
+      "start_sha": "c291120b3409df5908ad4b06956bf9e3d3a677c1",
+      "end_sha": "50fa416298206701c3380d48484fecffcb7a2575",
+      "acceptance": [
+        "ponytail install (project+global) writes a runtime plugin that per-run resolves the current project's AGENTS.md (CLAUDE.md fallback) and appends a binding precedence directive + path to the system prompt; idempotent (marker), honors PONYTAIL_DEFAULT_MODE=off; registered in opencode.json plugin array; zig tests + node --check pass; acts validate passes"
+      ],
+      "verify": {
+        "test": {
+          "cmd": "npm test && cd acts-core && zig build test",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 354
+        },
+        "lint": {
+          "cmd": "node --check .opencode/plugins/acts.js",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 20
+        },
+        "typecheck": {
+          "cmd": "skipped",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 0
+        },
+        "build": {
+          "cmd": "cd acts-core && zig build",
+          "ok": true,
+          "exit_code": 0,
+          "duration_ms": 25
+        },
+        "base_sha": "c291120b3409df5908ad4b06956bf9e3d3a677c1"
+      },
+      "notes": [
+        ".acts/changes/c1/notes/1788437772.md"
+      ],
+      "checkpoint": "implemented + verified + locally installed (project+global, acts 2.6.1)",
+      "risk": "LOW",
+      "approvals": [
+        {
+          "action": "approve",
+          "by": "developer",
+          "tier": "LOW",
+          "ts": 1788438028,
+          "note": "human PR approval"
+        }
+      ]
+    }
+  ]
+}
