@@ -5,10 +5,23 @@ const git = @import("git.zig");
 /// (DietrichGebert/ponytail). It is a behavioral discipline (YAGNI ladder, reuse
 /// over re-implementation, shortest working diff), complementary to ACTS's
 /// checkpoint scoping. `acts ponytail install` fetches ponytail's opencode
-/// files (rules + slash commands + frontmatter plugin) into the project;
-/// `acts review` appends a ponytail minimality checklist to the one PR.
+/// files (rules + slash commands + frontmatter plugin) into the project and
+/// writes the acts-spec runtime plugin (per-run AGENTS.md project-rules
+/// injection); `acts review` appends a ponytail minimality checklist to the
+/// one PR.
 
 const RAW_BASE = "https://raw.githubusercontent.com/DietrichGebert/ponytail/main";
+
+/// acts-spec-owned runtime plugin: hooks opencode's system-prompt transform to
+/// resolve the CURRENT project's AGENTS.md (CLAUDE.md fallback) each run and
+/// append a binding precedence directive + path. Installed from the binary
+/// (embedded), not fetched upstream, so it works offline and survives upgrades.
+const ponytail_rules_plugin = @embedFile("ponytail-rules.js");
+
+const RULES_PLUGIN_REL_PROJECT = ".opencode/plugins/ponytail-rules.js";
+const RULES_PLUGIN_REL_GLOBAL = "plugin/ponytail-rules.js";
+const RULES_PLUGIN_ENTRY_PROJECT = "./.opencode/plugins/ponytail-rules.js";
+const RULES_PLUGIN_ENTRY_GLOBAL = "./plugin/ponytail-rules.js";
 
 /// Files (relative to a project root) that make up ponytail's opencode support.
 pub const ponytail_files = [_][]const u8{
@@ -41,6 +54,8 @@ const probe_rels = [_][]const u8{
     "agents/rules/ponytail.md",
     "plugin/ponytail-frontmatter.cjs",
     "command/ponytail.md",
+    ".opencode/plugins/ponytail-rules.js",
+    "plugin/ponytail-rules.js",
 };
 
 /// Search a set of roots (project + global) for any installed ponytail file.
@@ -89,7 +104,9 @@ fn mkdirp(dir: []const u8) void {
     std.fs.cwd().makePath(dir) catch {};
 }
 
-/// Fetch all ponytail opencode files from GitHub into `dest_root`.
+/// Fetch all ponytail opencode files from GitHub into `dest_root`, then write
+/// the acts-spec runtime plugin (embedded; offline-safe) and register it in
+/// the project's opencode.json.
 /// Returns how many files were written. Never errors on a single-file failure
 /// (best-effort; prints nothing — caller reports the count).
 pub fn installFiles(allocator: std.mem.Allocator, dest_root: []const u8) !usize {
@@ -101,6 +118,7 @@ pub fn installFiles(allocator: std.mem.Allocator, dest_root: []const u8) !usize 
         const res = git.run(allocator, &.{ "curl", "-fsSL", url, "-o", dest }, 1 << 20) catch continue;
         if (res.exit_code == 0 and fileExists(dest)) written += 1;
     }
+    if (try installRulesPlugin(allocator, dest_root, false)) written += 1;
     return written;
 }
 
@@ -116,15 +134,30 @@ pub fn installFilesGlobal(allocator: std.mem.Allocator, config_root: []const u8)
         const res = git.run(allocator, &.{ "curl", "-fsSL", url, "-o", dest }, 1 << 20) catch continue;
         if (res.exit_code == 0 and fileExists(dest)) written += 1;
     }
+    if (try installRulesPlugin(allocator, config_root, true)) written += 1;
     if (written > 0) try registerGlobalPlugin(allocator, config_root);
     return written;
 }
 
-/// Ensure the global opencode.json `plugin` array includes the ponytail
-/// frontmatter plugin (relative to the config root). Creates the file if missing.
-pub fn registerGlobalPlugin(allocator: std.mem.Allocator, config_root: []const u8) !void {
+/// Write the acts-spec runtime plugin (per-run AGENTS.md project rules) to its
+/// install location and ensure it is registered in the matching opencode.json
+/// `plugin` array. Embedded in the binary, so it works offline; idempotent —
+/// safe to call when ponytail is already installed (covers upgrades from
+/// before the plugin existed).
+pub fn installRulesPlugin(allocator: std.mem.Allocator, root: []const u8, global: bool) !bool {
+    const rel = if (global) RULES_PLUGIN_REL_GLOBAL else RULES_PLUGIN_REL_PROJECT;
+    const entry = if (global) RULES_PLUGIN_ENTRY_GLOBAL else RULES_PLUGIN_ENTRY_PROJECT;
+    const dest = tryJoin(allocator, &.{ root, rel }) orelse return false;
+    if (std.fs.path.dirname(dest)) |d| mkdirp(d);
+    std.fs.cwd().writeFile(.{ .sub_path = dest, .data = ponytail_rules_plugin }) catch return false;
+    try ensurePluginEntry(allocator, root, entry);
+    return true;
+}
+
+/// Ensure `want` is in the opencode.json `plugin` array (creates the file if
+/// missing). Idempotent.
+fn ensurePluginEntry(allocator: std.mem.Allocator, config_root: []const u8, want: []const u8) !void {
     const cfg_path = tryJoin(allocator, &.{ config_root, "opencode.json" }) orelse return;
-    const want = "./plugin/ponytail-frontmatter.cjs";
 
     var root: std.json.ObjectMap = std.json.ObjectMap.init(allocator);
     var parsed: ?std.json.Parsed(std.json.Value) = null;
@@ -160,6 +193,13 @@ pub fn registerGlobalPlugin(allocator: std.mem.Allocator, config_root: []const u
     try std.json.stringify(v, .{ .whitespace = .indent_2 }, buf.writer());
     try buf.append('\n');
     try std.fs.cwd().writeFile(.{ .sub_path = cfg_path, .data = buf.items });
+}
+
+/// Ensure the global opencode.json `plugin` array includes the ponytail
+/// plugin entries (frontmatter helper + runtime rules plugin).
+pub fn registerGlobalPlugin(allocator: std.mem.Allocator, config_root: []const u8) !void {
+    try ensurePluginEntry(allocator, config_root, "./plugin/ponytail-frontmatter.cjs");
+    try ensurePluginEntry(allocator, config_root, RULES_PLUGIN_ENTRY_GLOBAL);
 }
 
 /// Per-change diff summary for the review checklist.
@@ -283,7 +323,7 @@ test "globalDestFor maps ponytail files to opencode global dirs" {
     try std.testing.expect(globalDestFor(a, root, ".opencode/skills/other/SKILL.md") == null);
 }
 
-test "registerGlobalPlugin ensures the plugin entry in opencode.json" {
+test "registerGlobalPlugin ensures the plugin entries in opencode.json" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const a = arena.allocator();
@@ -299,9 +339,62 @@ test "registerGlobalPlugin ensures the plugin entry in opencode.json" {
     const content = try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ root, "opencode.json" }), 1 << 16);
     const parsed = try std.json.parseFromSlice(std.json.Value, a, content, .{});
     const plugin = parsed.value.object.get("plugin").?.array;
-    var found = false;
+    var found_frontmatter = false;
+    var found_rules = false;
     for (plugin.items) |p| {
-        if (p == .string and std.mem.eql(u8, p.string, "./plugin/ponytail-frontmatter.cjs")) found = true;
+        if (p == .string and std.mem.eql(u8, p.string, "./plugin/ponytail-frontmatter.cjs")) found_frontmatter = true;
+        if (p == .string and std.mem.eql(u8, p.string, "./plugin/ponytail-rules.js")) found_rules = true;
     }
-    try std.testing.expect(found);
+    try std.testing.expect(found_frontmatter);
+    try std.testing.expect(found_rules);
+
+    // Idempotent: a second registration does not duplicate entries.
+    try registerGlobalPlugin(a, root);
+    const content2 = try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ root, "opencode.json" }), 1 << 16);
+    const parsed2 = try std.json.parseFromSlice(std.json.Value, a, content2, .{});
+    const plugin2 = parsed2.value.object.get("plugin").?.array;
+    var rules_count: usize = 0;
+    for (plugin2.items) |p| {
+        if (p == .string and std.mem.eql(u8, p.string, "./plugin/ponytail-rules.js")) rules_count += 1;
+    }
+    try std.testing.expectEqual(@as(usize, 1), rules_count);
+}
+
+test "installRulesPlugin writes the runtime plugin and registers it (project + global)" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmp.dir.realpathAlloc(a, ".");
+
+    // Project layout.
+    try std.testing.expect(try installRulesPlugin(a, root, false));
+    const proj_plugin = try std.fs.path.join(a, &.{ root, ".opencode", "plugins", "ponytail-rules.js" });
+    const proj_body = try std.fs.cwd().readFileAlloc(a, proj_plugin, 1 << 20);
+    try std.testing.expect(std.mem.indexOf(u8, proj_body, "PONYTAIL_PROJECT_RULES") != null);
+    const proj_cfg = try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ root, "opencode.json" }), 1 << 16);
+    try std.testing.expect(std.mem.indexOf(u8, proj_cfg, "./.opencode/plugins/ponytail-rules.js") != null);
+
+    // Global layout.
+    try std.testing.expect(try installRulesPlugin(a, root, true));
+    const glob_plugin = try std.fs.path.join(a, &.{ root, "plugin", "ponytail-rules.js" });
+    const glob_body = try std.fs.cwd().readFileAlloc(a, glob_plugin, 1 << 20);
+    try std.testing.expect(std.mem.eql(u8, glob_body, ponytail_rules_plugin));
+    const glob_cfg = try std.fs.cwd().readFileAlloc(a, try std.fs.path.join(a, &.{ root, "opencode.json" }), 1 << 16);
+    try std.testing.expect(std.mem.indexOf(u8, glob_cfg, "./plugin/ponytail-rules.js") != null);
+}
+
+test "probe_rels detects the runtime plugin" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const root = try tmp.dir.realpathAlloc(a, ".");
+    try tmp.dir.makePath(".opencode/plugins");
+    try tmp.dir.writeFile(.{ .sub_path = ".opencode/plugins/ponytail-rules.js", .data = "// plugin\n" });
+    try std.testing.expect(findPonytailIn(a, &.{root}) != null);
 }

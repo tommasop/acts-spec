@@ -22,6 +22,7 @@ dist/
 .opencode/command/ponytail-help.md
 .opencode/command/ponytail-review.md
 .opencode/plugins/ponytail-frontmatter.cjs
+.opencode/plugins/ponytail-rules.js
 
 # Zig build artifacts
 acts-core/.zig-cache/
